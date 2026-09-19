@@ -15,9 +15,18 @@ type fakeRepo struct {
 	pools   map[string]PoolDeposit
 	active  map[string]bool // sender -> has an active reservation
 
+	// auditLog records every InsertAudit call for tests that want to
+	// assert an audit trail was written.
+	auditLog []auditEntry
+
 	// failOn lets a test force a specific method call to fail, keyed by
 	// method name, to drive DB-error paths without a real database.
 	failOn map[string]error
+}
+
+type auditEntry struct {
+	actor, action string
+	details       any
 }
 
 func newFakeRepo() *fakeRepo {
@@ -27,6 +36,14 @@ func newFakeRepo() *fakeRepo {
 		active:  map[string]bool{},
 		failOn:  map[string]error{},
 	}
+}
+
+func (f *fakeRepo) InsertAudit(ctx context.Context, actor, action string, details any) error {
+	if err := f.err("InsertAudit"); err != nil {
+		return err
+	}
+	f.auditLog = append(f.auditLog, auditEntry{actor: actor, action: action, details: details})
+	return nil
 }
 
 func (f *fakeRepo) err(method string) error { return f.failOn[method] }

@@ -34,7 +34,10 @@ Kapsam ve kararların tam gerekçesi:
 - **Para hiçbir yerde `float64` değildir.** `pkg/money.Amount`, API
   sınırında her zaman string.
 - **Yalnızca `pay-tx-service` transaction submit eder.** Diğer servisler
-  imzasız XDR üretir.
+  imzasız XDR üretir. Belgelenmiş tek istisna: `pay-scheduler-service`'in
+  keeper anahtarı `refund()`/`bump_instance()` çağrılarını doğrudan submit
+  eder — fee-payer-only, kimsenin parasını hareket ettirmez (bkz.
+  SERVICE.md #15).
 - **Yalnızca `pay-chain-gateway` Horizon/Soroban'a çıkar.**
 - **Backend hiçbir zaman özel anahtar tutmaz** — ne kullanıcının, ne
   anchor'ın JWT'sinin. Tek istisna: `pay-scheduler-service`'in keeper

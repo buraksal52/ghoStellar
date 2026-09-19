@@ -178,6 +178,41 @@ func TestSweepExpiredCheques_OneFailureDoesNotStopTheRest(t *testing.T) {
 	}
 }
 
+// TestSweepExpiredCheques_FailedChequeBacksOff is SERVICE.md #15's
+// regression test: a cheque that fails to refund must not be retried on
+// the very next sweep tick — it should sit in backoff until its
+// nextAttempt passes.
+func TestSweepExpiredCheques_FailedChequeBacksOff(t *testing.T) {
+	escrowID := testContractID(t)
+	cfg, keeper := testConfig(t, escrowID)
+	chain := fundedChain(t)
+	chain.GetAccountFunc = func(ctx context.Context, address string) (ports.AccountInfo, error) {
+		return ports.AccountInfo{Address: address, Exists: false}, nil // always fails refundOne
+	}
+	expired := []ExpiredCheque{
+		{ID: "01F00000000000000000000004", SenderAddress: keeper.Address(), ReceiverAddress: keeper.Address(), TokenContract: escrowID, AmountRaw: "100", Decimals: 7},
+	}
+	srv, markCalls := chequeServer(t, expired)
+	client := NewChequeClient(srv.URL, "internal-key", nil)
+	svc, err := NewService(cfg, chain, client, discardLogger())
+	if err != nil {
+		t.Fatalf("NewService: %v", err)
+	}
+
+	svc.SweepExpiredCheques(context.Background()) // 1st attempt: fails, enters backoff
+	if chain.GetAccountCalls != 1 {
+		t.Fatalf("GetAccount called %d times after 1st sweep, want 1", chain.GetAccountCalls)
+	}
+
+	svc.SweepExpiredCheques(context.Background()) // 2nd attempt: still within backoff window
+	if chain.GetAccountCalls != 1 {
+		t.Fatalf("GetAccount called %d times after 2nd sweep, want still 1 (should be in backoff)", chain.GetAccountCalls)
+	}
+	if *markCalls != 0 {
+		t.Errorf("mark-refunded called %d times, want 0", *markCalls)
+	}
+}
+
 func TestRefundOne_KeeperAccountMissing(t *testing.T) {
 	escrowID := testContractID(t)
 	cfg, keeper := testConfig(t, escrowID)

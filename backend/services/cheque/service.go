@@ -191,6 +191,8 @@ func (s *Service) CreateCheque(ctx context.Context, sender, receiver, amountStr 
 		return CreateChequeResult{}, fmt.Errorf("cheque: build force_collect auth entry: %w", err)
 	}
 
+	s.audit(ctx, repo, sender, "cheque.lock_xdr_issued", map[string]string{"chequeId": c.ID, "receiver": receiver, "amount": amount.String()})
+
 	return CreateChequeResult{
 		ChequeID:           c.ID,
 		LockXDR:            lockXDR,
@@ -198,6 +200,17 @@ func (s *Service) CreateCheque(ctx context.Context, sender, receiver, amountStr 
 		PreauthPayloadHash: base64.StdEncoding.EncodeToString(payloadHash),
 		ExpiresAt:          expiresAt,
 	}, nil
+}
+
+// audit best-effort records an append-only audit_log entry (SERVICE.md
+// #11) — never on the request's error path, since an audit write failing
+// must never make a genuinely successful operation look like a failure to
+// the caller. There is no logger at this layer yet (pkg/obs's logger lives
+// in cmd/*/main.go), so a failed audit write is silently dropped; this is
+// an accepted, documented gap rather than an oversight — audit_log is an
+// observability aid, not a correctness dependency.
+func (s *Service) audit(ctx context.Context, repo chequeRepo, actor, action string, details any) {
+	_ = repo.InsertAudit(ctx, actor, action, details)
 }
 
 // StorePreauth saves the device-signed force_collect authorization entry
@@ -249,6 +262,7 @@ func (s *Service) ConfirmLock(ctx context.Context, chequeID, caller, txHash stri
 		}
 		return err
 	}
+	s.audit(ctx, repo, caller, "cheque.lock_confirmed", map[string]string{"chequeId": chequeID, "txHash": txHash})
 	return nil
 }
 
@@ -312,6 +326,7 @@ func (s *Service) ConfirmClaim(ctx context.Context, chequeID, caller, txHash str
 		}
 		return err
 	}
+	s.audit(ctx, repo, caller, "cheque.claimed", map[string]string{"chequeId": chequeID, "txHash": txHash})
 	return nil
 }
 
@@ -427,6 +442,7 @@ func (s *Service) ConfirmForceCollect(ctx context.Context, chequeID, caller, txH
 	if err := repo.Transition(ctx, chequeID, StateZorlaTahsilDenendi, to, "user_action", txHash); err != nil && !errors.Is(err, ErrBadTransitionInRepo) {
 		return err
 	}
+	s.audit(ctx, repo, caller, "cheque.force_collect_confirmed", map[string]any{"chequeId": chequeID, "txHash": txHash, "collected": collected})
 	return nil
 }
 
@@ -456,11 +472,24 @@ func (s *Service) MarkRefunded(ctx context.Context, chequeID, txHash string) err
 	if err := repo.Transition(ctx, chequeID, StateIadeEdilebilir, StateIadeEdildi, "scheduler_sweep", txHash); err != nil && !errors.Is(err, ErrBadTransitionInRepo) {
 		return err
 	}
+	s.audit(ctx, repo, "system", "cheque.refunded", map[string]string{"chequeId": chequeID, "txHash": txHash})
 	return nil
 }
 
 // Sync is the Forced Sync endpoint: every pending cheque and the pool
 // balance for address, in one call (p2p doc §1, §5).
+//
+// SERVICE.md #1: alongside the local Postgres view (the historically sole
+// source), this now cross-checks every cheque and the pool against the
+// contract's own get_cheque/get_pool via a read-only simulateTransaction —
+// an independent, chain-derived signal instead of relying purely on the
+// write endpoints + confirm-* + scheduler sweep keeping the cache honest.
+// Deliberately additive, not a replacement: the ScVal decode this depends
+// on (pkg/stellarx's DecodeChequeRecord/DecodePoolRecord) has not been
+// exercised against a live network, so a decode/simulate failure here logs
+// nothing (no logger at this layer, see cheque.audit's doc comment) and
+// leaves ChainVerified nil rather than ever failing the whole request or
+// silently asserting a wrong answer.
 func (s *Service) Sync(ctx context.Context, address string) (SyncView, error) {
 	repo, err := s.repos()
 	if err != nil {
@@ -481,6 +510,14 @@ func (s *Service) Sync(ctx context.Context, address string) (SyncView, error) {
 	ledger, err := s.chain.GetLedger(ctx)
 	if err != nil {
 		return SyncView{}, fmt.Errorf("%w: %v", errChainUnavailable, err)
+	}
+
+	callerAccount, err := s.chain.GetAccount(ctx, address)
+	if err == nil {
+		for i := range cheques {
+			cheques[i].ChainVerified = s.verifyChequeOnChain(ctx, cheques[i], callerAccount.Sequence)
+		}
+		pool.ChainVerified = s.verifyPoolOnChain(ctx, address, pool, callerAccount.Sequence)
 	}
 
 	return SyncView{
@@ -587,6 +624,114 @@ func (s *Service) ConfirmPoolWithdraw(ctx context.Context, owner, amountStr stri
 		return errInvalidAmount
 	}
 	return repo.RecordWithdraw(ctx, owner, amount.Raw.String())
+}
+
+// ---- SERVICE.md #1: chain cross-verification ---------------------------
+
+// verifyChequeOnChain simulates the contract's own get_cheque and compares
+// its ChequeState against c's locally-recorded State. Returns nil (not
+// false) on any simulate/decode failure — a transient RPC hiccup or an
+// unverified ScVal encoding must never be reported as a mismatch; it means
+// "couldn't check", which the client should treat the same as not having
+// asked at all.
+func (s *Service) verifyChequeOnChain(ctx context.Context, c Cheque, callerSequence int64) *bool {
+	idBytes, err := decodeULID(c.ID)
+	if err != nil {
+		return nil
+	}
+	idArg, err := scBytes(idBytes)()
+	if err != nil {
+		return nil
+	}
+	op, err := stellarx.InvokeContract(s.cfg.EscrowContractID, c.ReceiverAddress, "get_cheque", idArg)
+	if err != nil {
+		return nil
+	}
+	xdrStr, err := stellarx.AssembleInvocation(ctx, s.simulator(), s.cfg.NetworkPassphrase, c.ReceiverAddress, callerSequence, op)
+	if err != nil {
+		return nil
+	}
+	result, err := s.chain.SimulateTransaction(ctx, xdrStr)
+	if err != nil || !result.Success || result.ResultXDR == "" {
+		return nil
+	}
+	var resultVal xdr.ScVal
+	if err := xdr.SafeUnmarshalBase64(result.ResultXDR, &resultVal); err != nil {
+		return nil
+	}
+	record, present, err := stellarx.DecodeChequeRecord(resultVal)
+	if err != nil {
+		return nil
+	}
+	matched := chequeStateMatchesChain(c.State, present, record.State)
+	return &matched
+}
+
+// verifyPoolOnChain is verifyChequeOnChain's pool counterpart, cross-
+// checking get_pool's amount against the local cache's amount_raw — the
+// one thing pool.deposit/withdraw's confirm-* endpoints are trusted to
+// keep honest without independent verification today.
+func (s *Service) verifyPoolOnChain(ctx context.Context, owner string, pool PoolDeposit, callerSequence int64) *bool {
+	ownerArg, err := scAddr(owner)()
+	if err != nil {
+		return nil
+	}
+	op, err := stellarx.InvokeContract(s.cfg.EscrowContractID, owner, "get_pool", ownerArg)
+	if err != nil {
+		return nil
+	}
+	xdrStr, err := stellarx.AssembleInvocation(ctx, s.simulator(), s.cfg.NetworkPassphrase, owner, callerSequence, op)
+	if err != nil {
+		return nil
+	}
+	result, err := s.chain.SimulateTransaction(ctx, xdrStr)
+	if err != nil || !result.Success || result.ResultXDR == "" {
+		return nil
+	}
+	var resultVal xdr.ScVal
+	if err := xdr.SafeUnmarshalBase64(result.ResultXDR, &resultVal); err != nil {
+		return nil
+	}
+	record, present, err := stellarx.DecodePoolRecord(resultVal)
+	if err != nil {
+		return nil
+	}
+	localAmount, ok := new(big.Int).SetString(pool.AmountRaw, 10)
+	if !ok {
+		return nil
+	}
+	var matched bool
+	switch {
+	case !present:
+		matched = localAmount.Sign() == 0
+	default:
+		matched = record.Amount.Cmp(localAmount) == 0
+	}
+	return &matched
+}
+
+// chequeStateMatchesChain maps the contract's coarse ChequeState (or its
+// absence) onto the local, finer-grained state machine's buckets — the
+// pre-chain states (TASLAK/IMZALI_REZERVE) have no on-chain counterpart at
+// all, so "absent on-chain" only matches those.
+func chequeStateMatchesChain(local State, present bool, chainState string) bool {
+	if !present {
+		return local == StateTaslak || local == StateImzaliRezerve
+	}
+	switch chainState {
+	case "Funded":
+		return local == StateHavuzda || local == StateFonlaniyor || local == StateZorlaTahsilDenendi
+	case "Claimed":
+		return local == StateTalepEdildi || local == StateOnaylandi || local == StateKapandi
+	case "Refunded":
+		return local == StateIadeEdilebilir || local == StateIadeEdildi
+	case "Collected":
+		return local == StateKapandi || local == StateZorlaTahsilDenendi
+	case "Bounced":
+		return local == StateKarsiliksiz
+	default:
+		return false
+	}
 }
 
 // ---- helpers -----------------------------------------------------------

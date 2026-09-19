@@ -1,0 +1,95 @@
+# ghoStellar MVP — monolith profile (SERVICE.md #4). Every service in one
+# process (backend/cmd/monolith), wired in-process via ports/directadapter
+# instead of internal HTTP. Run with:
+#
+#   docker compose -f deploy/docker-compose.yml -f deploy/docker-compose.mono.yml \
+#     up --build postgres migrate pay-monolith apisix-mono
+#
+# postgres/migrate are unchanged from the microservice compose file — reuse
+# them from there rather than duplicating. The six pay-*-service containers
+# and their apisix routes are not started; apisix-mono replaces apisix with
+# a single-upstream routing table (deploy/apisix/apisix-mono.yaml).
+name: local-payment
+
+services:
+  pay-monolith:
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile.go
+      args:
+        SERVICE: monolith
+    container_name: local_payment_monolith
+    environment:
+      LISTEN_ADDR: ":8080"
+      DATABASE_URL: ${DATABASE_URL}
+      SEP10_SIGNING_SEED: ${SEP10_SIGNING_SEED}
+      HOME_DOMAIN: ${HOME_DOMAIN:-localhost}
+      WEB_AUTH_DOMAIN: ${WEB_AUTH_DOMAIN:-localhost}
+      NETWORK_PASSPHRASE: ${NETWORK_PASSPHRASE:-Test SDF Network ; September 2015}
+      JWT_PRIVATE_KEY_PATH: /secrets/jwt_private.pem
+      JWT_PUBLIC_KEY_PATH: /secrets/jwt_public.pem
+      HORIZON_URL: ${HORIZON_URL:-https://horizon-testnet.stellar.org}
+      SOROBAN_RPC_URL: ${SOROBAN_RPC_URL:-https://soroban-testnet.stellar.org}
+      PAY_ESCROW_CONTRACT_ID: ${PAY_ESCROW_CONTRACT_ID}
+      ASSET_SAC_CONTRACT_ID: ${ASSET_SAC_CONTRACT_ID}
+      ASSET_CODE: ${ASSET_CODE:-USDC}
+      ASSET_ISSUER: ${ASSET_ISSUER:-GBBD47IF6LWK7P7MDEVSCWR7DPUWV3NY3DTQEVFL4NAT4AQH3ZLLFLA5}
+      ASSET_DECIMALS: ${ASSET_DECIMALS:-7}
+      ANCHOR_ID: ${ANCHOR_ID:-default}
+      ANCHOR_DOMAIN: ${ANCHOR_DOMAIN:-tr-mock-anchor.fly.dev}
+      KEEPER_SECRET_SEED: ${KEEPER_SECRET_SEED}
+      SWEEP_INTERVAL_SECONDS: ${SWEEP_INTERVAL_SECONDS:-60}
+      BUMP_INTERVAL_SECONDS: ${BUMP_INTERVAL_SECONDS:-21600}
+    volumes:
+      - ./secrets:/secrets:ro
+    depends_on:
+      postgres:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "-q", "http://localhost:8080/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+    restart: unless-stopped
+
+  apisix-mono:
+    image: apache/apisix:3.14.1-debian
+    container_name: local_payment_apisix_mono
+    environment:
+      APISIX_STAND_ALONE: "true"
+    volumes:
+      - ./apisix/config.yaml:/usr/local/apisix/conf/config.yaml:ro
+      - ./apisix/apisix-mono.yaml:/usr/local/apisix/conf/apisix.yaml:ro
+    ports:
+      - "9080:9080"
+      - "9443:9443"
+    restart: unless-stopped
+
+  # The microservice profile's six pay-*-service containers and its own
+  # apisix are overridden to a no-op here so `docker compose -f
+  # docker-compose.yml -f docker-compose.mono.yml up` never accidentally
+  # starts both profiles' upstreams against the same Postgres at once.
+  pay-chain-gateway:
+    deploy:
+      replicas: 0
+  pay-auth-service:
+    deploy:
+      replicas: 0
+  pay-cheque-service:
+    deploy:
+      replicas: 0
+  pay-tx-service:
+    deploy:
+      replicas: 0
+  pay-anchor-service:
+    deploy:
+      replicas: 0
+  pay-scheduler-service:
+    deploy:
+      replicas: 0
+  apisix:
+    deploy:
+      replicas: 0

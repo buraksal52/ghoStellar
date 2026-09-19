@@ -54,7 +54,7 @@ func TestClient_ProxyJSON_ForwardsMethodPathQueryAndAuth(t *testing.T) {
 	})
 
 	c := NewClient(hc)
-	result, err := c.ProxyJSON(t.Context(), "POST", srv.URL, "/sep6/deposit", "asset_code=USDC", "anchor-jwt", []byte(`{"a":1}`))
+	result, err := c.ProxyJSON(t.Context(), "POST", srv.URL, "/sep6/deposit", "asset_code=USDC", "anchor-jwt", "", []byte(`{"a":1}`))
 	if err != nil {
 		t.Fatalf("ProxyJSON: %v", err)
 	}
@@ -86,7 +86,7 @@ func TestClient_ProxyJSON_NonJSONResponseRejected(t *testing.T) {
 		w.Write([]byte("<html>not json</html>"))
 	})
 	c := NewClient(hc)
-	if _, err := c.ProxyJSON(t.Context(), "GET", srv.URL, "/x", "", "", nil); err == nil {
+	if _, err := c.ProxyJSON(t.Context(), "GET", srv.URL, "/x", "", "", "", nil); err == nil {
 		t.Fatal("expected an error for a non-JSON upstream response")
 	}
 }
@@ -97,7 +97,7 @@ func TestClient_ProxyJSON_UpstreamErrorStatusPropagated(t *testing.T) {
 		w.Write([]byte(`{"error":"bad"}`))
 	})
 	c := NewClient(hc)
-	if _, err := c.ProxyJSON(t.Context(), "GET", srv.URL, "/x", "", "", nil); err == nil {
+	if _, err := c.ProxyJSON(t.Context(), "GET", srv.URL, "/x", "", "", "", nil); err == nil {
 		t.Fatal("expected an error for a 4xx upstream response")
 	}
 }
@@ -199,7 +199,7 @@ func TestRequireHTTPS(t *testing.T) {
 	c := NewClient(srv.Client())
 
 	// srv.URL is a plain http:// URL — every proxy path must reject it.
-	if _, err := c.ProxyJSON(t.Context(), "GET", srv.URL, "/x", "", "", nil); err == nil {
+	if _, err := c.ProxyJSON(t.Context(), "GET", srv.URL, "/x", "", "", "", nil); err == nil {
 		t.Fatal("expected an error for a non-HTTPS endpoint")
 	}
 }

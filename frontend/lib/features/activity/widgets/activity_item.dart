@@ -33,10 +33,10 @@ class ActivityItem {
     final isOut = c.senderAddress == myAddress;
     final amount = AmountFormatter.trimTrailingZeros(AmountFormatter.fromRaw(c.amountRaw, c.decimals));
     final (label, negative) = switch (c.state) {
-      ChequeState.KAPANDI || ChequeState.ONAYLANDI => ('Completed', isOut),
-      ChequeState.IADE_EDILDI => ('Refunded', false),
-      ChequeState.IADE_EDILEBILIR => ('Recoverable', isOut),
-      ChequeState.KARSILIKSIZ || ChequeState.HUKUMSUZ => ('Failed', false),
+      ChequeState.kapandi || ChequeState.onaylandi => ('Completed', isOut),
+      ChequeState.iadeEdildi => ('Refunded', false),
+      ChequeState.iadeEdilebilir => ('Recoverable', isOut),
+      ChequeState.karsiliksiz || ChequeState.hukumsuz => ('Failed', false),
       _ => ('In pool', isOut),
     };
     return ActivityItem(

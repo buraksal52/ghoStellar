@@ -36,14 +36,23 @@ type Claims struct {
 // pay-auth-service's own Refresh flow needs exactly this (it must accept a
 // refresh token to mint a new access token). Every other caller wants
 // VerifyAccessToken instead — see its doc comment.
-func VerifyJWT(token string, publicKey *rsa.PublicKey) (Claims, error) {
+//
+// expectedAudience, when non-empty, requires the token's `aud` claim to
+// contain it (jwt.WithAudience) — SERVICE.md #19. An empty string skips the
+// check entirely, which is the safe default for any caller that hasn't
+// been updated to pass WEB_AUTH_DOMAIN yet.
+func VerifyJWT(token string, publicKey *rsa.PublicKey, expectedAudience string) (Claims, error) {
+	opts := []jwt.ParserOption{jwt.WithValidMethods([]string{"RS256"})}
+	if expectedAudience != "" {
+		opts = append(opts, jwt.WithAudience(expectedAudience))
+	}
 	var claims Claims
 	parsed, err := jwt.ParseWithClaims(token, &claims, func(t *jwt.Token) (any, error) {
 		if _, ok := t.Method.(*jwt.SigningMethodRSA); !ok {
 			return nil, ErrInvalidToken
 		}
 		return publicKey, nil
-	}, jwt.WithValidMethods([]string{"RS256"}))
+	}, opts...)
 	if err != nil || !parsed.Valid {
 		return Claims{}, ErrInvalidToken
 	}
@@ -67,8 +76,8 @@ const accessTokenSubject = "access"
 // every protected route, defeating the short access-token TTL entirely.
 // Fail-closed: a token with an empty or unrecognized `sub` is rejected, not
 // just one explicitly marked "refresh".
-func VerifyAccessToken(token string, publicKey *rsa.PublicKey) (Claims, error) {
-	claims, err := VerifyJWT(token, publicKey)
+func VerifyAccessToken(token string, publicKey *rsa.PublicKey, expectedAudience string) (Claims, error) {
+	claims, err := VerifyJWT(token, publicKey, expectedAudience)
 	if err != nil {
 		return Claims{}, err
 	}
@@ -106,8 +115,9 @@ const claimsKey ctxKey = 0
 // user-facing routes and injects Claims into the request context. onError is
 // called (envelope + status) when verification fails, so handlers stay
 // decoupled from httpx. Only access tokens are accepted — see
-// VerifyAccessToken.
-func RequireBearer(publicKey *rsa.PublicKey, onError func(w http.ResponseWriter), next http.Handler) http.Handler {
+// VerifyAccessToken. expectedAudience is forwarded to VerifyAccessToken
+// (SERVICE.md #19); pass "" to skip the aud check (existing behavior).
+func RequireBearer(publicKey *rsa.PublicKey, expectedAudience string, onError func(w http.ResponseWriter), next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		auth := r.Header.Get("Authorization")
 		token, ok := strings.CutPrefix(auth, "Bearer ")
@@ -115,7 +125,7 @@ func RequireBearer(publicKey *rsa.PublicKey, onError func(w http.ResponseWriter)
 			onError(w)
 			return
 		}
-		claims, err := VerifyAccessToken(token, publicKey)
+		claims, err := VerifyAccessToken(token, publicKey, expectedAudience)
 		if err != nil {
 			onError(w)
 			return

@@ -19,6 +19,7 @@ type chequeRepo interface {
 	GetPool(ctx context.Context, owner string) (PoolDeposit, bool, error)
 	RecordDeposit(ctx context.Context, owner, amountRaw string, decimals uint8, ledgerSeq int64) error
 	RecordWithdraw(ctx context.Context, owner, amountRaw string) error
+	InsertAudit(ctx context.Context, actor, action string, details any) error
 }
 
 var _ chequeRepo = (*Repository)(nil)

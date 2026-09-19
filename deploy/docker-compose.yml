@@ -56,8 +56,10 @@ services:
       INTERNAL_API_KEY: ${INTERNAL_API_KEY}
       HORIZON_URL: ${HORIZON_URL:-https://horizon-testnet.stellar.org}
       SOROBAN_RPC_URL: ${SOROBAN_RPC_URL:-https://soroban-testnet.stellar.org}
-    ports:
-      - "8082:8082"
+    # No host port mapping (SERVICE.md #16): only apisix (9080/9443) is
+    # reachable from the host. Every other service is reached over the
+    # docker network by container name (e.g. http://pay-chain-gateway:8082),
+    # which host-port publishing was never required for.
     healthcheck:
       test: ["CMD", "wget", "--spider", "-q", "http://localhost:8082/health"]
       interval: 10s
@@ -84,8 +86,6 @@ services:
       JWT_PUBLIC_KEY_PATH: /secrets/jwt_public.pem
     volumes:
       - ./secrets:/secrets:ro
-    ports:
-      - "8081:8081"
     depends_on:
       postgres:
         condition: service_healthy
@@ -108,6 +108,7 @@ services:
     container_name: local_payment_cheque
     environment:
       LISTEN_ADDR: ":8083"
+      WEB_AUTH_DOMAIN: ${WEB_AUTH_DOMAIN:-localhost}
       DATABASE_URL: ${DATABASE_URL}
       INTERNAL_API_KEY: ${INTERNAL_API_KEY}
       CHAIN_GATEWAY_URL: http://pay-chain-gateway:8082
@@ -120,8 +121,6 @@ services:
       NETWORK_PASSPHRASE: ${NETWORK_PASSPHRASE:-Test SDF Network ; September 2015}
     volumes:
       - ./secrets:/secrets:ro
-    ports:
-      - "8083:8083"
     depends_on:
       postgres:
         condition: service_healthy
@@ -146,14 +145,13 @@ services:
     container_name: local_payment_tx
     environment:
       LISTEN_ADDR: ":8084"
+      WEB_AUTH_DOMAIN: ${WEB_AUTH_DOMAIN:-localhost}
       DATABASE_URL: ${DATABASE_URL}
       INTERNAL_API_KEY: ${INTERNAL_API_KEY}
       CHAIN_GATEWAY_URL: http://pay-chain-gateway:8082
       JWT_PUBLIC_KEY_PATH: /secrets/jwt_public.pem
     volumes:
       - ./secrets:/secrets:ro
-    ports:
-      - "8084:8084"
     depends_on:
       postgres:
         condition: service_healthy
@@ -178,6 +176,7 @@ services:
     container_name: local_payment_anchor
     environment:
       LISTEN_ADDR: ":8086"
+      WEB_AUTH_DOMAIN: ${WEB_AUTH_DOMAIN:-localhost}
       DATABASE_URL: ${DATABASE_URL}
       INTERNAL_API_KEY: ${INTERNAL_API_KEY}
       CHAIN_GATEWAY_URL: http://pay-chain-gateway:8082
@@ -190,8 +189,6 @@ services:
       NETWORK_PASSPHRASE: ${NETWORK_PASSPHRASE:-Test SDF Network ; September 2015}
     volumes:
       - ./secrets:/secrets:ro
-    ports:
-      - "8086:8086"
     depends_on:
       postgres:
         condition: service_healthy
@@ -224,8 +221,6 @@ services:
       KEEPER_SECRET_SEED: ${KEEPER_SECRET_SEED}
       SWEEP_INTERVAL_SECONDS: ${SWEEP_INTERVAL_SECONDS:-60}
       BUMP_INTERVAL_SECONDS: ${BUMP_INTERVAL_SECONDS:-21600}
-    ports:
-      - "8085:8085"
     depends_on:
       pay-chain-gateway:
         condition: service_healthy

@@ -50,6 +50,11 @@ type Cheque struct {
 	PreauthEntryXDR string    `json:"-"` // never serialized to a user-facing response; force-collect-xdr reads it server-side only
 	CreatedAt       time.Time `json:"createdAt"`
 	UpdatedAt       time.Time `json:"updatedAt"`
+	// ChainVerified is SERVICE.md #1's independent cross-check against the
+	// contract's own get_cheque, set only by Sync: nil means "not checked"
+	// (a chain/decode failure, or this cheque wasn't part of a /sync call),
+	// true/false is an actual match/mismatch against the local State.
+	ChainVerified *bool `json:"chainVerified"`
 }
 
 // PoolDeposit is one row of pay.pool_deposits.
@@ -67,6 +72,10 @@ type PoolDeposit struct {
 	// left entirely to the contract.
 	LastDepositAt time.Time `json:"lastDepositAt"`
 	UpdatedAt     time.Time `json:"updatedAt"`
+	// ChainVerified is SERVICE.md #1's independent cross-check against the
+	// contract's own get_pool amount — same nil/true/false contract as
+	// Cheque.ChainVerified.
+	ChainVerified *bool `json:"chainVerified"`
 }
 
 // SyncView is the Forced Sync response: everything the app needs to decide

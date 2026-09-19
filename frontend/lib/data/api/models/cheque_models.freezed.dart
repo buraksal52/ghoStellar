@@ -1,6 +1,6 @@
 // GENERATED CODE - DO NOT MODIFY BY HAND
 // coverage:ignore-file
-// ignore_for_file: type=lint, type=warning, deprecated_member_use, deprecated_member_use_from_same_package
+// ignore_for_file: type=lint
 // ignore_for_file: unused_element, deprecated_member_use, deprecated_member_use_from_same_package, use_function_type_syntax_for_parameters, unnecessary_const, avoid_init_to_null, invalid_override_different_default_values_named, prefer_expression_function_bodies, annotate_overrides, invalid_annotation_target, unnecessary_question_mark
 
 part of 'cheque_models.dart';
@@ -9,7 +9,6 @@ part of 'cheque_models.dart';
 // FreezedGenerator
 // **************************************************************************
 
-// GENERATED CODE - DO NOT MODIFY BY HAND
 // dart format off
 T _$identity<T>(T value) => value;
 
@@ -29,21 +28,16 @@ $ChequeCopyWith<Cheque> get copyWith => _$ChequeCopyWithImpl<Cheque>(this as Che
 
 @override
 bool operator ==(Object other) {
-  final _this = this as Cheque;
-  return identical(this, other) || (other.runtimeType == runtimeType&&other is Cheque&&(identical(other.id, _this.id) || other.id == _this.id)&&(identical(other.senderAddress, _this.senderAddress) || other.senderAddress == _this.senderAddress)&&(identical(other.receiverAddress, _this.receiverAddress) || other.receiverAddress == _this.receiverAddress)&&(identical(other.tokenContract, _this.tokenContract) || other.tokenContract == _this.tokenContract)&&(identical(other.amountRaw, _this.amountRaw) || other.amountRaw == _this.amountRaw)&&(identical(other.decimals, _this.decimals) || other.decimals == _this.decimals)&&(identical(other.state, _this.state) || other.state == _this.state)&&(identical(other.expiresAt, _this.expiresAt) || other.expiresAt == _this.expiresAt)&&(identical(other.lockTxHash, _this.lockTxHash) || other.lockTxHash == _this.lockTxHash)&&(identical(other.createdAt, _this.createdAt) || other.createdAt == _this.createdAt)&&(identical(other.updatedAt, _this.updatedAt) || other.updatedAt == _this.updatedAt));
+  return identical(this, other) || (other.runtimeType == runtimeType&&other is Cheque&&(identical(other.id, id) || other.id == id)&&(identical(other.senderAddress, senderAddress) || other.senderAddress == senderAddress)&&(identical(other.receiverAddress, receiverAddress) || other.receiverAddress == receiverAddress)&&(identical(other.tokenContract, tokenContract) || other.tokenContract == tokenContract)&&(identical(other.amountRaw, amountRaw) || other.amountRaw == amountRaw)&&(identical(other.decimals, decimals) || other.decimals == decimals)&&(identical(other.state, state) || other.state == state)&&(identical(other.expiresAt, expiresAt) || other.expiresAt == expiresAt)&&(identical(other.lockTxHash, lockTxHash) || other.lockTxHash == lockTxHash)&&(identical(other.createdAt, createdAt) || other.createdAt == createdAt)&&(identical(other.updatedAt, updatedAt) || other.updatedAt == updatedAt));
 }
 
 @JsonKey(includeFromJson: false, includeToJson: false)
 @override
-int get hashCode {
-  final _this = this as Cheque;
-  return Object.hash(runtimeType,_this.id,_this.senderAddress,_this.receiverAddress,_this.tokenContract,_this.amountRaw,_this.decimals,_this.state,_this.expiresAt,_this.lockTxHash,_this.createdAt,_this.updatedAt);
-}
+int get hashCode => Object.hash(runtimeType,id,senderAddress,receiverAddress,tokenContract,amountRaw,decimals,state,expiresAt,lockTxHash,createdAt,updatedAt);
 
 @override
 String toString() {
-  final _this = this as Cheque;
-  return 'Cheque(id: ${_this.id}, senderAddress: ${_this.senderAddress}, receiverAddress: ${_this.receiverAddress}, tokenContract: ${_this.tokenContract}, amountRaw: ${_this.amountRaw}, decimals: ${_this.decimals}, state: ${_this.state}, expiresAt: ${_this.expiresAt}, lockTxHash: ${_this.lockTxHash}, createdAt: ${_this.createdAt}, updatedAt: ${_this.updatedAt})';
+  return 'Cheque(id: $id, senderAddress: $senderAddress, receiverAddress: $receiverAddress, tokenContract: $tokenContract, amountRaw: $amountRaw, decimals: $decimals, state: $state, expiresAt: $expiresAt, lockTxHash: $lockTxHash, createdAt: $createdAt, updatedAt: $updatedAt)';
 }
 
 
@@ -72,7 +66,7 @@ class _$ChequeCopyWithImpl<$Res>
 /// Create a copy of Cheque
 /// with the given fields replaced by the non-null parameter values.
 @pragma('vm:prefer-inline') @override $Res call({Object? id = null,Object? senderAddress = null,Object? receiverAddress = null,Object? tokenContract = null,Object? amountRaw = null,Object? decimals = null,Object? state = null,Object? expiresAt = null,Object? lockTxHash = freezed,Object? createdAt = null,Object? updatedAt = null,}) {
-  return _then(Cheque(
+  return _then(_self.copyWith(
 id: null == id ? _self.id : id // ignore: cast_nullable_to_non_nullable
 as String,senderAddress: null == senderAddress ? _self.senderAddress : senderAddress // ignore: cast_nullable_to_non_nullable
 as String,receiverAddress: null == receiverAddress ? _self.receiverAddress : receiverAddress // ignore: cast_nullable_to_non_nullable
@@ -253,18 +247,16 @@ Map<String, dynamic> toJson() {
 
 @override
 bool operator ==(Object other) {
-    return identical(this, other) || (other.runtimeType == runtimeType&&other is _Cheque&&(identical(other.id, id) || other.id == id)&&(identical(other.senderAddress, senderAddress) || other.senderAddress == senderAddress)&&(identical(other.receiverAddress, receiverAddress) || other.receiverAddress == receiverAddress)&&(identical(other.tokenContract, tokenContract) || other.tokenContract == tokenContract)&&(identical(other.amountRaw, amountRaw) || other.amountRaw == amountRaw)&&(identical(other.decimals, decimals) || other.decimals == decimals)&&(identical(other.state, state) || other.state == state)&&(identical(other.expiresAt, expiresAt) || other.expiresAt == expiresAt)&&(identical(other.lockTxHash, lockTxHash) || other.lockTxHash == lockTxHash)&&(identical(other.createdAt, createdAt) || other.createdAt == createdAt)&&(identical(other.updatedAt, updatedAt) || other.updatedAt == updatedAt));
+  return identical(this, other) || (other.runtimeType == runtimeType&&other is _Cheque&&(identical(other.id, id) || other.id == id)&&(identical(other.senderAddress, senderAddress) || other.senderAddress == senderAddress)&&(identical(other.receiverAddress, receiverAddress) || other.receiverAddress == receiverAddress)&&(identical(other.tokenContract, tokenContract) || other.tokenContract == tokenContract)&&(identical(other.amountRaw, amountRaw) || other.amountRaw == amountRaw)&&(identical(other.decimals, decimals) || other.decimals == decimals)&&(identical(other.state, state) || other.state == state)&&(identical(other.expiresAt, expiresAt) || other.expiresAt == expiresAt)&&(identical(other.lockTxHash, lockTxHash) || other.lockTxHash == lockTxHash)&&(identical(other.createdAt, createdAt) || other.createdAt == createdAt)&&(identical(other.updatedAt, updatedAt) || other.updatedAt == updatedAt));
 }
 
 @JsonKey(includeFromJson: false, includeToJson: false)
 @override
-int get hashCode {
-    return Object.hash(runtimeType,id,senderAddress,receiverAddress,tokenContract,amountRaw,decimals,state,expiresAt,lockTxHash,createdAt,updatedAt);
-}
+int get hashCode => Object.hash(runtimeType,id,senderAddress,receiverAddress,tokenContract,amountRaw,decimals,state,expiresAt,lockTxHash,createdAt,updatedAt);
 
 @override
 String toString() {
-    return 'Cheque(id: $id, senderAddress: $senderAddress, receiverAddress: $receiverAddress, tokenContract: $tokenContract, amountRaw: $amountRaw, decimals: $decimals, state: $state, expiresAt: $expiresAt, lockTxHash: $lockTxHash, createdAt: $createdAt, updatedAt: $updatedAt)';
+  return 'Cheque(id: $id, senderAddress: $senderAddress, receiverAddress: $receiverAddress, tokenContract: $tokenContract, amountRaw: $amountRaw, decimals: $decimals, state: $state, expiresAt: $expiresAt, lockTxHash: $lockTxHash, createdAt: $createdAt, updatedAt: $updatedAt)';
 }
 
 
@@ -329,21 +321,16 @@ $PoolDepositCopyWith<PoolDeposit> get copyWith => _$PoolDepositCopyWithImpl<Pool
 
 @override
 bool operator ==(Object other) {
-  final _this = this as PoolDeposit;
-  return identical(this, other) || (other.runtimeType == runtimeType&&other is PoolDeposit&&(identical(other.ownerAddress, _this.ownerAddress) || other.ownerAddress == _this.ownerAddress)&&(identical(other.amountRaw, _this.amountRaw) || other.amountRaw == _this.amountRaw)&&(identical(other.decimals, _this.decimals) || other.decimals == _this.decimals)&&(identical(other.lastDepositLedger, _this.lastDepositLedger) || other.lastDepositLedger == _this.lastDepositLedger)&&(identical(other.updatedAt, _this.updatedAt) || other.updatedAt == _this.updatedAt));
+  return identical(this, other) || (other.runtimeType == runtimeType&&other is PoolDeposit&&(identical(other.ownerAddress, ownerAddress) || other.ownerAddress == ownerAddress)&&(identical(other.amountRaw, amountRaw) || other.amountRaw == amountRaw)&&(identical(other.decimals, decimals) || other.decimals == decimals)&&(identical(other.lastDepositLedger, lastDepositLedger) || other.lastDepositLedger == lastDepositLedger)&&(identical(other.updatedAt, updatedAt) || other.updatedAt == updatedAt));
 }
 
 @JsonKey(includeFromJson: false, includeToJson: false)
 @override
-int get hashCode {
-  final _this = this as PoolDeposit;
-  return Object.hash(runtimeType,_this.ownerAddress,_this.amountRaw,_this.decimals,_this.lastDepositLedger,_this.updatedAt);
-}
+int get hashCode => Object.hash(runtimeType,ownerAddress,amountRaw,decimals,lastDepositLedger,updatedAt);
 
 @override
 String toString() {
-  final _this = this as PoolDeposit;
-  return 'PoolDeposit(ownerAddress: ${_this.ownerAddress}, amountRaw: ${_this.amountRaw}, decimals: ${_this.decimals}, lastDepositLedger: ${_this.lastDepositLedger}, updatedAt: ${_this.updatedAt})';
+  return 'PoolDeposit(ownerAddress: $ownerAddress, amountRaw: $amountRaw, decimals: $decimals, lastDepositLedger: $lastDepositLedger, updatedAt: $updatedAt)';
 }
 
 
@@ -372,7 +359,7 @@ class _$PoolDepositCopyWithImpl<$Res>
 /// Create a copy of PoolDeposit
 /// with the given fields replaced by the non-null parameter values.
 @pragma('vm:prefer-inline') @override $Res call({Object? ownerAddress = null,Object? amountRaw = null,Object? decimals = null,Object? lastDepositLedger = freezed,Object? updatedAt = null,}) {
-  return _then(PoolDeposit(
+  return _then(_self.copyWith(
 ownerAddress: null == ownerAddress ? _self.ownerAddress : ownerAddress // ignore: cast_nullable_to_non_nullable
 as String,amountRaw: null == amountRaw ? _self.amountRaw : amountRaw // ignore: cast_nullable_to_non_nullable
 as String,decimals: null == decimals ? _self.decimals : decimals // ignore: cast_nullable_to_non_nullable
@@ -541,18 +528,16 @@ Map<String, dynamic> toJson() {
 
 @override
 bool operator ==(Object other) {
-    return identical(this, other) || (other.runtimeType == runtimeType&&other is _PoolDeposit&&(identical(other.ownerAddress, ownerAddress) || other.ownerAddress == ownerAddress)&&(identical(other.amountRaw, amountRaw) || other.amountRaw == amountRaw)&&(identical(other.decimals, decimals) || other.decimals == decimals)&&(identical(other.lastDepositLedger, lastDepositLedger) || other.lastDepositLedger == lastDepositLedger)&&(identical(other.updatedAt, updatedAt) || other.updatedAt == updatedAt));
+  return identical(this, other) || (other.runtimeType == runtimeType&&other is _PoolDeposit&&(identical(other.ownerAddress, ownerAddress) || other.ownerAddress == ownerAddress)&&(identical(other.amountRaw, amountRaw) || other.amountRaw == amountRaw)&&(identical(other.decimals, decimals) || other.decimals == decimals)&&(identical(other.lastDepositLedger, lastDepositLedger) || other.lastDepositLedger == lastDepositLedger)&&(identical(other.updatedAt, updatedAt) || other.updatedAt == updatedAt));
 }
 
 @JsonKey(includeFromJson: false, includeToJson: false)
 @override
-int get hashCode {
-    return Object.hash(runtimeType,ownerAddress,amountRaw,decimals,lastDepositLedger,updatedAt);
-}
+int get hashCode => Object.hash(runtimeType,ownerAddress,amountRaw,decimals,lastDepositLedger,updatedAt);
 
 @override
 String toString() {
-    return 'PoolDeposit(ownerAddress: $ownerAddress, amountRaw: $amountRaw, decimals: $decimals, lastDepositLedger: $lastDepositLedger, updatedAt: $updatedAt)';
+  return 'PoolDeposit(ownerAddress: $ownerAddress, amountRaw: $amountRaw, decimals: $decimals, lastDepositLedger: $lastDepositLedger, updatedAt: $updatedAt)';
 }
 
 
@@ -611,21 +596,16 @@ $SyncResponseCopyWith<SyncResponse> get copyWith => _$SyncResponseCopyWithImpl<S
 
 @override
 bool operator ==(Object other) {
-  final _this = this as SyncResponse;
-  return identical(this, other) || (other.runtimeType == runtimeType&&other is SyncResponse&&const DeepCollectionEquality().equals(other.cheques, _this.cheques)&&(identical(other.pool, _this.pool) || other.pool == _this.pool)&&(identical(other.trustlineReady, _this.trustlineReady) || other.trustlineReady == _this.trustlineReady)&&(identical(other.ledgerSeq, _this.ledgerSeq) || other.ledgerSeq == _this.ledgerSeq)&&(identical(other.serverTimeUnix, _this.serverTimeUnix) || other.serverTimeUnix == _this.serverTimeUnix));
+  return identical(this, other) || (other.runtimeType == runtimeType&&other is SyncResponse&&const DeepCollectionEquality().equals(other.cheques, cheques)&&(identical(other.pool, pool) || other.pool == pool)&&(identical(other.trustlineReady, trustlineReady) || other.trustlineReady == trustlineReady)&&(identical(other.ledgerSeq, ledgerSeq) || other.ledgerSeq == ledgerSeq)&&(identical(other.serverTimeUnix, serverTimeUnix) || other.serverTimeUnix == serverTimeUnix));
 }
 
 @JsonKey(includeFromJson: false, includeToJson: false)
 @override
-int get hashCode {
-  final _this = this as SyncResponse;
-  return Object.hash(runtimeType,const DeepCollectionEquality().hash(_this.cheques),_this.pool,_this.trustlineReady,_this.ledgerSeq,_this.serverTimeUnix);
-}
+int get hashCode => Object.hash(runtimeType,const DeepCollectionEquality().hash(cheques),pool,trustlineReady,ledgerSeq,serverTimeUnix);
 
 @override
 String toString() {
-  final _this = this as SyncResponse;
-  return 'SyncResponse(cheques: ${_this.cheques}, pool: ${_this.pool}, trustlineReady: ${_this.trustlineReady}, ledgerSeq: ${_this.ledgerSeq}, serverTimeUnix: ${_this.serverTimeUnix})';
+  return 'SyncResponse(cheques: $cheques, pool: $pool, trustlineReady: $trustlineReady, ledgerSeq: $ledgerSeq, serverTimeUnix: $serverTimeUnix)';
 }
 
 
@@ -654,7 +634,7 @@ class _$SyncResponseCopyWithImpl<$Res>
 /// Create a copy of SyncResponse
 /// with the given fields replaced by the non-null parameter values.
 @pragma('vm:prefer-inline') @override $Res call({Object? cheques = null,Object? pool = null,Object? trustlineReady = null,Object? ledgerSeq = null,Object? serverTimeUnix = null,}) {
-  return _then(SyncResponse(
+  return _then(_self.copyWith(
 cheques: null == cheques ? _self.cheques : cheques // ignore: cast_nullable_to_non_nullable
 as List<Cheque>,pool: null == pool ? _self.pool : pool // ignore: cast_nullable_to_non_nullable
 as PoolDeposit,trustlineReady: null == trustlineReady ? _self.trustlineReady : trustlineReady // ignore: cast_nullable_to_non_nullable
@@ -810,7 +790,7 @@ return $default(_that.cheques,_that.pool,_that.trustlineReady,_that.ledgerSeq,_t
 @JsonSerializable()
 
 class _SyncResponse implements SyncResponse {
-  const _SyncResponse({required  List<Cheque> cheques, required this.pool, required this.trustlineReady, required this.ledgerSeq, required this.serverTimeUnix}): _cheques = cheques;
+  const _SyncResponse({required final  List<Cheque> cheques, required this.pool, required this.trustlineReady, required this.ledgerSeq, required this.serverTimeUnix}): _cheques = cheques;
   factory _SyncResponse.fromJson(Map<String, dynamic> json) => _$SyncResponseFromJson(json);
 
  final  List<Cheque> _cheques;
@@ -838,18 +818,16 @@ Map<String, dynamic> toJson() {
 
 @override
 bool operator ==(Object other) {
-    return identical(this, other) || (other.runtimeType == runtimeType&&other is _SyncResponse&&const DeepCollectionEquality().equals(other.cheques, _cheques)&&(identical(other.pool, pool) || other.pool == pool)&&(identical(other.trustlineReady, trustlineReady) || other.trustlineReady == trustlineReady)&&(identical(other.ledgerSeq, ledgerSeq) || other.ledgerSeq == ledgerSeq)&&(identical(other.serverTimeUnix, serverTimeUnix) || other.serverTimeUnix == serverTimeUnix));
+  return identical(this, other) || (other.runtimeType == runtimeType&&other is _SyncResponse&&const DeepCollectionEquality().equals(other._cheques, _cheques)&&(identical(other.pool, pool) || other.pool == pool)&&(identical(other.trustlineReady, trustlineReady) || other.trustlineReady == trustlineReady)&&(identical(other.ledgerSeq, ledgerSeq) || other.ledgerSeq == ledgerSeq)&&(identical(other.serverTimeUnix, serverTimeUnix) || other.serverTimeUnix == serverTimeUnix));
 }
 
 @JsonKey(includeFromJson: false, includeToJson: false)
 @override
-int get hashCode {
-    return Object.hash(runtimeType,const DeepCollectionEquality().hash(_cheques),pool,trustlineReady,ledgerSeq,serverTimeUnix);
-}
+int get hashCode => Object.hash(runtimeType,const DeepCollectionEquality().hash(_cheques),pool,trustlineReady,ledgerSeq,serverTimeUnix);
 
 @override
 String toString() {
-    return 'SyncResponse(cheques: $cheques, pool: $pool, trustlineReady: $trustlineReady, ledgerSeq: $ledgerSeq, serverTimeUnix: $serverTimeUnix)';
+  return 'SyncResponse(cheques: $cheques, pool: $pool, trustlineReady: $trustlineReady, ledgerSeq: $ledgerSeq, serverTimeUnix: $serverTimeUnix)';
 }
 
 
@@ -917,21 +895,16 @@ $CreateChequeResultCopyWith<CreateChequeResult> get copyWith => _$CreateChequeRe
 
 @override
 bool operator ==(Object other) {
-  final _this = this as CreateChequeResult;
-  return identical(this, other) || (other.runtimeType == runtimeType&&other is CreateChequeResult&&(identical(other.chequeId, _this.chequeId) || other.chequeId == _this.chequeId)&&(identical(other.lockXdr, _this.lockXdr) || other.lockXdr == _this.lockXdr)&&(identical(other.preauthEntryXdr, _this.preauthEntryXdr) || other.preauthEntryXdr == _this.preauthEntryXdr)&&(identical(other.preauthPayloadHash, _this.preauthPayloadHash) || other.preauthPayloadHash == _this.preauthPayloadHash)&&(identical(other.expiresAt, _this.expiresAt) || other.expiresAt == _this.expiresAt));
+  return identical(this, other) || (other.runtimeType == runtimeType&&other is CreateChequeResult&&(identical(other.chequeId, chequeId) || other.chequeId == chequeId)&&(identical(other.lockXdr, lockXdr) || other.lockXdr == lockXdr)&&(identical(other.preauthEntryXdr, preauthEntryXdr) || other.preauthEntryXdr == preauthEntryXdr)&&(identical(other.preauthPayloadHash, preauthPayloadHash) || other.preauthPayloadHash == preauthPayloadHash)&&(identical(other.expiresAt, expiresAt) || other.expiresAt == expiresAt));
 }
 
 @JsonKey(includeFromJson: false, includeToJson: false)
 @override
-int get hashCode {
-  final _this = this as CreateChequeResult;
-  return Object.hash(runtimeType,_this.chequeId,_this.lockXdr,_this.preauthEntryXdr,_this.preauthPayloadHash,_this.expiresAt);
-}
+int get hashCode => Object.hash(runtimeType,chequeId,lockXdr,preauthEntryXdr,preauthPayloadHash,expiresAt);
 
 @override
 String toString() {
-  final _this = this as CreateChequeResult;
-  return 'CreateChequeResult(chequeId: ${_this.chequeId}, lockXdr: ${_this.lockXdr}, preauthEntryXdr: ${_this.preauthEntryXdr}, preauthPayloadHash: ${_this.preauthPayloadHash}, expiresAt: ${_this.expiresAt})';
+  return 'CreateChequeResult(chequeId: $chequeId, lockXdr: $lockXdr, preauthEntryXdr: $preauthEntryXdr, preauthPayloadHash: $preauthPayloadHash, expiresAt: $expiresAt)';
 }
 
 
@@ -960,7 +933,7 @@ class _$CreateChequeResultCopyWithImpl<$Res>
 /// Create a copy of CreateChequeResult
 /// with the given fields replaced by the non-null parameter values.
 @pragma('vm:prefer-inline') @override $Res call({Object? chequeId = null,Object? lockXdr = null,Object? preauthEntryXdr = null,Object? preauthPayloadHash = null,Object? expiresAt = null,}) {
-  return _then(CreateChequeResult(
+  return _then(_self.copyWith(
 chequeId: null == chequeId ? _self.chequeId : chequeId // ignore: cast_nullable_to_non_nullable
 as String,lockXdr: null == lockXdr ? _self.lockXdr : lockXdr // ignore: cast_nullable_to_non_nullable
 as String,preauthEntryXdr: null == preauthEntryXdr ? _self.preauthEntryXdr : preauthEntryXdr // ignore: cast_nullable_to_non_nullable
@@ -1129,18 +1102,16 @@ Map<String, dynamic> toJson() {
 
 @override
 bool operator ==(Object other) {
-    return identical(this, other) || (other.runtimeType == runtimeType&&other is _CreateChequeResult&&(identical(other.chequeId, chequeId) || other.chequeId == chequeId)&&(identical(other.lockXdr, lockXdr) || other.lockXdr == lockXdr)&&(identical(other.preauthEntryXdr, preauthEntryXdr) || other.preauthEntryXdr == preauthEntryXdr)&&(identical(other.preauthPayloadHash, preauthPayloadHash) || other.preauthPayloadHash == preauthPayloadHash)&&(identical(other.expiresAt, expiresAt) || other.expiresAt == expiresAt));
+  return identical(this, other) || (other.runtimeType == runtimeType&&other is _CreateChequeResult&&(identical(other.chequeId, chequeId) || other.chequeId == chequeId)&&(identical(other.lockXdr, lockXdr) || other.lockXdr == lockXdr)&&(identical(other.preauthEntryXdr, preauthEntryXdr) || other.preauthEntryXdr == preauthEntryXdr)&&(identical(other.preauthPayloadHash, preauthPayloadHash) || other.preauthPayloadHash == preauthPayloadHash)&&(identical(other.expiresAt, expiresAt) || other.expiresAt == expiresAt));
 }
 
 @JsonKey(includeFromJson: false, includeToJson: false)
 @override
-int get hashCode {
-    return Object.hash(runtimeType,chequeId,lockXdr,preauthEntryXdr,preauthPayloadHash,expiresAt);
-}
+int get hashCode => Object.hash(runtimeType,chequeId,lockXdr,preauthEntryXdr,preauthPayloadHash,expiresAt);
 
 @override
 String toString() {
-    return 'CreateChequeResult(chequeId: $chequeId, lockXdr: $lockXdr, preauthEntryXdr: $preauthEntryXdr, preauthPayloadHash: $preauthPayloadHash, expiresAt: $expiresAt)';
+  return 'CreateChequeResult(chequeId: $chequeId, lockXdr: $lockXdr, preauthEntryXdr: $preauthEntryXdr, preauthPayloadHash: $preauthPayloadHash, expiresAt: $expiresAt)';
 }
 
 

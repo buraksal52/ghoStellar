@@ -1,6 +1,6 @@
 // GENERATED CODE - DO NOT MODIFY BY HAND
 // coverage:ignore-file
-// ignore_for_file: type=lint, type=warning, deprecated_member_use, deprecated_member_use_from_same_package
+// ignore_for_file: type=lint
 // ignore_for_file: unused_element, deprecated_member_use, deprecated_member_use_from_same_package, use_function_type_syntax_for_parameters, unnecessary_const, avoid_init_to_null, invalid_override_different_default_values_named, prefer_expression_function_bodies, annotate_overrides, invalid_annotation_target, unnecessary_question_mark
 
 part of 'auth_models.dart';
@@ -9,7 +9,6 @@ part of 'auth_models.dart';
 // FreezedGenerator
 // **************************************************************************
 
-// GENERATED CODE - DO NOT MODIFY BY HAND
 // dart format off
 T _$identity<T>(T value) => value;
 
@@ -29,21 +28,16 @@ $TokenPairCopyWith<TokenPair> get copyWith => _$TokenPairCopyWithImpl<TokenPair>
 
 @override
 bool operator ==(Object other) {
-  final _this = this as TokenPair;
-  return identical(this, other) || (other.runtimeType == runtimeType&&other is TokenPair&&(identical(other.accessToken, _this.accessToken) || other.accessToken == _this.accessToken)&&(identical(other.refreshToken, _this.refreshToken) || other.refreshToken == _this.refreshToken)&&(identical(other.expiresIn, _this.expiresIn) || other.expiresIn == _this.expiresIn));
+  return identical(this, other) || (other.runtimeType == runtimeType&&other is TokenPair&&(identical(other.accessToken, accessToken) || other.accessToken == accessToken)&&(identical(other.refreshToken, refreshToken) || other.refreshToken == refreshToken)&&(identical(other.expiresIn, expiresIn) || other.expiresIn == expiresIn));
 }
 
 @JsonKey(includeFromJson: false, includeToJson: false)
 @override
-int get hashCode {
-  final _this = this as TokenPair;
-  return Object.hash(runtimeType,_this.accessToken,_this.refreshToken,_this.expiresIn);
-}
+int get hashCode => Object.hash(runtimeType,accessToken,refreshToken,expiresIn);
 
 @override
 String toString() {
-  final _this = this as TokenPair;
-  return 'TokenPair(accessToken: ${_this.accessToken}, refreshToken: ${_this.refreshToken}, expiresIn: ${_this.expiresIn})';
+  return 'TokenPair(accessToken: $accessToken, refreshToken: $refreshToken, expiresIn: $expiresIn)';
 }
 
 
@@ -72,7 +66,7 @@ class _$TokenPairCopyWithImpl<$Res>
 /// Create a copy of TokenPair
 /// with the given fields replaced by the non-null parameter values.
 @pragma('vm:prefer-inline') @override $Res call({Object? accessToken = null,Object? refreshToken = null,Object? expiresIn = null,}) {
-  return _then(TokenPair(
+  return _then(_self.copyWith(
 accessToken: null == accessToken ? _self.accessToken : accessToken // ignore: cast_nullable_to_non_nullable
 as String,refreshToken: null == refreshToken ? _self.refreshToken : refreshToken // ignore: cast_nullable_to_non_nullable
 as String,expiresIn: null == expiresIn ? _self.expiresIn : expiresIn // ignore: cast_nullable_to_non_nullable
@@ -237,18 +231,16 @@ Map<String, dynamic> toJson() {
 
 @override
 bool operator ==(Object other) {
-    return identical(this, other) || (other.runtimeType == runtimeType&&other is _TokenPair&&(identical(other.accessToken, accessToken) || other.accessToken == accessToken)&&(identical(other.refreshToken, refreshToken) || other.refreshToken == refreshToken)&&(identical(other.expiresIn, expiresIn) || other.expiresIn == expiresIn));
+  return identical(this, other) || (other.runtimeType == runtimeType&&other is _TokenPair&&(identical(other.accessToken, accessToken) || other.accessToken == accessToken)&&(identical(other.refreshToken, refreshToken) || other.refreshToken == refreshToken)&&(identical(other.expiresIn, expiresIn) || other.expiresIn == expiresIn));
 }
 
 @JsonKey(includeFromJson: false, includeToJson: false)
 @override
-int get hashCode {
-    return Object.hash(runtimeType,accessToken,refreshToken,expiresIn);
-}
+int get hashCode => Object.hash(runtimeType,accessToken,refreshToken,expiresIn);
 
 @override
 String toString() {
-    return 'TokenPair(accessToken: $accessToken, refreshToken: $refreshToken, expiresIn: $expiresIn)';
+  return 'TokenPair(accessToken: $accessToken, refreshToken: $refreshToken, expiresIn: $expiresIn)';
 }
 
 
@@ -305,21 +297,16 @@ $AppUserCopyWith<AppUser> get copyWith => _$AppUserCopyWithImpl<AppUser>(this as
 
 @override
 bool operator ==(Object other) {
-  final _this = this as AppUser;
-  return identical(this, other) || (other.runtimeType == runtimeType&&other is AppUser&&(identical(other.stellarAddress, _this.stellarAddress) || other.stellarAddress == _this.stellarAddress)&&(identical(other.displayName, _this.displayName) || other.displayName == _this.displayName)&&(identical(other.createdAt, _this.createdAt) || other.createdAt == _this.createdAt));
+  return identical(this, other) || (other.runtimeType == runtimeType&&other is AppUser&&(identical(other.stellarAddress, stellarAddress) || other.stellarAddress == stellarAddress)&&(identical(other.displayName, displayName) || other.displayName == displayName)&&(identical(other.createdAt, createdAt) || other.createdAt == createdAt));
 }
 
 @JsonKey(includeFromJson: false, includeToJson: false)
 @override
-int get hashCode {
-  final _this = this as AppUser;
-  return Object.hash(runtimeType,_this.stellarAddress,_this.displayName,_this.createdAt);
-}
+int get hashCode => Object.hash(runtimeType,stellarAddress,displayName,createdAt);
 
 @override
 String toString() {
-  final _this = this as AppUser;
-  return 'AppUser(stellarAddress: ${_this.stellarAddress}, displayName: ${_this.displayName}, createdAt: ${_this.createdAt})';
+  return 'AppUser(stellarAddress: $stellarAddress, displayName: $displayName, createdAt: $createdAt)';
 }
 
 
@@ -348,7 +335,7 @@ class _$AppUserCopyWithImpl<$Res>
 /// Create a copy of AppUser
 /// with the given fields replaced by the non-null parameter values.
 @pragma('vm:prefer-inline') @override $Res call({Object? stellarAddress = null,Object? displayName = freezed,Object? createdAt = freezed,}) {
-  return _then(AppUser(
+  return _then(_self.copyWith(
 stellarAddress: null == stellarAddress ? _self.stellarAddress : stellarAddress // ignore: cast_nullable_to_non_nullable
 as String,displayName: freezed == displayName ? _self.displayName : displayName // ignore: cast_nullable_to_non_nullable
 as String?,createdAt: freezed == createdAt ? _self.createdAt : createdAt // ignore: cast_nullable_to_non_nullable
@@ -513,18 +500,16 @@ Map<String, dynamic> toJson() {
 
 @override
 bool operator ==(Object other) {
-    return identical(this, other) || (other.runtimeType == runtimeType&&other is _AppUser&&(identical(other.stellarAddress, stellarAddress) || other.stellarAddress == stellarAddress)&&(identical(other.displayName, displayName) || other.displayName == displayName)&&(identical(other.createdAt, createdAt) || other.createdAt == createdAt));
+  return identical(this, other) || (other.runtimeType == runtimeType&&other is _AppUser&&(identical(other.stellarAddress, stellarAddress) || other.stellarAddress == stellarAddress)&&(identical(other.displayName, displayName) || other.displayName == displayName)&&(identical(other.createdAt, createdAt) || other.createdAt == createdAt));
 }
 
 @JsonKey(includeFromJson: false, includeToJson: false)
 @override
-int get hashCode {
-    return Object.hash(runtimeType,stellarAddress,displayName,createdAt);
-}
+int get hashCode => Object.hash(runtimeType,stellarAddress,displayName,createdAt);
 
 @override
 String toString() {
-    return 'AppUser(stellarAddress: $stellarAddress, displayName: $displayName, createdAt: $createdAt)';
+  return 'AppUser(stellarAddress: $stellarAddress, displayName: $displayName, createdAt: $createdAt)';
 }
 
 

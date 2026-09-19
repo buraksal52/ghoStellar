@@ -108,6 +108,51 @@ func RequestID(ctx context.Context) string {
 	return v
 }
 
+// AccessLog is middleware that logs one line per request — method, path,
+// status, duration, and the request's id — closing SERVICE.md #13 (until
+// now, only application-level error logs said anything about what a
+// request was; there was no record of ordinary successful traffic at all).
+// It must run downstream of WithRequestID (so RequestID(ctx) is already
+// set) and upstream of Recover (so a panic recovered by Recover still gets
+// logged here with its final 500 status, not skipped).
+func AccessLog(logger *slog.Logger, next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		start := time.Now()
+		sw := &statusCapturingWriter{ResponseWriter: w, status: http.StatusOK}
+		next.ServeHTTP(sw, r)
+		logger.Info("request",
+			"method", r.Method,
+			"path", r.URL.Path,
+			"status", sw.status,
+			"duration_ms", time.Since(start).Milliseconds(),
+			"request_id", RequestID(r.Context()),
+		)
+	})
+}
+
+// statusCapturingWriter records the status code a handler wrote, since
+// http.ResponseWriter itself exposes no way to read it back — defaults to
+// 200 if the handler never calls WriteHeader explicitly (net/http's own
+// behavior when Write is called first).
+type statusCapturingWriter struct {
+	http.ResponseWriter
+	status      int
+	wroteHeader bool
+}
+
+func (w *statusCapturingWriter) WriteHeader(status int) {
+	if !w.wroteHeader {
+		w.status = status
+		w.wroteHeader = true
+	}
+	w.ResponseWriter.WriteHeader(status)
+}
+
+func (w *statusCapturingWriter) Write(b []byte) (int, error) {
+	w.wroteHeader = true
+	return w.ResponseWriter.Write(b)
+}
+
 // Recover is panic-recovery middleware (SERVICE.md #12): a single handler
 // panicking must return a 500 to that one caller, not take the whole
 // process down and drop every other in-flight request. logger receives the

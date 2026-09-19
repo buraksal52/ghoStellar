@@ -4,6 +4,7 @@ import (
 	"crypto/rand"
 	"crypto/rsa"
 	"encoding/json"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -38,7 +39,7 @@ func bearerHandler(t *testing.T, address string, next http.Handler) (http.Handle
 	if err != nil {
 		t.Fatal(err)
 	}
-	wrapped := authx.RequireBearer(&priv.PublicKey, func(w http.ResponseWriter) {
+	wrapped := authx.RequireBearer(&priv.PublicKey, "", func(w http.ResponseWriter) {
 		w.WriteHeader(http.StatusUnauthorized)
 	}, next)
 	return wrapped, tok
@@ -117,13 +118,30 @@ func TestSepProxy_MalformedJSONBodyRejected(t *testing.T) {
 	}
 }
 
-// TestSepProxy_MultipartBodyRejected pins SERVICE.md #7: a real SEP-12
-// multipart/form-data KYC upload cannot flow through this proxy today,
-// because sepProxy validates every non-GET body with json.Valid.
-func TestSepProxy_MultipartBodyRejected(t *testing.T) {
-	client := tomlServer(t, `KYC_SERVER="https://kyc.anchor.example/sep12"`)
+// TestSepProxy_MultipartBodyPassedThrough closes SERVICE.md #7: a real
+// SEP-12 multipart/form-data KYC upload must flow through this proxy
+// byte-for-byte with its original Content-Type (including the boundary),
+// not be forced into application/json or rejected by json.Valid.
+func TestSepProxy_MultipartBodyPassedThrough(t *testing.T) {
+	var gotContentType string
+	var gotBody []byte
+	srv := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/.well-known/stellar.toml":
+			w.Write([]byte(`KYC_SERVER="https://` + testAnchorDomain + `/sep12"`))
+		case "/sep12/customer":
+			gotContentType = r.Header.Get("Content-Type")
+			gotBody, _ = io.ReadAll(r.Body)
+			w.Header().Set("Content-Type", "application/json")
+			w.Write([]byte(`{"id":"customer-1"}`))
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer srv.Close()
+
 	cfg := testConfig(testAnchorDomain, testIssuer(t))
-	svc := newServiceWithRepo(cfg, newFakeRepo(), client, nil, discardLogger())
+	svc := newServiceWithRepo(cfg, newFakeRepo(), NewClient(dialingClient(srv)), nil, discardLogger())
 	h := NewHandler(svc, discardLogger())
 
 	mux := http.NewServeMux()
@@ -138,7 +156,39 @@ func TestSepProxy_MultipartBodyRejected(t *testing.T) {
 	rec := httptest.NewRecorder()
 	wrapped.ServeHTTP(rec, req)
 
+	if rec.Code != http.StatusOK {
+		t.Fatalf("got status %d, want 200; body=%s", rec.Code, rec.Body.String())
+	}
+	if gotContentType != "multipart/form-data; boundary=boundary" {
+		t.Errorf("upstream Content-Type = %q, want the original multipart Content-Type preserved", gotContentType)
+	}
+	if string(gotBody) != body {
+		t.Errorf("upstream body = %q, want %q (byte-for-byte passthrough)", gotBody, body)
+	}
+}
+
+// TestSepProxy_MalformedJSONStillRejectedForOrdinaryRequests proves the
+// json.Valid check is only skipped for multipart bodies — an ordinary
+// (non-multipart) malformed body is still rejected, matching
+// TestSepProxy_MalformedJSONBodyRejected above.
+func TestSepProxy_MalformedJSONStillRejectedForOrdinaryRequests(t *testing.T) {
+	client := tomlServer(t, `KYC_SERVER="https://kyc.anchor.example/sep12"`)
+	cfg := testConfig(testAnchorDomain, testIssuer(t))
+	svc := newServiceWithRepo(cfg, newFakeRepo(), client, nil, discardLogger())
+	h := NewHandler(svc, discardLogger())
+
+	mux := http.NewServeMux()
+	RegisterRoutes(mux, h)
+	wrapped, tok := bearerHandler(t, "GCALLERADDRESS000000000000000000000000000000000000000", mux)
+
+	req := httptest.NewRequest("PUT", "/anchors/"+testAnchorID+"/sep12/customer", strings.NewReader("{not-json"))
+	req.Header.Set("Authorization", "Bearer "+tok)
+	req.Header.Set("X-Anchor-Token", "anchor-jwt")
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+	wrapped.ServeHTTP(rec, req)
+
 	if rec.Code != http.StatusBadRequest {
-		t.Fatalf("got status %d, want 400 (multipart bodies are not supported); body=%s", rec.Code, rec.Body.String())
+		t.Fatalf("got status %d, want 400", rec.Code)
 	}
 }

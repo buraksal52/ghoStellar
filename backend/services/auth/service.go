@@ -136,19 +136,33 @@ func (s *Service) VerifyAndMint(ctx context.Context, signedChallengeXDR string) 
 	if err != nil {
 		return TokenPair{}, User{}, err
 	}
+	// Best-effort (SERVICE.md #11): an audit write failure must never turn
+	// a successful login into a reported failure.
+	_ = repo.InsertAudit(ctx, clientAccountID, "auth.login_succeeded", nil)
 	return pair, user, nil
 }
 
 // Refresh mints a new access token from a still-valid refresh token,
 // without requiring the user to sign another SEP-10 challenge.
 func (s *Service) Refresh(refreshToken string) (TokenPair, error) {
-	claims, err := authx.VerifyJWT(refreshToken, s.cfg.JWTPublicKey)
+	// "" (no audience check) here: a refresh token's own aud is verified
+	// identically to an access token's (both set it in mintPair), but
+	// Refresh's only real gate is the Subject=="refresh" check below —
+	// requiring a specific audience would need this method to know its
+	// caller's expected audience, which it has no reason to.
+	claims, err := authx.VerifyJWT(refreshToken, s.cfg.JWTPublicKey, "")
 	if err != nil || claims.Subject != "refresh" {
 		return TokenPair{}, errInvalidToken
 	}
 	return s.mintPair(claims.StellarAccount)
 }
 
+// mintPair sets Issuer/Audience on both tokens (SERVICE.md #19) —
+// jwt.RegisteredClaims already carries these fields, this is the first
+// place anything populates them. Audience is WebAuthDomain: SEP-10 JWTs
+// conventionally bind to the web-auth domain, and it's the one piece of
+// per-deployment identity every other service can also be configured with
+// (WEB_AUTH_DOMAIN) to verify against via authx.RequireBearer.
 func (s *Service) mintPair(stellarAccount string) (TokenPair, error) {
 	now := time.Now()
 	access := authx.Claims{
@@ -156,6 +170,8 @@ func (s *Service) mintPair(stellarAccount string) (TokenPair, error) {
 			ExpiresAt: jwt.NewNumericDate(now.Add(accessTokenTTL)),
 			IssuedAt:  jwt.NewNumericDate(now),
 			Subject:   "access", // authx.VerifyAccessToken requires this — a refresh token must never work as a bearer token
+			Issuer:    "pay-auth-service",
+			Audience:  jwt.ClaimStrings{s.cfg.WebAuthDomain},
 		},
 		StellarAccount: stellarAccount,
 	}
@@ -164,6 +180,8 @@ func (s *Service) mintPair(stellarAccount string) (TokenPair, error) {
 			ExpiresAt: jwt.NewNumericDate(now.Add(refreshTokenTTL)),
 			IssuedAt:  jwt.NewNumericDate(now),
 			Subject:   "refresh",
+			Issuer:    "pay-auth-service",
+			Audience:  jwt.ClaimStrings{s.cfg.WebAuthDomain},
 		},
 		StellarAccount: stellarAccount,
 	}

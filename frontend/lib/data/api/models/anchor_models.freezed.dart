@@ -1,6 +1,6 @@
 // GENERATED CODE - DO NOT MODIFY BY HAND
 // coverage:ignore-file
-// ignore_for_file: type=lint, type=warning, deprecated_member_use, deprecated_member_use_from_same_package
+// ignore_for_file: type=lint
 // ignore_for_file: unused_element, deprecated_member_use, deprecated_member_use_from_same_package, use_function_type_syntax_for_parameters, unnecessary_const, avoid_init_to_null, invalid_override_different_default_values_named, prefer_expression_function_bodies, annotate_overrides, invalid_annotation_target, unnecessary_question_mark
 
 part of 'anchor_models.dart';
@@ -9,7 +9,6 @@ part of 'anchor_models.dart';
 // FreezedGenerator
 // **************************************************************************
 
-// GENERATED CODE - DO NOT MODIFY BY HAND
 // dart format off
 T _$identity<T>(T value) => value;
 
@@ -29,21 +28,16 @@ $AnchorInfoCopyWith<AnchorInfo> get copyWith => _$AnchorInfoCopyWithImpl<AnchorI
 
 @override
 bool operator ==(Object other) {
-  final _this = this as AnchorInfo;
-  return identical(this, other) || (other.runtimeType == runtimeType&&other is AnchorInfo&&(identical(other.id, _this.id) || other.id == _this.id)&&(identical(other.domain, _this.domain) || other.domain == _this.domain)&&(identical(other.signingKey, _this.signingKey) || other.signingKey == _this.signingKey)&&(identical(other.webAuthEndpoint, _this.webAuthEndpoint) || other.webAuthEndpoint == _this.webAuthEndpoint)&&(identical(other.transferServer24, _this.transferServer24) || other.transferServer24 == _this.transferServer24)&&(identical(other.assetCode, _this.assetCode) || other.assetCode == _this.assetCode)&&(identical(other.assetIssuer, _this.assetIssuer) || other.assetIssuer == _this.assetIssuer));
+  return identical(this, other) || (other.runtimeType == runtimeType&&other is AnchorInfo&&(identical(other.id, id) || other.id == id)&&(identical(other.domain, domain) || other.domain == domain)&&(identical(other.signingKey, signingKey) || other.signingKey == signingKey)&&(identical(other.webAuthEndpoint, webAuthEndpoint) || other.webAuthEndpoint == webAuthEndpoint)&&(identical(other.transferServer24, transferServer24) || other.transferServer24 == transferServer24)&&(identical(other.assetCode, assetCode) || other.assetCode == assetCode)&&(identical(other.assetIssuer, assetIssuer) || other.assetIssuer == assetIssuer));
 }
 
 @JsonKey(includeFromJson: false, includeToJson: false)
 @override
-int get hashCode {
-  final _this = this as AnchorInfo;
-  return Object.hash(runtimeType,_this.id,_this.domain,_this.signingKey,_this.webAuthEndpoint,_this.transferServer24,_this.assetCode,_this.assetIssuer);
-}
+int get hashCode => Object.hash(runtimeType,id,domain,signingKey,webAuthEndpoint,transferServer24,assetCode,assetIssuer);
 
 @override
 String toString() {
-  final _this = this as AnchorInfo;
-  return 'AnchorInfo(id: ${_this.id}, domain: ${_this.domain}, signingKey: ${_this.signingKey}, webAuthEndpoint: ${_this.webAuthEndpoint}, transferServer24: ${_this.transferServer24}, assetCode: ${_this.assetCode}, assetIssuer: ${_this.assetIssuer})';
+  return 'AnchorInfo(id: $id, domain: $domain, signingKey: $signingKey, webAuthEndpoint: $webAuthEndpoint, transferServer24: $transferServer24, assetCode: $assetCode, assetIssuer: $assetIssuer)';
 }
 
 
@@ -72,7 +66,7 @@ class _$AnchorInfoCopyWithImpl<$Res>
 /// Create a copy of AnchorInfo
 /// with the given fields replaced by the non-null parameter values.
 @pragma('vm:prefer-inline') @override $Res call({Object? id = null,Object? domain = null,Object? signingKey = null,Object? webAuthEndpoint = null,Object? transferServer24 = null,Object? assetCode = null,Object? assetIssuer = null,}) {
-  return _then(AnchorInfo(
+  return _then(_self.copyWith(
 id: null == id ? _self.id : id // ignore: cast_nullable_to_non_nullable
 as String,domain: null == domain ? _self.domain : domain // ignore: cast_nullable_to_non_nullable
 as String,signingKey: null == signingKey ? _self.signingKey : signingKey // ignore: cast_nullable_to_non_nullable
@@ -245,18 +239,16 @@ Map<String, dynamic> toJson() {
 
 @override
 bool operator ==(Object other) {
-    return identical(this, other) || (other.runtimeType == runtimeType&&other is _AnchorInfo&&(identical(other.id, id) || other.id == id)&&(identical(other.domain, domain) || other.domain == domain)&&(identical(other.signingKey, signingKey) || other.signingKey == signingKey)&&(identical(other.webAuthEndpoint, webAuthEndpoint) || other.webAuthEndpoint == webAuthEndpoint)&&(identical(other.transferServer24, transferServer24) || other.transferServer24 == transferServer24)&&(identical(other.assetCode, assetCode) || other.assetCode == assetCode)&&(identical(other.assetIssuer, assetIssuer) || other.assetIssuer == assetIssuer));
+  return identical(this, other) || (other.runtimeType == runtimeType&&other is _AnchorInfo&&(identical(other.id, id) || other.id == id)&&(identical(other.domain, domain) || other.domain == domain)&&(identical(other.signingKey, signingKey) || other.signingKey == signingKey)&&(identical(other.webAuthEndpoint, webAuthEndpoint) || other.webAuthEndpoint == webAuthEndpoint)&&(identical(other.transferServer24, transferServer24) || other.transferServer24 == transferServer24)&&(identical(other.assetCode, assetCode) || other.assetCode == assetCode)&&(identical(other.assetIssuer, assetIssuer) || other.assetIssuer == assetIssuer));
 }
 
 @JsonKey(includeFromJson: false, includeToJson: false)
 @override
-int get hashCode {
-    return Object.hash(runtimeType,id,domain,signingKey,webAuthEndpoint,transferServer24,assetCode,assetIssuer);
-}
+int get hashCode => Object.hash(runtimeType,id,domain,signingKey,webAuthEndpoint,transferServer24,assetCode,assetIssuer);
 
 @override
 String toString() {
-    return 'AnchorInfo(id: $id, domain: $domain, signingKey: $signingKey, webAuthEndpoint: $webAuthEndpoint, transferServer24: $transferServer24, assetCode: $assetCode, assetIssuer: $assetIssuer)';
+  return 'AnchorInfo(id: $id, domain: $domain, signingKey: $signingKey, webAuthEndpoint: $webAuthEndpoint, transferServer24: $transferServer24, assetCode: $assetCode, assetIssuer: $assetIssuer)';
 }
 
 
@@ -317,21 +309,16 @@ $AnchorTransactionCopyWith<AnchorTransaction> get copyWith => _$AnchorTransactio
 
 @override
 bool operator ==(Object other) {
-  final _this = this as AnchorTransaction;
-  return identical(this, other) || (other.runtimeType == runtimeType&&other is AnchorTransaction&&(identical(other.id, _this.id) || other.id == _this.id)&&(identical(other.anchorId, _this.anchorId) || other.anchorId == _this.anchorId)&&(identical(other.kind, _this.kind) || other.kind == _this.kind)&&(identical(other.state, _this.state) || other.state == _this.state)&&(identical(other.amount, _this.amount) || other.amount == _this.amount)&&(identical(other.decimals, _this.decimals) || other.decimals == _this.decimals)&&(identical(other.stellarTxHash, _this.stellarTxHash) || other.stellarTxHash == _this.stellarTxHash)&&(identical(other.startedAt, _this.startedAt) || other.startedAt == _this.startedAt)&&(identical(other.updatedAt, _this.updatedAt) || other.updatedAt == _this.updatedAt));
+  return identical(this, other) || (other.runtimeType == runtimeType&&other is AnchorTransaction&&(identical(other.id, id) || other.id == id)&&(identical(other.anchorId, anchorId) || other.anchorId == anchorId)&&(identical(other.kind, kind) || other.kind == kind)&&(identical(other.state, state) || other.state == state)&&(identical(other.amount, amount) || other.amount == amount)&&(identical(other.decimals, decimals) || other.decimals == decimals)&&(identical(other.stellarTxHash, stellarTxHash) || other.stellarTxHash == stellarTxHash)&&(identical(other.startedAt, startedAt) || other.startedAt == startedAt)&&(identical(other.updatedAt, updatedAt) || other.updatedAt == updatedAt));
 }
 
 @JsonKey(includeFromJson: false, includeToJson: false)
 @override
-int get hashCode {
-  final _this = this as AnchorTransaction;
-  return Object.hash(runtimeType,_this.id,_this.anchorId,_this.kind,_this.state,_this.amount,_this.decimals,_this.stellarTxHash,_this.startedAt,_this.updatedAt);
-}
+int get hashCode => Object.hash(runtimeType,id,anchorId,kind,state,amount,decimals,stellarTxHash,startedAt,updatedAt);
 
 @override
 String toString() {
-  final _this = this as AnchorTransaction;
-  return 'AnchorTransaction(id: ${_this.id}, anchorId: ${_this.anchorId}, kind: ${_this.kind}, state: ${_this.state}, amount: ${_this.amount}, decimals: ${_this.decimals}, stellarTxHash: ${_this.stellarTxHash}, startedAt: ${_this.startedAt}, updatedAt: ${_this.updatedAt})';
+  return 'AnchorTransaction(id: $id, anchorId: $anchorId, kind: $kind, state: $state, amount: $amount, decimals: $decimals, stellarTxHash: $stellarTxHash, startedAt: $startedAt, updatedAt: $updatedAt)';
 }
 
 
@@ -360,7 +347,7 @@ class _$AnchorTransactionCopyWithImpl<$Res>
 /// Create a copy of AnchorTransaction
 /// with the given fields replaced by the non-null parameter values.
 @pragma('vm:prefer-inline') @override $Res call({Object? id = null,Object? anchorId = null,Object? kind = null,Object? state = null,Object? amount = freezed,Object? decimals = freezed,Object? stellarTxHash = freezed,Object? startedAt = null,Object? updatedAt = null,}) {
-  return _then(AnchorTransaction(
+  return _then(_self.copyWith(
 id: null == id ? _self.id : id // ignore: cast_nullable_to_non_nullable
 as String,anchorId: null == anchorId ? _self.anchorId : anchorId // ignore: cast_nullable_to_non_nullable
 as String,kind: null == kind ? _self.kind : kind // ignore: cast_nullable_to_non_nullable
@@ -537,18 +524,16 @@ Map<String, dynamic> toJson() {
 
 @override
 bool operator ==(Object other) {
-    return identical(this, other) || (other.runtimeType == runtimeType&&other is _AnchorTransaction&&(identical(other.id, id) || other.id == id)&&(identical(other.anchorId, anchorId) || other.anchorId == anchorId)&&(identical(other.kind, kind) || other.kind == kind)&&(identical(other.state, state) || other.state == state)&&(identical(other.amount, amount) || other.amount == amount)&&(identical(other.decimals, decimals) || other.decimals == decimals)&&(identical(other.stellarTxHash, stellarTxHash) || other.stellarTxHash == stellarTxHash)&&(identical(other.startedAt, startedAt) || other.startedAt == startedAt)&&(identical(other.updatedAt, updatedAt) || other.updatedAt == updatedAt));
+  return identical(this, other) || (other.runtimeType == runtimeType&&other is _AnchorTransaction&&(identical(other.id, id) || other.id == id)&&(identical(other.anchorId, anchorId) || other.anchorId == anchorId)&&(identical(other.kind, kind) || other.kind == kind)&&(identical(other.state, state) || other.state == state)&&(identical(other.amount, amount) || other.amount == amount)&&(identical(other.decimals, decimals) || other.decimals == decimals)&&(identical(other.stellarTxHash, stellarTxHash) || other.stellarTxHash == stellarTxHash)&&(identical(other.startedAt, startedAt) || other.startedAt == startedAt)&&(identical(other.updatedAt, updatedAt) || other.updatedAt == updatedAt));
 }
 
 @JsonKey(includeFromJson: false, includeToJson: false)
 @override
-int get hashCode {
-    return Object.hash(runtimeType,id,anchorId,kind,state,amount,decimals,stellarTxHash,startedAt,updatedAt);
-}
+int get hashCode => Object.hash(runtimeType,id,anchorId,kind,state,amount,decimals,stellarTxHash,startedAt,updatedAt);
 
 @override
 String toString() {
-    return 'AnchorTransaction(id: $id, anchorId: $anchorId, kind: $kind, state: $state, amount: $amount, decimals: $decimals, stellarTxHash: $stellarTxHash, startedAt: $startedAt, updatedAt: $updatedAt)';
+  return 'AnchorTransaction(id: $id, anchorId: $anchorId, kind: $kind, state: $state, amount: $amount, decimals: $decimals, stellarTxHash: $stellarTxHash, startedAt: $startedAt, updatedAt: $updatedAt)';
 }
 
 

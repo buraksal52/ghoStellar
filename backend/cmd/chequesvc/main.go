@@ -56,7 +56,8 @@ func main() {
 
 	api := http.NewServeMux()
 	cheque.RegisterRoutes(api, handler)
-	protected := authx.RequireBearer(pubKey, unauthorized, api)
+	webAuthDomain := envx.Get("WEB_AUTH_DOMAIN", "localhost")
+	protected := authx.RequireBearer(pubKey, webAuthDomain, unauthorized, api)
 	mux.Handle("/", dbx.RequireReady(pool, cheque.ErrDBNotReady, protected))
 
 	internal := http.NewServeMux()
@@ -65,7 +66,7 @@ func main() {
 
 	addr := envx.Get("LISTEN_ADDR", ":8083")
 	logger.Info("listening", "addr", addr)
-	root := httpx.WithRequestID(httpx.Recover(logger, httpx.MaxBody(1<<20, mux)))
+	root := httpx.WithRequestID(httpx.AccessLog(logger, httpx.Recover(logger, httpx.MaxBody(1<<20, mux))))
 	if err := httpx.ListenAndServe(ctx, addr, root, logger, httpx.ServeOptions{}); err != nil {
 		logger.Error("server stopped", "error", err)
 		os.Exit(1)

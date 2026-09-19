@@ -236,6 +236,10 @@ func TestCreateCheque_HappyPath(t *testing.T) {
 	if stored.AmountRaw != "105000000" {
 		t.Errorf("stored AmountRaw = %q, want 105000000 (10.5 * 10^7)", stored.AmountRaw)
 	}
+
+	if len(repo.auditLog) != 1 || repo.auditLog[0].action != "cheque.lock_xdr_issued" {
+		t.Errorf("audit log = %+v, want one cheque.lock_xdr_issued entry (SERVICE.md #11)", repo.auditLog)
+	}
 }
 
 // ---- caller/party guards ---------------------------------------------------
@@ -359,6 +363,9 @@ func TestConfirmForceCollect_CollectedVsBounced(t *testing.T) {
 			}
 			if stored.State != tc.want {
 				t.Errorf("state = %v, want %v", stored.State, tc.want)
+			}
+			if len(repo.auditLog) != 1 || repo.auditLog[0].action != "cheque.force_collect_confirmed" {
+				t.Errorf("audit log = %+v, want one cheque.force_collect_confirmed entry", repo.auditLog)
 			}
 		})
 	}

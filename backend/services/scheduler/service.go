@@ -4,6 +4,8 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"sync"
+	"time"
 
 	"github.com/oklog/ulid/v2"
 	"github.com/stellar/go-stellar-sdk/keypair"
@@ -11,6 +13,25 @@ import (
 	"github.com/local-payment/backend/pkg/stellarx"
 	"github.com/local-payment/backend/ports"
 )
+
+// backoffBase/backoffCap/deadLetterThreshold tune SweepExpiredCheques's
+// per-cheque retry backoff (SERVICE.md #15): without this, a cheque that
+// fails every sweep (e.g. a permanently underfunded keeper, or a
+// malformed record) gets retried every SWEEP_INTERVAL_SECONDS forever,
+// which is both wasted work and noisy logs indistinguishable from a fresh
+// failure. State is in-memory only and resets on restart — acceptable for
+// this MVP's tone (matches the rest of the codebase's "best-effort,
+// bounded" scheduler jobs).
+const (
+	backoffBase         = time.Minute
+	backoffCap          = time.Hour
+	deadLetterThreshold = 10
+)
+
+type sweepFailure struct {
+	count       int
+	nextAttempt time.Time
+}
 
 // Config configures Service. KeeperSeed is a "S..." secret — the ONLY
 // private key pay-scheduler-service holds. It pays the network fee for
@@ -28,22 +49,37 @@ type Config struct {
 type Service struct {
 	cfg    Config
 	chain  ports.ChainGateway
-	cheque *ChequeClient
+	cheque chequeGateway
 	keeper *keypair.Full
 	log    *slog.Logger
+
+	failuresMu sync.Mutex
+	failures   map[string]sweepFailure
 }
 
-func NewService(cfg Config, chain ports.ChainGateway, cheque *ChequeClient, log *slog.Logger) (*Service, error) {
+// chequeGateway is the sweep's only dependency on pay-cheque-service —
+// satisfied by *ChequeClient (HTTP, microservice profile) or, in a
+// monolith process, ports/directadapter's in-process implementation.
+type chequeGateway interface {
+	ExpiredFundedCheques(ctx context.Context) ([]ExpiredCheque, error)
+	MarkRefunded(ctx context.Context, chequeID, txHash string) error
+}
+
+var _ chequeGateway = (*ChequeClient)(nil)
+
+func NewService(cfg Config, chain ports.ChainGateway, cheque chequeGateway, log *slog.Logger) (*Service, error) {
 	keeper, err := keypair.ParseFull(cfg.KeeperSeed)
 	if err != nil {
 		return nil, fmt.Errorf("scheduler: parse keeper seed: %w", err)
 	}
-	return &Service{cfg: cfg, chain: chain, cheque: cheque, keeper: keeper, log: log}, nil
+	return &Service{cfg: cfg, chain: chain, cheque: cheque, keeper: keeper, log: log, failures: map[string]sweepFailure{}}, nil
 }
 
 // SweepExpiredCheques refunds every expired, never-claimed cheque it can
 // (p2p doc §6.2, §9.B1). A failure on one cheque is logged and does not
-// stop the sweep from trying the rest.
+// stop the sweep from trying the rest. A cheque that keeps failing backs
+// off exponentially instead of being retried every single sweep tick
+// (SERVICE.md #15) — see backoffBase/backoffCap/deadLetterThreshold.
 func (s *Service) SweepExpiredCheques(ctx context.Context) {
 	expired, err := s.cheque.ExpiredFundedCheques(ctx)
 	if err != nil {
@@ -55,12 +91,49 @@ func (s *Service) SweepExpiredCheques(ctx context.Context) {
 	}
 	s.log.Info("sweep: refunding expired cheques", "count", len(expired))
 
+	now := time.Now()
 	for _, c := range expired {
-		if err := s.refundOne(ctx, c); err != nil {
-			s.log.Error("sweep: refund failed", "cheque_id", c.ID, "error", err)
+		if s.inBackoff(c.ID, now) {
 			continue
 		}
+		if err := s.refundOne(ctx, c); err != nil {
+			s.recordFailure(c.ID, err)
+			continue
+		}
+		s.clearFailure(c.ID)
 	}
+}
+
+// inBackoff reports whether chequeID's next retry is still in the future.
+func (s *Service) inBackoff(chequeID string, now time.Time) bool {
+	s.failuresMu.Lock()
+	defer s.failuresMu.Unlock()
+	f, ok := s.failures[chequeID]
+	return ok && now.Before(f.nextAttempt)
+}
+
+func (s *Service) recordFailure(chequeID string, err error) {
+	s.failuresMu.Lock()
+	f := s.failures[chequeID]
+	f.count++
+	delay := min(backoffBase<<uint(min(f.count-1, 6)), backoffCap) // 1m,2m,4m,8m,16m,32m,64m→capped
+	f.nextAttempt = time.Now().Add(delay)
+	s.failures[chequeID] = f
+	count := f.count
+	s.failuresMu.Unlock()
+
+	if count >= deadLetterThreshold {
+		s.log.Error("sweep: dead-lettered — repeated refund failures, needs manual attention",
+			"cheque_id", chequeID, "failure_count", count, "error", err)
+		return
+	}
+	s.log.Error("sweep: refund failed, backing off", "cheque_id", chequeID, "failure_count", count, "next_attempt", f.nextAttempt, "error", err)
+}
+
+func (s *Service) clearFailure(chequeID string) {
+	s.failuresMu.Lock()
+	delete(s.failures, chequeID)
+	s.failuresMu.Unlock()
 }
 
 func (s *Service) refundOne(ctx context.Context, c ExpiredCheque) error {

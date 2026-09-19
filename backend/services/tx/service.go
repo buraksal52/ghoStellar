@@ -10,6 +10,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"time"
 
 	"github.com/local-payment/backend/pkg/dbx"
 	"github.com/local-payment/backend/ports"
@@ -114,6 +115,12 @@ func (s *Service) Submit(ctx context.Context, req SubmitRequest) (SubmitResponse
 	if err := repo.CompleteSubmission(ctx, req.IdempotencyKey, result.Hash, state, resultCode, respJSON); err != nil {
 		return SubmitResponse{}, fmt.Errorf("tx: complete submission: %w", err)
 	}
+	// Best-effort (SERVICE.md #11): an audit write failure must never turn
+	// a completed submission into a reported failure.
+	_ = repo.InsertAudit(ctx, req.StellarAddress, "tx.submission_completed", map[string]any{
+		"idempotencyKey": req.IdempotencyKey, "purpose": req.Purpose, "kind": req.Kind,
+		"hash": result.Hash, "state": state, "resultCode": resultCode,
+	})
 	if submitErr != nil {
 		return SubmitResponse{}, fmt.Errorf("%s: %w", ErrSubmitFailed, submitErr)
 	}
@@ -130,6 +137,20 @@ func (s *Service) GetSubmission(ctx context.Context, key string) (Submission, er
 		return Submission{}, errNotFound
 	}
 	return sub, err
+}
+
+// ReapExpiredKeys deletes idempotency keys stuck in 'pending' past their
+// expiry (SERVICE.md #14) — see Repository.ReapExpiredPendingKeys's doc
+// comment for why deletion, not a status update, is the right recovery.
+// Called on a ticker from cmd/txsvc/main.go; safe to call concurrently
+// with ordinary Submit traffic since it only ever touches rows already
+// past expires_at.
+func (s *Service) ReapExpiredKeys(ctx context.Context) (int64, error) {
+	repo, err := s.repos()
+	if err != nil {
+		return 0, err
+	}
+	return repo.ReapExpiredPendingKeys(ctx, time.Now())
 }
 
 var (

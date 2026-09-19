@@ -2,8 +2,10 @@ package anchor
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -95,5 +97,39 @@ func (r *Repository) SetTrustline(ctx context.Context, address, assetCode, asset
 		ON CONFLICT (stellar_address, asset_code, asset_issuer) DO UPDATE SET
 			state = EXCLUDED.state, ledger_seq = EXCLUDED.ledger_seq, updated_at = now()
 	`, address, assetCode, assetIssuer, state, ledgerSeq)
+	return err
+}
+
+// GetTrustlineState reads back what SetTrustline last recorded for
+// (address, assetCode, assetIssuer). Closes SERVICE.md #11's other half:
+// until now pay.trustlines was write-only (SetTrustline had no reader
+// anywhere). Service.startInteractive uses this as its OWN service's fast
+// pre-check before starting a SEP-24 session — anchor-service reading a
+// table it itself owns and writes, never another service's table.
+func (r *Repository) GetTrustlineState(ctx context.Context, address, assetCode, assetIssuer string) (state string, found bool, err error) {
+	err = r.pool.QueryRow(ctx, `
+		SELECT state FROM pay.trustlines WHERE stellar_address = $1 AND asset_code = $2 AND asset_issuer = $3
+	`, address, assetCode, assetIssuer).Scan(&state)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return "", false, nil
+	}
+	if err != nil {
+		return "", false, err
+	}
+	return state, true, nil
+}
+
+// InsertAudit appends one row to the shared pay.audit_log table
+// (SERVICE.md #11) — see cheque.Repository.InsertAudit's doc comment for
+// why multiple services writing to this one append-only table does not
+// violate the "no service reads another's table" rule.
+func (r *Repository) InsertAudit(ctx context.Context, actor, action string, details any) error {
+	detailsJSON, err := json.Marshal(details)
+	if err != nil {
+		return err
+	}
+	_, err = r.pool.Exec(ctx, `
+		INSERT INTO pay.audit_log (actor, action, details) VALUES ($1, $2, $3)
+	`, actor, action, detailsJSON)
 	return err
 }

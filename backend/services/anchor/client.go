@@ -157,8 +157,13 @@ func (c *Client) SEP24Transactions(ctx context.Context, transferServer, anchorTo
 
 // ProxyJSON forwards a SEP call to a server discovered from the configured
 // anchor's stellar.toml. The outbound client's hostname guard remains the
-// authority for which hosts can be reached.
-func (c *Client) ProxyJSON(ctx context.Context, method, base, path, rawQuery, bearer string, payload []byte) (json.RawMessage, error) {
+// authority for which hosts can be reached. contentType is the ORIGINAL
+// request's Content-Type, forwarded verbatim — this is what lets a real
+// SEP-12 multipart/form-data KYC upload (files, not just JSON fields) pass
+// through instead of being forced into application/json (SERVICE.md #7).
+// An empty contentType with a non-nil payload falls back to
+// "application/json", preserving every existing JSON call site's behavior.
+func (c *Client) ProxyJSON(ctx context.Context, method, base, path, rawQuery, bearer, contentType string, payload []byte) (json.RawMessage, error) {
 	u, err := url.Parse(strings.TrimRight(base, "/") + "/" + strings.TrimLeft(path, "/"))
 	if err != nil {
 		return nil, fmt.Errorf("%s: bad SEP endpoint: %w", ErrUpstreamFailed, err)
@@ -179,7 +184,10 @@ func (c *Client) ProxyJSON(ctx context.Context, method, base, path, rawQuery, be
 		req.Header.Set("Authorization", "Bearer "+bearer)
 	}
 	if payload != nil {
-		req.Header.Set("Content-Type", "application/json")
+		if contentType == "" {
+			contentType = "application/json"
+		}
+		req.Header.Set("Content-Type", contentType)
 	}
 	resp, err := c.hc.Do(req)
 	if err != nil {

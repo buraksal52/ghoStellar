@@ -158,7 +158,7 @@ func TestHandler_Me_WithClaims(t *testing.T) {
 
 	mux := http.NewServeMux()
 	RegisterProtectedRoutes(mux, h)
-	protected := authx.RequireBearer(&priv.PublicKey, func(w http.ResponseWriter) {
+	protected := authx.RequireBearer(&priv.PublicKey, "", func(w http.ResponseWriter) {
 		httpx.WriteError(w, http.StatusUnauthorized, ErrInvalidToken, "missing bearer claims", nil)
 	}, mux)
 

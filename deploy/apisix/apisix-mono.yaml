@@ -1,0 +1,62 @@
+# Monolith profile's edge routing (SERVICE.md #4) — every path goes to the
+# single pay-monolith:8080 upstream instead of six separate services.
+# Mirrors apisix.yaml's CORS/rate-limit/internal-deny shape exactly; only
+# the `upstream` blocks collapse into one.
+
+x-cors: &cors
+  cors:
+    allow_origins: "*"
+    allow_methods: "GET,POST,PUT,DELETE,OPTIONS"
+    allow_headers: "Authorization,Content-Type,Idempotency-Key,X-Anchor-Token,X-Request-Id"
+    expose_headers: "X-Request-Id"
+    max_age: 3600
+
+x-ratelimit: &ratelimit
+  rate: 20
+  burst: 10
+  key: remote_addr
+  rejected_code: 429
+
+x-strip-internal: &strip_internal
+  proxy-rewrite:
+    headers:
+      remove:
+        - "X-Internal-Api-Key"
+
+x-upstream: &monolith_upstream
+  type: roundrobin
+  nodes:
+    pay-monolith:8080: 1
+  timeout:
+    connect: 5
+    send: 30
+    read: 30
+
+routes:
+  - id: internal-deny
+    uris:
+      - /internal/*
+    priority: 100
+    plugins:
+      fault-injection:
+        abort:
+          http_status: 403
+          body: "forbidden: internal routes are not reachable from outside the cluster\n"
+
+  - id: mono-all
+    uris:
+      - /auth/*
+      - /cheques
+      - /cheques/*
+      - /sync
+      - /pool/*
+      - /tx/*
+      - /anchors
+      - /anchors/*
+    plugins:
+      <<: [*cors, *strip_internal]
+      request-id: {}
+      limit-req: *ratelimit
+    upstream: *monolith_upstream
+
+#END

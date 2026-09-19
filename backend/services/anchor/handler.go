@@ -25,14 +25,25 @@ func (h *Handler) sepProxy(w http.ResponseWriter, r *http.Request, sep string) {
 		return
 	}
 	var body []byte
+	contentType := r.Header.Get("Content-Type")
+	// A real SEP-12 KYC upload (identity photos, etc.) can be
+	// multipart/form-data — that body is not, and never will be, valid
+	// JSON, so it is exempted from the json.Valid check below and handed
+	// through byte-for-byte with its original Content-Type preserved
+	// (SERVICE.md #7). Every other SEP call keeps requiring JSON.
+	isMultipart := strings.HasPrefix(contentType, "multipart/")
+	bodyLimit := int64(1 << 20)
+	if isMultipart {
+		bodyLimit = 8 << 20 // KYC file uploads need more headroom than a JSON body
+	}
 	if r.Body != nil && r.Method != http.MethodGet {
 		var err error
-		body, err = io.ReadAll(io.LimitReader(r.Body, 1<<20))
+		body, err = io.ReadAll(io.LimitReader(r.Body, bodyLimit))
 		if err != nil {
 			httpx.WriteError(w, http.StatusBadRequest, ErrBadRequest, "invalid request body", nil)
 			return
 		}
-		if len(body) != 0 && !json.Valid(body) {
+		if !isMultipart && len(body) != 0 && !json.Valid(body) {
 			httpx.WriteError(w, http.StatusBadRequest, ErrBadRequest, "body must be valid JSON", nil)
 			return
 		}
@@ -62,11 +73,11 @@ func (h *Handler) sepProxy(w http.ResponseWriter, r *http.Request, sep string) {
 	}
 	switch sep {
 	case "sep6":
-		result, err = h.svc.ProxySep6(r.Context(), id, r.Method, path, query, token, body)
+		result, err = h.svc.ProxySep6(r.Context(), id, r.Method, path, query, token, contentType, body)
 	case "sep12":
-		result, err = h.svc.ProxySep12(r.Context(), id, r.Method, path, query, token, body)
+		result, err = h.svc.ProxySep12(r.Context(), id, r.Method, path, query, token, contentType, body)
 	case "sep38":
-		result, err = h.svc.ProxySep38(r.Context(), id, r.Method, path, query, token, body)
+		result, err = h.svc.ProxySep38(r.Context(), id, r.Method, path, query, token, contentType, body)
 	}
 	if err != nil {
 		writeAnchorError(w, err)
@@ -295,6 +306,8 @@ func writeAnchorError(w http.ResponseWriter, err error) {
 		code, status = ErrNotAllowed, http.StatusForbidden
 	case errors.Is(err, errChainUnavailable):
 		code, status = ErrChainUnavailable, http.StatusBadGateway
+	case errors.Is(err, errTrustlineMissing):
+		code, status = ErrTrustlineMissing, http.StatusUnprocessableEntity
 	case strings.Contains(err.Error(), ErrTomlUnavailable):
 		code, status = ErrTomlUnavailable, http.StatusBadGateway
 	}

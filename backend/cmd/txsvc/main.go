@@ -44,17 +44,44 @@ func main() {
 	svc := tx.NewService(pool, chainGW)
 	handler := tx.NewHandler(svc)
 
+	// Reaps idempotency keys stuck in 'pending' past their expiry
+	// (SERVICE.md #14) — a crash/OOM/deploy mid-submission would otherwise
+	// leave that Idempotency-Key permanently 409-ing every retry. This
+	// stays in-process (no scheduler dependency, no new internal endpoint)
+	// because pay-tx-service already owns pay.idempotency_keys outright.
+	reapInterval := time.Duration(envx.GetInt("REAP_INTERVAL_SECONDS", 300)) * time.Second
+	go func() {
+		ticker := time.NewTicker(reapInterval)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+				n, err := svc.ReapExpiredKeys(ctx)
+				if err != nil {
+					logger.Warn("idempotency key reap failed", "error", err)
+					continue
+				}
+				if n > 0 {
+					logger.Info("reaped expired idempotency keys", "count", n)
+				}
+			}
+		}
+	}()
+
 	mux := http.NewServeMux()
 	mux.Handle("GET /health", httpx.HealthHandler(pool.Ready))
 
 	api := http.NewServeMux()
 	tx.RegisterRoutes(api, handler)
-	protected := authx.RequireBearer(pubKey, unauthorized, api)
+	webAuthDomain := envx.Get("WEB_AUTH_DOMAIN", "localhost")
+	protected := authx.RequireBearer(pubKey, webAuthDomain, unauthorized, api)
 	mux.Handle("/tx/", dbx.RequireReady(pool, tx.ErrDBNotReady, protected))
 
 	addr := envx.Get("LISTEN_ADDR", ":8084")
 	logger.Info("listening", "addr", addr)
-	root := httpx.WithRequestID(httpx.Recover(logger, httpx.MaxBody(1<<20, mux)))
+	root := httpx.WithRequestID(httpx.AccessLog(logger, httpx.Recover(logger, httpx.MaxBody(1<<20, mux))))
 	// WriteTimeout is raised above httpx's default: a submit here waits on
 	// pay-chain-gateway's own Horizon/Soroban round trip, which can
 	// legitimately take longer than the shared default allows.

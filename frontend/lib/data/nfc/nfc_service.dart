@@ -29,8 +29,7 @@ class NfcService {
   bool get isEmulateSupported => defaultTargetPlatform == TargetPlatform.android;
 
   Future<bool> get isReaderSupported async {
-    final availability = await NfcManager.instance.checkAvailability();
-    return availability == NfcAvailability.enabled;
+    return NfcManager.instance.isAvailable();
   }
 
   /// Android only. Starts broadcasting [stellarAddress] via HCE so another

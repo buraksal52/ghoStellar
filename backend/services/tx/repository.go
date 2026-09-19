@@ -2,7 +2,9 @@ package tx
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
+	"time"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -88,3 +90,37 @@ func (r *Repository) GetIdempotentResponse(ctx context.Context, key string) (jso
 // ErrNotFoundInRepo signals "no such row" up to Service, which maps it to
 // tx.not_found.
 var ErrNotFoundInRepo = errors.New("tx: not found")
+
+// ReapExpiredPendingKeys deletes idempotency keys that have been stuck in
+// 'pending' past their expires_at (SERVICE.md #14): if the process died
+// mid-submission, BeginSubmission's INSERT would otherwise fail forever
+// with ErrKeyInFlight for that key, permanently 409-ing a client's retry.
+// Deleting the row (not marking it 'done') is deliberate — it lets a retry
+// with the SAME Idempotency-Key start a genuinely fresh attempt via
+// BeginSubmission's ordinary INSERT path, rather than requiring a synthetic
+// cached response. pay.submissions is left untouched as the historical
+// record of the original (stuck) attempt.
+func (r *Repository) ReapExpiredPendingKeys(ctx context.Context, before time.Time) (int64, error) {
+	cmdTag, err := r.pool.Exec(ctx, `
+		DELETE FROM pay.idempotency_keys WHERE status = 'pending' AND expires_at < $1
+	`, before)
+	if err != nil {
+		return 0, err
+	}
+	return cmdTag.RowsAffected(), nil
+}
+
+// InsertAudit appends one row to the shared pay.audit_log table
+// (SERVICE.md #11) — see cheque.Repository.InsertAudit's doc comment for
+// why multiple services writing to this one append-only table does not
+// violate the "no service reads another's table" rule.
+func (r *Repository) InsertAudit(ctx context.Context, actor, action string, details any) error {
+	detailsJSON, err := json.Marshal(details)
+	if err != nil {
+		return err
+	}
+	_, err = r.pool.Exec(ctx, `
+		INSERT INTO pay.audit_log (actor, action, details) VALUES ($1, $2, $3)
+	`, actor, action, detailsJSON)
+	return err
+}

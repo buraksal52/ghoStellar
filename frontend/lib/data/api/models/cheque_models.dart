@@ -5,18 +5,30 @@ part 'cheque_models.g.dart';
 
 /// Mirrors `backend/services/cheque/model.go`'s state machine.
 enum ChequeState {
-  TASLAK,
-  IMZALI_REZERVE,
-  FONLANIYOR,
-  HAVUZDA,
-  TALEP_EDILDI,
-  ONAYLANDI,
-  KAPANDI,
-  IADE_EDILEBILIR,
-  IADE_EDILDI,
-  HUKUMSUZ,
-  ZORLA_TAHSIL_DENENDI,
-  KARSILIKSIZ,
+  @JsonValue('TASLAK')
+  taslak,
+  @JsonValue('IMZALI_REZERVE')
+  imzaliRezerve,
+  @JsonValue('FONLANIYOR')
+  fonlaniyor,
+  @JsonValue('HAVUZDA')
+  havuzda,
+  @JsonValue('TALEP_EDILDI')
+  talepEdildi,
+  @JsonValue('ONAYLANDI')
+  onaylandi,
+  @JsonValue('KAPANDI')
+  kapandi,
+  @JsonValue('IADE_EDILEBILIR')
+  iadeEdilebilir,
+  @JsonValue('IADE_EDILDI')
+  iadeEdildi,
+  @JsonValue('HUKUMSUZ')
+  hukumsuz,
+  @JsonValue('ZORLA_TAHSIL_DENENDI')
+  zorlaTahsilDenendi,
+  @JsonValue('KARSILIKSIZ')
+  karsiliksiz,
 }
 
 @freezed

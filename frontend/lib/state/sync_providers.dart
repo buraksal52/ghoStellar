@@ -33,9 +33,9 @@ final pendingClaimsProvider = Provider<List<Cheque>>((ref) {
   final me = ref.watch(walletProvider).publicKey;
   if (sync == null || me == null) return const [];
   const claimable = {
-    ChequeState.IMZALI_REZERVE,
-    ChequeState.FONLANIYOR,
-    ChequeState.HAVUZDA,
+    ChequeState.imzaliRezerve,
+    ChequeState.fonlaniyor,
+    ChequeState.havuzda,
   };
   return sync.cheques
       .where((c) => c.receiverAddress == me && claimable.contains(c.state))

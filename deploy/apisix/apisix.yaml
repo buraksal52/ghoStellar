@@ -20,6 +20,18 @@ x-ratelimit: &ratelimit
   key: remote_addr
   rejected_code: 429
 
+# Strips any client-supplied X-Internal-Api-Key before it reaches an
+# upstream service — makes true the assumption pkg/authx/authx.go's
+# RequireInternalKey doc comment states ("the gateway strips this header
+# from any request that did not originate inside the cluster"). Defense in
+# depth: /internal/* itself is already blocked by the internal-deny route
+# below regardless of this header (SERVICE.md #16).
+x-strip-internal: &strip_internal
+  proxy-rewrite:
+    headers:
+      remove:
+        - "X-Internal-Api-Key"
+
 routes:
   - id: internal-deny
     uris:
@@ -35,7 +47,7 @@ routes:
     uris:
       - /auth/*
     plugins:
-      <<: *cors
+      <<: [*cors, *strip_internal]
       request-id: {}
       limit-req: *ratelimit
     upstream:
@@ -59,7 +71,7 @@ routes:
       - /sync
       - /pool/*
     plugins:
-      <<: *cors
+      <<: [*cors, *strip_internal]
       request-id: {}
       limit-req: *ratelimit
     upstream:
@@ -75,7 +87,7 @@ routes:
     uris:
       - /tx/*
     plugins:
-      <<: *cors
+      <<: [*cors, *strip_internal]
       request-id: {}
       limit-req: *ratelimit
     upstream:
@@ -94,7 +106,7 @@ routes:
       - /anchors
       - /anchors/*
     plugins:
-      <<: *cors
+      <<: [*cors, *strip_internal]
       request-id: {}
       limit-req: *ratelimit
     upstream:

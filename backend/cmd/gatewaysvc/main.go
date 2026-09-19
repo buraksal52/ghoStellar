@@ -48,7 +48,7 @@ func main() {
 	mux.Handle("/internal/", authx.RequireInternalKey(internalKey, internal))
 
 	logger.Info("listening", "addr", listenAddr, "soroban_enabled", sorobanURL != "")
-	root := httpx.WithRequestID(httpx.Recover(logger, httpx.MaxBody(1<<20, mux)))
+	root := httpx.WithRequestID(httpx.AccessLog(logger, httpx.Recover(logger, httpx.MaxBody(1<<20, mux))))
 	// WriteTimeout is raised above httpx's default: this service's whole
 	// job is a Horizon/Soroban RPC round trip, which can legitimately take
 	// longer than the shared default allows.

@@ -105,6 +105,102 @@ func ScUint64(v uint64) (xdr.ScVal, error) {
 	return xdr.NewScVal(xdr.ScValTypeScvU64, xdr.Uint64(v))
 }
 
+// ---- decode helpers ---------------------------------------------------
+//
+// Everything above this point only ENCODES ScVals (Go value -> XDR, for
+// building an invocation's arguments). These decode the other direction —
+// XDR -> Go value, for reading a contract's own state back out of a
+// simulateTransaction result (e.g. `get_cheque`/`get_pool`). Needed to
+// close SERVICE.md #1 (an independent, chain-derived cross-check for
+// /sync instead of trusting the local Postgres cache alone).
+//
+// CAVEAT (ties to SERVICE.md #2's same caveat): the exact ScVal shape a
+// real deployed pay-escrow contract emits for its `#[contracttype]`
+// structs and unit-variant enums has not been exercised against a live
+// network from this codebase. These decoders follow soroban-sdk's
+// documented encoding (struct -> ScMap keyed by field name as an
+// ScSymbol; an all-unit-variant enum -> a bare ScSymbol matching the
+// variant name) but should be verified against a real `simulateTransaction`
+// response before being trusted as a sole source of truth.
+
+// DecodeScAddress decodes an ScVal holding an SCAddress back into its "G..."
+// account or "C..." contract strkey.
+func DecodeScAddress(val xdr.ScVal) (string, error) {
+	addr, ok := val.GetAddress()
+	if !ok {
+		return "", fmt.Errorf("stellarx: expected an address ScVal, got %s", val.Type)
+	}
+	return addr.String()
+}
+
+// DecodeScI128 decodes an ScVal holding an i128 back into a signed
+// *big.Int — the inverse of ScI128.
+func DecodeScI128(val xdr.ScVal) (*big.Int, error) {
+	parts, ok := val.GetI128()
+	if !ok {
+		return nil, fmt.Errorf("stellarx: expected an i128 ScVal, got %s", val.Type)
+	}
+	raw := new(big.Int).Lsh(new(big.Int).SetUint64(uint64(parts.Hi)), 64)
+	raw.Or(raw, new(big.Int).SetUint64(uint64(parts.Lo)))
+	if parts.Hi < 0 {
+		twoPow128 := new(big.Int).Lsh(big.NewInt(1), 128)
+		raw.Sub(raw, twoPow128)
+	}
+	return raw, nil
+}
+
+// DecodeScUint64 decodes an ScVal holding a u64.
+func DecodeScUint64(val xdr.ScVal) (uint64, error) {
+	v, ok := val.GetU64()
+	if !ok {
+		return 0, fmt.Errorf("stellarx: expected a u64 ScVal, got %s", val.Type)
+	}
+	return uint64(v), nil
+}
+
+// DecodeScSymbol decodes an ScVal holding a symbol back into a plain
+// string — used both for map keys and for a unit-variant enum's tag.
+func DecodeScSymbol(val xdr.ScVal) (string, error) {
+	sym, ok := val.GetSym()
+	if !ok {
+		return "", fmt.Errorf("stellarx: expected a symbol ScVal, got %s", val.Type)
+	}
+	return string(sym), nil
+}
+
+// DecodeOptional reports whether val represents Soroban's Option::Some
+// (present=true, val itself is the inner value) or Option::None
+// (present=false — encoded as ScvVoid).
+func DecodeOptional(val xdr.ScVal) (present bool, inner xdr.ScVal) {
+	if val.Type == xdr.ScValTypeScvVoid {
+		return false, xdr.ScVal{}
+	}
+	return true, val
+}
+
+// scMapGet linearly scans an ScMap for the entry whose key decodes to
+// name. soroban-sdk does not guarantee any particular field order for a
+// struct's map encoding, so this never assumes one.
+func scMapGet(m xdr.ScMap, name string) (xdr.ScVal, bool) {
+	for _, entry := range m {
+		key, err := DecodeScSymbol(entry.Key)
+		if err == nil && key == name {
+			return entry.Val, true
+		}
+	}
+	return xdr.ScVal{}, false
+}
+
+// decodeMap extracts val's ScMap, erroring with a field-name-free message
+// suitable for wrapping by a specific struct decoder.
+func decodeMap(val xdr.ScVal) (xdr.ScMap, error) {
+	m, ok := val.GetMap()
+	if !ok || m == nil {
+		return nil, fmt.Errorf("stellarx: expected a map ScVal, got %s", val.Type)
+	}
+	return *m, nil
+}
+
 // InvokeContract builds an unsigned InvokeHostFunction operation calling
 // function on the contract at contractAddress, with sourceAccount as the
 // operation's source (and therefore the account whose auth entry is

@@ -113,7 +113,7 @@ func TestVerifyAndMint_HappyPath(t *testing.T) {
 	}
 
 	// The minted access token must pass VerifyAccessToken (sub=access)...
-	claims, err := authx.VerifyAccessToken(pair.AccessToken, svc.cfg.JWTPublicKey)
+	claims, err := authx.VerifyAccessToken(pair.AccessToken, svc.cfg.JWTPublicKey, "")
 	if err != nil {
 		t.Fatalf("access token failed VerifyAccessToken: %v", err)
 	}
@@ -121,7 +121,7 @@ func TestVerifyAndMint_HappyPath(t *testing.T) {
 		t.Errorf("access token account = %q, want %q", claims.StellarAccount, clientKP.Address())
 	}
 	// ...but the refresh token must NOT (it must never work as a bearer token).
-	if _, err := authx.VerifyAccessToken(pair.RefreshToken, svc.cfg.JWTPublicKey); err == nil {
+	if _, err := authx.VerifyAccessToken(pair.RefreshToken, svc.cfg.JWTPublicKey, ""); err == nil {
 		t.Error("refresh token must be rejected by VerifyAccessToken")
 	}
 }

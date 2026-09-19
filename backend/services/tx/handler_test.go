@@ -43,7 +43,7 @@ func bearerToken(t *testing.T, address string) (*rsa.PublicKey, string) {
 func testMux(h *Handler, pubKey *rsa.PublicKey) http.Handler {
 	mux := http.NewServeMux()
 	RegisterRoutes(mux, h)
-	return authx.RequireBearer(pubKey, func(w http.ResponseWriter) {
+	return authx.RequireBearer(pubKey, "", func(w http.ResponseWriter) {
 		httpx.WriteError(w, http.StatusUnauthorized, "auth.invalid_token", "missing bearer claims", nil)
 	}, mux)
 }

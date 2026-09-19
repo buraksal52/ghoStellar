@@ -62,7 +62,7 @@ func bearerFixtureFor(t *testing.T, address string) bearerFixture {
 }
 
 func (f bearerFixture) wrap(next http.Handler) http.Handler {
-	return authx.RequireBearer(f.pubKey, unauthorizedTest, next)
+	return authx.RequireBearer(f.pubKey, "", unauthorizedTest, next)
 }
 
 func unauthorizedTest(w http.ResponseWriter) {

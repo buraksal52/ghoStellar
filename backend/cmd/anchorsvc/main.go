@@ -63,12 +63,13 @@ func main() {
 
 	api := http.NewServeMux()
 	anchor.RegisterRoutes(api, handler)
-	protected := authx.RequireBearer(pubKey, unauthorized, api)
+	webAuthDomain := envx.Get("WEB_AUTH_DOMAIN", "localhost")
+	protected := authx.RequireBearer(pubKey, webAuthDomain, unauthorized, api)
 	mux.Handle("/", dbx.RequireReady(pool, anchor.ErrDBNotReady, protected))
 
 	addr := envx.Get("LISTEN_ADDR", ":8086")
 	logger.Info("listening", "addr", addr, "anchor_domain", anchorDomain)
-	root := httpx.WithRequestID(httpx.Recover(logger, httpx.MaxBody(1<<20, mux)))
+	root := httpx.WithRequestID(httpx.AccessLog(logger, httpx.Recover(logger, httpx.MaxBody(1<<20, mux))))
 	if err := httpx.ListenAndServe(ctx, addr, root, logger, httpx.ServeOptions{}); err != nil {
 		logger.Error("server stopped", "error", err)
 		os.Exit(1)

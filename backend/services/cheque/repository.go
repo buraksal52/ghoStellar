@@ -2,6 +2,7 @@ package cheque
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"time"
 
@@ -259,5 +260,22 @@ func (r *Repository) RecordWithdraw(ctx context.Context, owner, amountRaw string
 		UPDATE pay.pool_deposits SET amount_raw = amount_raw - $2, updated_at = now()
 		WHERE owner_address = $1 AND amount_raw >= $2
 	`, owner, amountRaw)
+	return err
+}
+
+// InsertAudit appends one row to the shared pay.audit_log table
+// (SERVICE.md #11). Multiple services write to this table — that is not
+// the "a service reads another service's table" violation CLAUDE.md's
+// GOTCHA warns against (this repo never SELECTs from audit_log, only
+// INSERTs), it is the intended append-only, multi-writer audit trail
+// architecture.md promises.
+func (r *Repository) InsertAudit(ctx context.Context, actor, action string, details any) error {
+	detailsJSON, err := json.Marshal(details)
+	if err != nil {
+		return err
+	}
+	_, err = r.pool.Exec(ctx, `
+		INSERT INTO pay.audit_log (actor, action, details) VALUES ($1, $2, $3)
+	`, actor, action, detailsJSON)
 	return err
 }

@@ -8,7 +8,13 @@ import (
 type fakeRepo struct {
 	transactions map[string]Transaction // key: anchorID+"/"+txID
 	trustlines   map[string]string      // key: address+"/"+code+"/"+issuer -> state
+	auditLog     []auditEntry
 	failOn       map[string]error
+}
+
+type auditEntry struct {
+	actor, action string
+	details       any
 }
 
 func newFakeRepo() *fakeRepo {
@@ -78,5 +84,21 @@ func (f *fakeRepo) SetTrustline(ctx context.Context, address, assetCode, assetIs
 		return err
 	}
 	f.trustlines[address+"/"+assetCode+"/"+assetIssuer] = state
+	return nil
+}
+
+func (f *fakeRepo) GetTrustlineState(ctx context.Context, address, assetCode, assetIssuer string) (string, bool, error) {
+	if err := f.failOn["GetTrustlineState"]; err != nil {
+		return "", false, err
+	}
+	state, ok := f.trustlines[address+"/"+assetCode+"/"+assetIssuer]
+	return state, ok, nil
+}
+
+func (f *fakeRepo) InsertAudit(ctx context.Context, actor, action string, details any) error {
+	if err := f.failOn["InsertAudit"]; err != nil {
+		return err
+	}
+	f.auditLog = append(f.auditLog, auditEntry{actor: actor, action: action, details: details})
 	return nil
 }

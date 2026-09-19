@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"testing"
+	"time"
 
 	"github.com/local-payment/backend/pkg/dbx"
 	"github.com/local-payment/backend/ports"
@@ -143,6 +144,60 @@ func TestGetSubmission_NotFound(t *testing.T) {
 	_, err := svc.GetSubmission(context.Background(), "missing-key")
 	if !errors.Is(err, errNotFound) {
 		t.Fatalf("got %v, want errNotFound", err)
+	}
+}
+
+// TestReapExpiredKeys_UnblocksRetryWithSameKey is SERVICE.md #14's
+// regression test: a key stuck in 'pending' past its expiry must not
+// permanently 409 a client retrying with the same Idempotency-Key.
+func TestReapExpiredKeys_UnblocksRetryWithSameKey(t *testing.T) {
+	repo := newFakeRepo()
+	chain := &portstest.FakeChain{
+		SubmitClassicFunc: func(ctx context.Context, signedXDR string) (ports.SubmitResult, error) {
+			return ports.SubmitResult{Hash: "h", Successful: true}, nil
+		},
+	}
+	svc := newServiceWithRepo(repo, chain)
+	ctx := context.Background()
+
+	// Simulate a process that died mid-submission: the key was claimed
+	// (pending) but never completed, and its expiry has already passed.
+	repo.keyStatus["stuck-key"] = "pending"
+	repo.keyExpiresAt["stuck-key"] = time.Now().Add(-time.Hour)
+
+	if _, err := svc.Submit(ctx, SubmitRequest{IdempotencyKey: "stuck-key", Kind: KindClassic, SignedXDR: "AAAA=="}); !errors.Is(err, errKeyInFlight) {
+		t.Fatalf("before reap: got %v, want errKeyInFlight", err)
+	}
+
+	n, err := svc.ReapExpiredKeys(ctx)
+	if err != nil {
+		t.Fatalf("ReapExpiredKeys: %v", err)
+	}
+	if n != 1 {
+		t.Fatalf("reaped %d keys, want 1", n)
+	}
+
+	resp, err := svc.Submit(ctx, SubmitRequest{IdempotencyKey: "stuck-key", Kind: KindClassic, SignedXDR: "AAAA=="})
+	if err != nil {
+		t.Fatalf("after reap: Submit failed: %v", err)
+	}
+	if resp.Replayed {
+		t.Error("after reap, this must be a genuinely fresh submission, not a replay")
+	}
+}
+
+func TestReapExpiredKeys_LeavesUnexpiredPendingKeysAlone(t *testing.T) {
+	repo := newFakeRepo()
+	svc := newServiceWithRepo(repo, &portstest.FakeChain{})
+	repo.keyStatus["fresh-key"] = "pending"
+	repo.keyExpiresAt["fresh-key"] = time.Now().Add(time.Hour)
+
+	n, err := svc.ReapExpiredKeys(context.Background())
+	if err != nil {
+		t.Fatalf("ReapExpiredKeys: %v", err)
+	}
+	if n != 0 {
+		t.Fatalf("reaped %d keys, want 0 (not yet expired)", n)
 	}
 }
 

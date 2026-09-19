@@ -1,6 +1,6 @@
 // GENERATED CODE - DO NOT MODIFY BY HAND
 // coverage:ignore-file
-// ignore_for_file: type=lint, type=warning, deprecated_member_use, deprecated_member_use_from_same_package
+// ignore_for_file: type=lint
 // ignore_for_file: unused_element, deprecated_member_use, deprecated_member_use_from_same_package, use_function_type_syntax_for_parameters, unnecessary_const, avoid_init_to_null, invalid_override_different_default_values_named, prefer_expression_function_bodies, annotate_overrides, invalid_annotation_target, unnecessary_question_mark
 
 part of 'tx_models.dart';
@@ -9,7 +9,6 @@ part of 'tx_models.dart';
 // FreezedGenerator
 // **************************************************************************
 
-// GENERATED CODE - DO NOT MODIFY BY HAND
 // dart format off
 T _$identity<T>(T value) => value;
 
@@ -29,21 +28,16 @@ $SubmitResponseCopyWith<SubmitResponse> get copyWith => _$SubmitResponseCopyWith
 
 @override
 bool operator ==(Object other) {
-  final _this = this as SubmitResponse;
-  return identical(this, other) || (other.runtimeType == runtimeType&&other is SubmitResponse&&(identical(other.hash, _this.hash) || other.hash == _this.hash)&&(identical(other.successful, _this.successful) || other.successful == _this.successful)&&(identical(other.resultCode, _this.resultCode) || other.resultCode == _this.resultCode)&&(identical(other.replayed, _this.replayed) || other.replayed == _this.replayed));
+  return identical(this, other) || (other.runtimeType == runtimeType&&other is SubmitResponse&&(identical(other.hash, hash) || other.hash == hash)&&(identical(other.successful, successful) || other.successful == successful)&&(identical(other.resultCode, resultCode) || other.resultCode == resultCode)&&(identical(other.replayed, replayed) || other.replayed == replayed));
 }
 
 @JsonKey(includeFromJson: false, includeToJson: false)
 @override
-int get hashCode {
-  final _this = this as SubmitResponse;
-  return Object.hash(runtimeType,_this.hash,_this.successful,_this.resultCode,_this.replayed);
-}
+int get hashCode => Object.hash(runtimeType,hash,successful,resultCode,replayed);
 
 @override
 String toString() {
-  final _this = this as SubmitResponse;
-  return 'SubmitResponse(hash: ${_this.hash}, successful: ${_this.successful}, resultCode: ${_this.resultCode}, replayed: ${_this.replayed})';
+  return 'SubmitResponse(hash: $hash, successful: $successful, resultCode: $resultCode, replayed: $replayed)';
 }
 
 
@@ -72,7 +66,7 @@ class _$SubmitResponseCopyWithImpl<$Res>
 /// Create a copy of SubmitResponse
 /// with the given fields replaced by the non-null parameter values.
 @pragma('vm:prefer-inline') @override $Res call({Object? hash = null,Object? successful = null,Object? resultCode = freezed,Object? replayed = null,}) {
-  return _then(SubmitResponse(
+  return _then(_self.copyWith(
 hash: null == hash ? _self.hash : hash // ignore: cast_nullable_to_non_nullable
 as String,successful: null == successful ? _self.successful : successful // ignore: cast_nullable_to_non_nullable
 as bool,resultCode: freezed == resultCode ? _self.resultCode : resultCode // ignore: cast_nullable_to_non_nullable
@@ -239,18 +233,16 @@ Map<String, dynamic> toJson() {
 
 @override
 bool operator ==(Object other) {
-    return identical(this, other) || (other.runtimeType == runtimeType&&other is _SubmitResponse&&(identical(other.hash, hash) || other.hash == hash)&&(identical(other.successful, successful) || other.successful == successful)&&(identical(other.resultCode, resultCode) || other.resultCode == resultCode)&&(identical(other.replayed, replayed) || other.replayed == replayed));
+  return identical(this, other) || (other.runtimeType == runtimeType&&other is _SubmitResponse&&(identical(other.hash, hash) || other.hash == hash)&&(identical(other.successful, successful) || other.successful == successful)&&(identical(other.resultCode, resultCode) || other.resultCode == resultCode)&&(identical(other.replayed, replayed) || other.replayed == replayed));
 }
 
 @JsonKey(includeFromJson: false, includeToJson: false)
 @override
-int get hashCode {
-    return Object.hash(runtimeType,hash,successful,resultCode,replayed);
-}
+int get hashCode => Object.hash(runtimeType,hash,successful,resultCode,replayed);
 
 @override
 String toString() {
-    return 'SubmitResponse(hash: $hash, successful: $successful, resultCode: $resultCode, replayed: $replayed)';
+  return 'SubmitResponse(hash: $hash, successful: $successful, resultCode: $resultCode, replayed: $replayed)';
 }
 
 
@@ -308,21 +300,16 @@ $SubmissionCopyWith<Submission> get copyWith => _$SubmissionCopyWithImpl<Submiss
 
 @override
 bool operator ==(Object other) {
-  final _this = this as Submission;
-  return identical(this, other) || (other.runtimeType == runtimeType&&other is Submission&&(identical(other.idempotencyKey, _this.idempotencyKey) || other.idempotencyKey == _this.idempotencyKey)&&(identical(other.purpose, _this.purpose) || other.purpose == _this.purpose)&&(identical(other.txHash, _this.txHash) || other.txHash == _this.txHash)&&(identical(other.state, _this.state) || other.state == _this.state)&&(identical(other.resultCode, _this.resultCode) || other.resultCode == _this.resultCode)&&(identical(other.createdAt, _this.createdAt) || other.createdAt == _this.createdAt)&&(identical(other.updatedAt, _this.updatedAt) || other.updatedAt == _this.updatedAt));
+  return identical(this, other) || (other.runtimeType == runtimeType&&other is Submission&&(identical(other.idempotencyKey, idempotencyKey) || other.idempotencyKey == idempotencyKey)&&(identical(other.purpose, purpose) || other.purpose == purpose)&&(identical(other.txHash, txHash) || other.txHash == txHash)&&(identical(other.state, state) || other.state == state)&&(identical(other.resultCode, resultCode) || other.resultCode == resultCode)&&(identical(other.createdAt, createdAt) || other.createdAt == createdAt)&&(identical(other.updatedAt, updatedAt) || other.updatedAt == updatedAt));
 }
 
 @JsonKey(includeFromJson: false, includeToJson: false)
 @override
-int get hashCode {
-  final _this = this as Submission;
-  return Object.hash(runtimeType,_this.idempotencyKey,_this.purpose,_this.txHash,_this.state,_this.resultCode,_this.createdAt,_this.updatedAt);
-}
+int get hashCode => Object.hash(runtimeType,idempotencyKey,purpose,txHash,state,resultCode,createdAt,updatedAt);
 
 @override
 String toString() {
-  final _this = this as Submission;
-  return 'Submission(idempotencyKey: ${_this.idempotencyKey}, purpose: ${_this.purpose}, txHash: ${_this.txHash}, state: ${_this.state}, resultCode: ${_this.resultCode}, createdAt: ${_this.createdAt}, updatedAt: ${_this.updatedAt})';
+  return 'Submission(idempotencyKey: $idempotencyKey, purpose: $purpose, txHash: $txHash, state: $state, resultCode: $resultCode, createdAt: $createdAt, updatedAt: $updatedAt)';
 }
 
 
@@ -351,7 +338,7 @@ class _$SubmissionCopyWithImpl<$Res>
 /// Create a copy of Submission
 /// with the given fields replaced by the non-null parameter values.
 @pragma('vm:prefer-inline') @override $Res call({Object? idempotencyKey = null,Object? purpose = null,Object? txHash = freezed,Object? state = null,Object? resultCode = freezed,Object? createdAt = null,Object? updatedAt = null,}) {
-  return _then(Submission(
+  return _then(_self.copyWith(
 idempotencyKey: null == idempotencyKey ? _self.idempotencyKey : idempotencyKey // ignore: cast_nullable_to_non_nullable
 as String,purpose: null == purpose ? _self.purpose : purpose // ignore: cast_nullable_to_non_nullable
 as String,txHash: freezed == txHash ? _self.txHash : txHash // ignore: cast_nullable_to_non_nullable
@@ -524,18 +511,16 @@ Map<String, dynamic> toJson() {
 
 @override
 bool operator ==(Object other) {
-    return identical(this, other) || (other.runtimeType == runtimeType&&other is _Submission&&(identical(other.idempotencyKey, idempotencyKey) || other.idempotencyKey == idempotencyKey)&&(identical(other.purpose, purpose) || other.purpose == purpose)&&(identical(other.txHash, txHash) || other.txHash == txHash)&&(identical(other.state, state) || other.state == state)&&(identical(other.resultCode, resultCode) || other.resultCode == resultCode)&&(identical(other.createdAt, createdAt) || other.createdAt == createdAt)&&(identical(other.updatedAt, updatedAt) || other.updatedAt == updatedAt));
+  return identical(this, other) || (other.runtimeType == runtimeType&&other is _Submission&&(identical(other.idempotencyKey, idempotencyKey) || other.idempotencyKey == idempotencyKey)&&(identical(other.purpose, purpose) || other.purpose == purpose)&&(identical(other.txHash, txHash) || other.txHash == txHash)&&(identical(other.state, state) || other.state == state)&&(identical(other.resultCode, resultCode) || other.resultCode == resultCode)&&(identical(other.createdAt, createdAt) || other.createdAt == createdAt)&&(identical(other.updatedAt, updatedAt) || other.updatedAt == updatedAt));
 }
 
 @JsonKey(includeFromJson: false, includeToJson: false)
 @override
-int get hashCode {
-    return Object.hash(runtimeType,idempotencyKey,purpose,txHash,state,resultCode,createdAt,updatedAt);
-}
+int get hashCode => Object.hash(runtimeType,idempotencyKey,purpose,txHash,state,resultCode,createdAt,updatedAt);
 
 @override
 String toString() {
-    return 'Submission(idempotencyKey: $idempotencyKey, purpose: $purpose, txHash: $txHash, state: $state, resultCode: $resultCode, createdAt: $createdAt, updatedAt: $updatedAt)';
+  return 'Submission(idempotencyKey: $idempotencyKey, purpose: $purpose, txHash: $txHash, state: $state, resultCode: $resultCode, createdAt: $createdAt, updatedAt: $updatedAt)';
 }
 
 

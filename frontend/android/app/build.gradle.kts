@@ -1,13 +1,18 @@
 plugins {
     id("com.android.application")
+    id("kotlin-android")
     // The Flutter Gradle Plugin must be applied after the Android and Kotlin Gradle plugins.
     id("dev.flutter.flutter-gradle-plugin")
 }
 
 android {
     namespace = "com.ghostellar.ghostellar_app"
-    compileSdk = flutter.compileSdkVersion
-    ndkVersion = flutter.ndkVersion
+    // flutter.compileSdkVersion is pinned to 35 by this Flutter SDK (3.32.0), but
+    // androidx.camera 1.6.1 (pulled in by mobile_scanner) requires compileSdk 36+.
+    compileSdk = 36
+    // Plugins (mobile_scanner, nfc_manager, ...) require NDK 27+; flutter.ndkVersion is 26 here.
+    // NDKs are backward compatible, so use an installed newer one.
+    ndkVersion = "28.2.13676358"
 
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_17
@@ -19,7 +24,8 @@ android {
         applicationId = "com.ghostellar.ghostellar_app"
         // You can update the following values to match your application needs.
         // For more information, see: https://flutter.dev/to/review-gradle-config.
-        minSdk = flutter.minSdkVersion
+        // mobile_scanner requires minSdk 23.
+        minSdk = 23
         targetSdk = flutter.targetSdkVersion
         // Uses the version code from pubspec.yaml. When using split APKs, 1000 * ABI_VERSION
         // is added automatically by Flutter. (https://developer.android.com/studio/build/configure-apk-splits#configure-APK-versions)

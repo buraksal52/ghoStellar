@@ -143,7 +143,7 @@ func hostnameOf(rawURL string) string {
 // ProxySep6, ProxySep12, and ProxySep38 forward standards-defined API calls
 // to the one operator-configured anchor. The anchor JWT is forwarded only
 // for the duration of the request and is never persisted.
-func (s *Service) ProxySep6(ctx context.Context, id, method, path, rawQuery, token string, body []byte) (json.RawMessage, error) {
+func (s *Service) ProxySep6(ctx context.Context, id, method, path, rawQuery, token, contentType string, body []byte) (json.RawMessage, error) {
 	info, err := s.Info(ctx, id)
 	if err != nil {
 		return nil, err
@@ -151,10 +151,10 @@ func (s *Service) ProxySep6(ctx context.Context, id, method, path, rawQuery, tok
 	if info.TransferServer == "" {
 		return nil, fmt.Errorf("%s: anchor does not publish TRANSFER_SERVER", ErrUpstreamFailed)
 	}
-	return s.client.ProxyJSON(ctx, method, info.TransferServer, path, rawQuery, token, body)
+	return s.client.ProxyJSON(ctx, method, info.TransferServer, path, rawQuery, token, contentType, body)
 }
 
-func (s *Service) ProxySep12(ctx context.Context, id, method, path, rawQuery, token string, body []byte) (json.RawMessage, error) {
+func (s *Service) ProxySep12(ctx context.Context, id, method, path, rawQuery, token, contentType string, body []byte) (json.RawMessage, error) {
 	info, err := s.Info(ctx, id)
 	if err != nil {
 		return nil, err
@@ -162,10 +162,10 @@ func (s *Service) ProxySep12(ctx context.Context, id, method, path, rawQuery, to
 	if info.KYCServer == "" {
 		return nil, fmt.Errorf("%s: anchor does not publish KYC_SERVER", ErrUpstreamFailed)
 	}
-	return s.client.ProxyJSON(ctx, method, info.KYCServer, path, rawQuery, token, body)
+	return s.client.ProxyJSON(ctx, method, info.KYCServer, path, rawQuery, token, contentType, body)
 }
 
-func (s *Service) ProxySep38(ctx context.Context, id, method, path, rawQuery, token string, body []byte) (json.RawMessage, error) {
+func (s *Service) ProxySep38(ctx context.Context, id, method, path, rawQuery, token, contentType string, body []byte) (json.RawMessage, error) {
 	info, err := s.Info(ctx, id)
 	if err != nil {
 		return nil, err
@@ -173,7 +173,7 @@ func (s *Service) ProxySep38(ctx context.Context, id, method, path, rawQuery, to
 	if info.QuoteServer == "" {
 		return nil, fmt.Errorf("%s: anchor does not publish ANCHOR_QUOTE_SERVER", ErrUpstreamFailed)
 	}
-	return s.client.ProxyJSON(ctx, method, info.QuoteServer, path, rawQuery, token, body)
+	return s.client.ProxyJSON(ctx, method, info.QuoteServer, path, rawQuery, token, contentType, body)
 }
 
 func (s *Service) Challenge(ctx context.Context, id, account string) (string, error) {
@@ -208,15 +208,27 @@ func (s *Service) startInteractive(ctx context.Context, id, kind, anchorToken, s
 	if anchorToken == "" {
 		return "", "", errAuthRequired
 	}
+	repo, err := s.repos()
+	if err != nil {
+		return "", "", err
+	}
+	// Fast, friendly pre-check using this service's OWN pay.trustlines
+	// cache (SERVICE.md #11 — previously write-only, never read anywhere):
+	// a client without a recorded active trustline would otherwise only
+	// find out after round-tripping to the anchor's own SEP-24 endpoint.
+	// Best-effort: a repo error here falls through to the anchor call
+	// rather than blocking the user on a diagnostic-only check.
+	if state, found, tErr := repo.GetTrustlineState(ctx, stellarAddress, s.cfg.AssetCode, s.cfg.AssetIssuer); tErr == nil {
+		if !found || state != "active" {
+			return "", "", errTrustlineMissing
+		}
+	}
+
 	info, err := s.Info(ctx, id)
 	if err != nil {
 		return "", "", err
 	}
 	txID, interactiveURL, err := s.client.SEP24Interactive(ctx, info.TransferServer24, kind, anchorToken, info.AssetCode, stellarAddress)
-	if err != nil {
-		return "", "", err
-	}
-	repo, err := s.repos()
 	if err != nil {
 		return "", "", err
 	}
@@ -310,4 +322,5 @@ var (
 	errNotAllowed       = errors.New(ErrNotAllowed)
 	errAuthRequired     = errors.New(ErrAuthRequired)
 	errChainUnavailable = errors.New(ErrChainUnavailable)
+	errTrustlineMissing = errors.New(ErrTrustlineMissing)
 )

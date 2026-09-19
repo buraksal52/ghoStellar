@@ -17,6 +17,12 @@ func discardLogger() *slog.Logger {
 	return slog.New(slog.NewTextHandler(io.Discard, nil))
 }
 
+// jsonLogger returns a logger that writes structured JSON lines into buf,
+// for tests that need to inspect specific logged fields.
+func jsonLogger(buf *bytes.Buffer) *slog.Logger {
+	return slog.New(slog.NewJSONHandler(buf, nil))
+}
+
 func TestWriteData_EnvelopeShape(t *testing.T) {
 	rec := httptest.NewRecorder()
 	WriteData(rec, http.StatusCreated, map[string]string{"x": "y"})
@@ -202,6 +208,92 @@ func TestMaxBody_AllowsBodyUnderCap(t *testing.T) {
 
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d, want 200", rec.Code)
+	}
+}
+
+// ---- AccessLog ---------------------------------------------------------------
+
+func TestAccessLog_LogsMethodPathStatusAndRequestID(t *testing.T) {
+	var buf bytes.Buffer
+	logger := jsonLogger(&buf)
+
+	next := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		WriteData(w, http.StatusCreated, nil)
+	})
+	h := WithRequestID(AccessLog(logger, next))
+
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, httptest.NewRequest("POST", "/x/y", nil))
+
+	var line struct {
+		Method     string `json:"method"`
+		Path       string `json:"path"`
+		Status     int    `json:"status"`
+		DurationMs int64  `json:"duration_ms"`
+		RequestID  string `json:"request_id"`
+	}
+	if err := json.Unmarshal(buf.Bytes(), &line); err != nil {
+		t.Fatalf("decode log line: %v (raw=%s)", err, buf.String())
+	}
+	if line.Method != "POST" || line.Path != "/x/y" {
+		t.Errorf("method/path = %q %q", line.Method, line.Path)
+	}
+	if line.Status != http.StatusCreated {
+		t.Errorf("status = %d, want 201", line.Status)
+	}
+	if line.RequestID == "" {
+		t.Error("expected a non-empty request_id (AccessLog must run downstream of WithRequestID)")
+	}
+	if line.DurationMs < 0 {
+		t.Errorf("duration_ms = %d, want >= 0", line.DurationMs)
+	}
+}
+
+func TestAccessLog_DefaultStatusWhenHandlerNeverCallsWriteHeader(t *testing.T) {
+	var buf bytes.Buffer
+	logger := jsonLogger(&buf)
+
+	next := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte("ok")) // no explicit WriteHeader call
+	})
+	h := AccessLog(logger, next)
+
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, httptest.NewRequest("GET", "/x", nil))
+
+	var line struct {
+		Status int `json:"status"`
+	}
+	if err := json.Unmarshal(buf.Bytes(), &line); err != nil {
+		t.Fatalf("decode log line: %v", err)
+	}
+	if line.Status != http.StatusOK {
+		t.Errorf("status = %d, want 200 (net/http's own implicit default)", line.Status)
+	}
+}
+
+func TestAccessLog_CapturesStatusAfterRecover(t *testing.T) {
+	var buf bytes.Buffer
+	logger := jsonLogger(&buf)
+
+	panicky := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		panic("boom")
+	})
+	// AccessLog must sit upstream of Recover so the final (500, post-
+	// recovery) status is what gets logged, not a mid-panic value.
+	h := AccessLog(logger, Recover(discardLogger(), panicky))
+
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, httptest.NewRequest("GET", "/x", nil))
+
+	var line struct {
+		Status int `json:"status"`
+	}
+	if err := json.Unmarshal(buf.Bytes(), &line); err != nil {
+		t.Fatalf("decode log line: %v", err)
+	}
+	if line.Status != http.StatusInternalServerError {
+		t.Errorf("status = %d, want 500", line.Status)
 	}
 }
 

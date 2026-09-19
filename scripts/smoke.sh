@@ -49,6 +49,15 @@ check "POST /cheques (no segment) routes to pay-cheque-service" 401 "$status"
 status=$(curl -s -o /dev/null -w "%{http_code}" "$EDGE/anchors")
 check "GET /anchors (no segment) routes to pay-anchor-service" 401 "$status"
 
+# SERVICE.md #16: a client-supplied X-Internal-Api-Key must never grant
+# anything from outside the cluster — the edge strips it (proxy-rewrite in
+# apisix.yaml) before the upstream ever sees it. This is defense in depth
+# on top of internal-deny (which already blocks /internal/* outright): the
+# check here is that forging the header on an ordinary route changes
+# nothing — /sync still answers plain 401, not some different behavior.
+status=$(curl -s -o /dev/null -w "%{http_code}" -H "X-Internal-Api-Key: forged" "$EDGE/sync")
+check "forged X-Internal-Api-Key on /sync has no effect (still 401)" 401 "$status"
+
 # X-Request-Id must be present on every response (httpx.WithRequestID).
 headers=$(curl -s -D - -o /dev/null -H "Origin: http://localhost:3000" "$EDGE/auth/challenge?account=not-a-valid-address")
 if echo "$headers" | grep -qi "^x-request-id:"; then

@@ -22,6 +22,11 @@ func testKeys(t *testing.T) (*rsa.PrivateKey, *rsa.PublicKey) {
 
 func signToken(t *testing.T, priv *rsa.PrivateKey, subject, account string, expiresIn time.Duration) string {
 	t.Helper()
+	return signTokenWithAudience(t, priv, subject, account, expiresIn, "")
+}
+
+func signTokenWithAudience(t *testing.T, priv *rsa.PrivateKey, subject, account string, expiresIn time.Duration, audience string) string {
+	t.Helper()
 	now := time.Now()
 	claims := Claims{
 		RegisteredClaims: jwt.RegisteredClaims{
@@ -30,6 +35,9 @@ func signToken(t *testing.T, priv *rsa.PrivateKey, subject, account string, expi
 			Subject:   subject,
 		},
 		StellarAccount: account,
+	}
+	if audience != "" {
+		claims.Audience = jwt.ClaimStrings{audience}
 	}
 	tok, err := jwt.NewWithClaims(jwt.SigningMethodRS256, claims).SignedString(priv)
 	if err != nil {
@@ -42,7 +50,7 @@ func TestVerifyAccessToken_ValidAccessToken(t *testing.T) {
 	priv, pub := testKeys(t)
 	tok := signToken(t, priv, "access", "GADDR", time.Hour)
 
-	claims, err := VerifyAccessToken(tok, pub)
+	claims, err := VerifyAccessToken(tok, pub, "")
 	if err != nil {
 		t.Fatalf("VerifyAccessToken: %v", err)
 	}
@@ -55,7 +63,7 @@ func TestVerifyAccessToken_RefreshTokenRejected(t *testing.T) {
 	priv, pub := testKeys(t)
 	tok := signToken(t, priv, "refresh", "GADDR", 30*24*time.Hour)
 
-	if _, err := VerifyAccessToken(tok, pub); err != ErrInvalidToken {
+	if _, err := VerifyAccessToken(tok, pub, ""); err != ErrInvalidToken {
 		t.Fatalf("got %v, want ErrInvalidToken", err)
 	}
 }
@@ -64,7 +72,7 @@ func TestVerifyAccessToken_EmptySubjectRejected(t *testing.T) {
 	priv, pub := testKeys(t)
 	tok := signToken(t, priv, "", "GADDR", time.Hour)
 
-	if _, err := VerifyAccessToken(tok, pub); err != ErrInvalidToken {
+	if _, err := VerifyAccessToken(tok, pub, ""); err != ErrInvalidToken {
 		t.Fatalf("got %v, want ErrInvalidToken", err)
 	}
 }
@@ -73,7 +81,7 @@ func TestVerifyAccessToken_UnknownSubjectRejected(t *testing.T) {
 	priv, pub := testKeys(t)
 	tok := signToken(t, priv, "something-else", "GADDR", time.Hour)
 
-	if _, err := VerifyAccessToken(tok, pub); err != ErrInvalidToken {
+	if _, err := VerifyAccessToken(tok, pub, ""); err != ErrInvalidToken {
 		t.Fatalf("got %v, want ErrInvalidToken", err)
 	}
 }
@@ -82,7 +90,7 @@ func TestVerifyAccessToken_ExpiredRejected(t *testing.T) {
 	priv, pub := testKeys(t)
 	tok := signToken(t, priv, "access", "GADDR", -time.Hour)
 
-	if _, err := VerifyAccessToken(tok, pub); err != ErrInvalidToken {
+	if _, err := VerifyAccessToken(tok, pub, ""); err != ErrInvalidToken {
 		t.Fatalf("got %v, want ErrInvalidToken", err)
 	}
 }
@@ -92,7 +100,7 @@ func TestVerifyAccessToken_WrongKeyRejected(t *testing.T) {
 	_, otherPub := testKeys(t)
 	tok := signToken(t, priv, "access", "GADDR", time.Hour)
 
-	if _, err := VerifyAccessToken(tok, otherPub); err != ErrInvalidToken {
+	if _, err := VerifyAccessToken(tok, otherPub, ""); err != ErrInvalidToken {
 		t.Fatalf("got %v, want ErrInvalidToken", err)
 	}
 }
@@ -101,7 +109,7 @@ func TestVerifyAccessToken_EmptyStellarAccountRejected(t *testing.T) {
 	priv, pub := testKeys(t)
 	tok := signToken(t, priv, "access", "", time.Hour)
 
-	if _, err := VerifyAccessToken(tok, pub); err != ErrInvalidToken {
+	if _, err := VerifyAccessToken(tok, pub, ""); err != ErrInvalidToken {
 		t.Fatalf("got %v, want ErrInvalidToken", err)
 	}
 }
@@ -128,15 +136,46 @@ func TestVerifyJWT_AlgConfusionRejected(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if _, err := VerifyJWT(tok, pub); err != ErrInvalidToken {
+	if _, err := VerifyJWT(tok, pub, ""); err != ErrInvalidToken {
 		t.Fatalf("got %v, want ErrInvalidToken", err)
 	}
 }
 
 func TestVerifyJWT_MalformedTokenRejected(t *testing.T) {
 	_, pub := testKeys(t)
-	if _, err := VerifyJWT("not-a-jwt", pub); err != ErrInvalidToken {
+	if _, err := VerifyJWT("not-a-jwt", pub, ""); err != ErrInvalidToken {
 		t.Fatalf("got %v, want ErrInvalidToken", err)
+	}
+}
+
+func TestVerifyAccessToken_WrongAudienceRejected(t *testing.T) {
+	priv, pub := testKeys(t)
+	tok := signTokenWithAudience(t, priv, "access", "GADDR", time.Hour, "wrong.example")
+
+	if _, err := VerifyAccessToken(tok, pub, "expected.example"); err != ErrInvalidToken {
+		t.Fatalf("got %v, want ErrInvalidToken", err)
+	}
+}
+
+func TestVerifyAccessToken_MatchingAudienceAccepted(t *testing.T) {
+	priv, pub := testKeys(t)
+	tok := signTokenWithAudience(t, priv, "access", "GADDR", time.Hour, "expected.example")
+
+	if _, err := VerifyAccessToken(tok, pub, "expected.example"); err != nil {
+		t.Fatalf("VerifyAccessToken: %v", err)
+	}
+}
+
+// TestVerifyAccessToken_EmptyExpectedAudienceSkipsCheck is the backward-
+// compatibility guarantee every existing caller relies on: passing "" for
+// expectedAudience must accept a token regardless of its aud claim (or
+// lack of one).
+func TestVerifyAccessToken_EmptyExpectedAudienceSkipsCheck(t *testing.T) {
+	priv, pub := testKeys(t)
+	tok := signTokenWithAudience(t, priv, "access", "GADDR", time.Hour, "some.random.audience")
+
+	if _, err := VerifyAccessToken(tok, pub, ""); err != nil {
+		t.Fatalf("VerifyAccessToken with no expected audience: %v", err)
 	}
 }
 
@@ -149,7 +188,7 @@ func TestRequireBearer_NoHeaderRejected(t *testing.T) {
 	onErr := func(w http.ResponseWriter) { w.WriteHeader(http.StatusUnauthorized) }
 
 	rec := httptest.NewRecorder()
-	RequireBearer(pub, onErr, next).ServeHTTP(rec, httptest.NewRequest("GET", "/x", nil))
+	RequireBearer(pub, "", onErr, next).ServeHTTP(rec, httptest.NewRequest("GET", "/x", nil))
 
 	if rec.Code != http.StatusUnauthorized {
 		t.Fatalf("status = %d, want 401", rec.Code)
@@ -167,7 +206,7 @@ func TestRequireBearer_EmptyBearerRejected(t *testing.T) {
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest("GET", "/x", nil)
 	req.Header.Set("Authorization", "Bearer ")
-	RequireBearer(pub, onErr, next).ServeHTTP(rec, req)
+	RequireBearer(pub, "", onErr, next).ServeHTTP(rec, req)
 
 	if rec.Code != http.StatusUnauthorized {
 		t.Fatalf("status = %d, want 401", rec.Code)
@@ -188,7 +227,7 @@ func TestRequireBearer_ValidTokenInjectsClaims(t *testing.T) {
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest("GET", "/x", nil)
 	req.Header.Set("Authorization", "Bearer "+tok)
-	RequireBearer(pub, onErr, next).ServeHTTP(rec, req)
+	RequireBearer(pub, "", onErr, next).ServeHTTP(rec, req)
 
 	if !ok {
 		t.Fatal("expected claims to be present in context")

@@ -35,18 +35,18 @@ Map<String, dynamic> _$ChequeToJson(_Cheque instance) => <String, dynamic>{
 };
 
 const _$ChequeStateEnumMap = {
-  ChequeState.TASLAK: 'TASLAK',
-  ChequeState.IMZALI_REZERVE: 'IMZALI_REZERVE',
-  ChequeState.FONLANIYOR: 'FONLANIYOR',
-  ChequeState.HAVUZDA: 'HAVUZDA',
-  ChequeState.TALEP_EDILDI: 'TALEP_EDILDI',
-  ChequeState.ONAYLANDI: 'ONAYLANDI',
-  ChequeState.KAPANDI: 'KAPANDI',
-  ChequeState.IADE_EDILEBILIR: 'IADE_EDILEBILIR',
-  ChequeState.IADE_EDILDI: 'IADE_EDILDI',
-  ChequeState.HUKUMSUZ: 'HUKUMSUZ',
-  ChequeState.ZORLA_TAHSIL_DENENDI: 'ZORLA_TAHSIL_DENENDI',
-  ChequeState.KARSILIKSIZ: 'KARSILIKSIZ',
+  ChequeState.taslak: 'TASLAK',
+  ChequeState.imzaliRezerve: 'IMZALI_REZERVE',
+  ChequeState.fonlaniyor: 'FONLANIYOR',
+  ChequeState.havuzda: 'HAVUZDA',
+  ChequeState.talepEdildi: 'TALEP_EDILDI',
+  ChequeState.onaylandi: 'ONAYLANDI',
+  ChequeState.kapandi: 'KAPANDI',
+  ChequeState.iadeEdilebilir: 'IADE_EDILEBILIR',
+  ChequeState.iadeEdildi: 'IADE_EDILDI',
+  ChequeState.hukumsuz: 'HUKUMSUZ',
+  ChequeState.zorlaTahsilDenendi: 'ZORLA_TAHSIL_DENENDI',
+  ChequeState.karsiliksiz: 'KARSILIKSIZ',
 };
 
 _PoolDeposit _$PoolDepositFromJson(Map<String, dynamic> json) => _PoolDeposit(

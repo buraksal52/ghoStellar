@@ -132,7 +132,7 @@ func TestProxySep6_UnpublishedTransferServerErrors(t *testing.T) {
 	cfg := testConfig(testAnchorDomain, testIssuer(t))
 	svc := newServiceWithRepo(cfg, newFakeRepo(), client, &portstest.FakeChain{}, discardLogger())
 
-	_, err := svc.ProxySep6(context.Background(), testAnchorID, "GET", "info", "", "tok", nil)
+	_, err := svc.ProxySep6(context.Background(), testAnchorID, "GET", "info", "", "tok", "", nil)
 	if err == nil {
 		t.Fatal("expected an error when TRANSFER_SERVER is not published")
 	}
@@ -144,6 +144,34 @@ func TestStartInteractive_RequiresAnchorToken(t *testing.T) {
 	_, _, err := svc.StartDeposit(context.Background(), testAnchorID, "", "GADDR")
 	if !errors.Is(err, errAuthRequired) {
 		t.Fatalf("got %v, want errAuthRequired", err)
+	}
+}
+
+// TestStartInteractive_NoTrustlineRejected is SERVICE.md #11's regression
+// test: pay.trustlines used to be write-only. StartDeposit/StartWithdraw
+// now read it back via this service's own repo before ever calling the
+// anchor.
+func TestStartInteractive_NoTrustlineRejected(t *testing.T) {
+	cfg := testConfig(testAnchorDomain, testIssuer(t))
+	svc := newServiceWithRepo(cfg, newFakeRepo(), NewClient(http.DefaultClient), &portstest.FakeChain{}, discardLogger())
+	_, _, err := svc.StartDeposit(context.Background(), testAnchorID, "anchor-jwt", "GADDR")
+	if !errors.Is(err, errTrustlineMissing) {
+		t.Fatalf("got %v, want errTrustlineMissing", err)
+	}
+}
+
+func TestStartInteractive_ActiveTrustlineAllowed(t *testing.T) {
+	client := tomlServer(t, `TRANSFER_SERVER24="https://api.anchor.example/sep24"`)
+	cfg := testConfig(testAnchorDomain, testIssuer(t))
+	repo := newFakeRepo()
+	repo.trustlines["GADDR/"+cfg.AssetCode+"/"+cfg.AssetIssuer] = "active"
+	svc := newServiceWithRepo(cfg, repo, client, &portstest.FakeChain{}, discardLogger())
+
+	// SEP24Interactive itself will fail (no real transfer server), but the
+	// trustline pre-check must not be what rejects this call.
+	_, _, err := svc.StartDeposit(context.Background(), testAnchorID, "anchor-jwt", "GADDR")
+	if errors.Is(err, errTrustlineMissing) {
+		t.Fatal("an active trustline must not be rejected as missing")
 	}
 }
 

@@ -68,12 +68,12 @@ func main() {
 	auth.RegisterRoutes(api, handler)
 	protected := http.NewServeMux()
 	auth.RegisterProtectedRoutes(protected, handler)
-	api.Handle("/auth/me", authx.RequireBearer(pubKey, unauthorized, protected))
+	api.Handle("/auth/me", authx.RequireBearer(pubKey, envx.Get("WEB_AUTH_DOMAIN", "localhost"), unauthorized, protected))
 	mux.Handle("/auth/", dbx.RequireReady(pool, "auth.db_not_ready", api))
 
 	addr := envx.Get("LISTEN_ADDR", ":8081")
 	logger.Info("listening", "addr", addr)
-	root := httpx.WithRequestID(httpx.Recover(logger, httpx.MaxBody(1<<20, mux)))
+	root := httpx.WithRequestID(httpx.AccessLog(logger, httpx.Recover(logger, httpx.MaxBody(1<<20, mux))))
 	if err := httpx.ListenAndServe(ctx, addr, root, logger, httpx.ServeOptions{}); err != nil {
 		logger.Error("server stopped", "error", err)
 		os.Exit(1)
