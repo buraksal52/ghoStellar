@@ -2,6 +2,7 @@ package anchor
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 
@@ -69,17 +70,60 @@ func (s *Service) Info(ctx context.Context, id string) (Info, error) {
 	if err != nil {
 		return Info{}, err
 	}
+	quoteServer, err := s.client.FetchQuoteServer(s.cfg.AnchorDomain)
+	if err != nil {
+		return Info{}, err
+	}
 	info := Info{
 		ID:               s.cfg.AnchorID,
 		Domain:           s.cfg.AnchorDomain,
 		SigningKey:       toml.SigningKey,
 		WebAuthEndpoint:  toml.WebAuthEndpoint,
+		TransferServer:   toml.TransferServer,
+		KYCServer:        toml.KycServer,
+		QuoteServer:      quoteServer,
 		TransferServer24: toml.TransferServer0024,
 		AssetCode:        s.cfg.AssetCode,
 		AssetIssuer:      s.cfg.AssetIssuer,
 	}
 	s.cachedInfo = &info
 	return info, nil
+}
+
+// ProxySep6, ProxySep12, and ProxySep38 forward standards-defined API calls
+// to the one operator-configured anchor. The anchor JWT is forwarded only
+// for the duration of the request and is never persisted.
+func (s *Service) ProxySep6(ctx context.Context, id, method, path, rawQuery, token string, body []byte) (json.RawMessage, error) {
+	info, err := s.Info(ctx, id)
+	if err != nil {
+		return nil, err
+	}
+	if info.TransferServer == "" {
+		return nil, fmt.Errorf("%s: anchor does not publish TRANSFER_SERVER", ErrUpstreamFailed)
+	}
+	return s.client.ProxyJSON(ctx, method, info.TransferServer, path, rawQuery, token, body)
+}
+
+func (s *Service) ProxySep12(ctx context.Context, id, method, path, rawQuery, token string, body []byte) (json.RawMessage, error) {
+	info, err := s.Info(ctx, id)
+	if err != nil {
+		return nil, err
+	}
+	if info.KYCServer == "" {
+		return nil, fmt.Errorf("%s: anchor does not publish KYC_SERVER", ErrUpstreamFailed)
+	}
+	return s.client.ProxyJSON(ctx, method, info.KYCServer, path, rawQuery, token, body)
+}
+
+func (s *Service) ProxySep38(ctx context.Context, id, method, path, rawQuery, token string, body []byte) (json.RawMessage, error) {
+	info, err := s.Info(ctx, id)
+	if err != nil {
+		return nil, err
+	}
+	if info.QuoteServer == "" {
+		return nil, fmt.Errorf("%s: anchor does not publish ANCHOR_QUOTE_SERVER", ErrUpstreamFailed)
+	}
+	return s.client.ProxyJSON(ctx, method, info.QuoteServer, path, rawQuery, token, body)
 }
 
 func (s *Service) Challenge(ctx context.Context, id, account string) (string, error) {
@@ -149,7 +193,19 @@ func (s *Service) ReportTransaction(ctx context.Context, id, stellarAddress stri
 	}
 	t.AnchorID = id
 	t.StellarAddress = stellarAddress
-	return repo.UpsertTransaction(ctx, t)
+	return repo.UpdateTransaction(ctx, t)
+}
+
+func (s *Service) RecordSep6Transaction(ctx context.Context, id, stellarAddress string, t Transaction) error {
+	if err := s.checkID(id); err != nil {
+		return err
+	}
+	repo, err := s.repo()
+	if err != nil {
+		return err
+	}
+	t.AnchorID, t.StellarAddress = id, stellarAddress
+	return repo.CreateTransaction(ctx, t)
 }
 
 func (s *Service) ListTransactions(ctx context.Context, stellarAddress string) ([]Transaction, error) {

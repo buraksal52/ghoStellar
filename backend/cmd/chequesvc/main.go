@@ -44,8 +44,8 @@ func main() {
 	svc := cheque.NewService(cheque.Config{
 		EscrowContractID:  envx.MustGet("PAY_ESCROW_CONTRACT_ID"),
 		TokenContractID:   envx.MustGet("ASSET_SAC_CONTRACT_ID"),
-		AssetCode:         envx.Get("ASSET_CODE", "SRT"),
-		AssetIssuer:       envx.Get("ASSET_ISSUER", ""),
+		AssetCode:         envx.Get("ASSET_CODE", "USDC"),
+		AssetIssuer:       envx.Get("ASSET_ISSUER", "GBBD47IF6LWK7P7MDEVSCWR7DPUWV3NY3DTQEVFL4NAT4AQH3ZLLFLA5"),
 		Decimals:          uint8(envx.GetInt("ASSET_DECIMALS", 7)),
 		NetworkPassphrase: envx.Get("NETWORK_PASSPHRASE", "Test SDF Network ; September 2015"),
 	}, pool, chainGW)

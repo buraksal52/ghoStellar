@@ -1,9 +1,12 @@
 package anchor
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
+	"io"
 	"net/http"
+	"net/url"
 	"strings"
 
 	"github.com/local-payment/backend/pkg/authx"
@@ -13,6 +16,89 @@ import (
 type Handler struct {
 	svc *Service
 }
+
+func (h *Handler) sepProxy(w http.ResponseWriter, r *http.Request, sep string) {
+	id := r.PathValue("id")
+	if _, ok := callerAddress(r); !ok {
+		httpx.WriteError(w, http.StatusUnauthorized, "auth.invalid_token", "missing bearer claims", nil)
+		return
+	}
+	var body []byte
+	if r.Body != nil && r.Method != http.MethodGet {
+		var err error
+		body, err = io.ReadAll(io.LimitReader(r.Body, 1<<20))
+		if err != nil {
+			httpx.WriteError(w, http.StatusBadRequest, ErrBadRequest, "invalid request body", nil)
+			return
+		}
+		if len(body) != 0 && !json.Valid(body) {
+			httpx.WriteError(w, http.StatusBadRequest, ErrBadRequest, "body must be valid JSON", nil)
+			return
+		}
+	}
+	var result json.RawMessage
+	var err error
+	path, query, token := r.PathValue("path"), r.URL.RawQuery, anchorTokenFromHeader(r)
+	if sep == "sep6" && (path == "deposit" || path == "withdraw") && r.Method == http.MethodGet {
+		account, _ := callerAddress(r)
+		values, err := url.ParseQuery(query)
+		if err != nil {
+			httpx.WriteError(w, http.StatusBadRequest, ErrBadRequest, "invalid query string", nil)
+			return
+		}
+		if requested := values.Get("account"); requested != "" && requested != account {
+			httpx.WriteError(w, http.StatusForbidden, ErrNotAllowed, "deposit account must match the authenticated Stellar account", nil)
+			return
+		}
+		if path == "deposit" {
+			values.Set("account", account)
+		}
+		query = values.Encode()
+	}
+	if !(sep == "sep6" && path == "info") && strings.TrimSpace(token) == "" {
+		httpx.WriteError(w, http.StatusUnauthorized, ErrAuthRequired, "X-Anchor-Token is required", nil)
+		return
+	}
+	switch sep {
+	case "sep6":
+		result, err = h.svc.ProxySep6(r.Context(), id, r.Method, path, query, token, body)
+	case "sep12":
+		result, err = h.svc.ProxySep12(r.Context(), id, r.Method, path, query, token, body)
+	case "sep38":
+		result, err = h.svc.ProxySep38(r.Context(), id, r.Method, path, query, token, body)
+	}
+	if err != nil {
+		writeAnchorError(w, err)
+		return
+	}
+	if sep == "sep6" && r.Method == http.MethodGet && (path == "deposit" || path == "withdraw") {
+		var started struct {
+			ID            string `json:"id"`
+			TransactionID string `json:"transaction_id"`
+		}
+		if json.Unmarshal(result, &started) == nil {
+			txID := started.ID
+			if txID == "" {
+				txID = started.TransactionID
+			}
+			if txID != "" {
+				kind := path
+				address, _ := callerAddress(r)
+				if err := h.svc.RecordSep6Transaction(r.Context(), id, address, Transaction{ID: txID, Kind: kind, State: "pending_user_transfer_start"}); err != nil {
+					writeAnchorError(w, err)
+					return
+				}
+			}
+		}
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+	_, _ = w.Write(bytes.TrimSpace(result))
+}
+
+func (h *Handler) Sep6(w http.ResponseWriter, r *http.Request)  { h.sepProxy(w, r, "sep6") }
+func (h *Handler) Sep12(w http.ResponseWriter, r *http.Request) { h.sepProxy(w, r, "sep12") }
+func (h *Handler) Sep38(w http.ResponseWriter, r *http.Request) { h.sepProxy(w, r, "sep38") }
 
 func NewHandler(svc *Service) *Handler {
 	return &Handler{svc: svc}
@@ -177,7 +263,10 @@ func (h *Handler) ConfirmTrustline(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var req confirmTrustlineRequest
-	_ = json.NewDecoder(r.Body).Decode(&req)
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		httpx.WriteError(w, http.StatusBadRequest, ErrBadRequest, "ledgerSeq is required", nil)
+		return
+	}
 	if err := h.svc.ConfirmTrustline(r.Context(), address, req.LedgerSeq); err != nil {
 		writeAnchorError(w, err)
 		return
@@ -194,6 +283,8 @@ func writeAnchorError(w http.ResponseWriter, err error) {
 		code, status = ErrNotAllowed, http.StatusNotFound
 	case errors.Is(err, errAuthRequired):
 		code, status = ErrAuthRequired, http.StatusUnauthorized
+	case errors.Is(err, ErrNotFoundInRepo):
+		code, status = ErrNotAllowed, http.StatusForbidden
 	case errors.Is(err, errChainUnavailable):
 		code, status = ErrChainUnavailable, http.StatusBadGateway
 	case strings.Contains(err.Error(), ErrTomlUnavailable):

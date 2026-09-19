@@ -1,5 +1,5 @@
-// Package anchor implements pay-anchor-service: a stateless SEP-1/SEP-10/
-// SEP-24 proxy plus a transaction ledger. It never stores an anchor's JWT —
+// Package anchor implements pay-anchor-service: a stateless SEP-1/SEP-6/
+// SEP-10/SEP-12/SEP-38 proxy plus a transaction ledger. It never stores an anchor's JWT —
 // that stays on the device — so status updates are self-reported by the
 // client after it queries the anchor directly with its own token; see
 // docs/reference/platform/anchor-entegrasyonu.md.
@@ -14,7 +14,10 @@ type Info struct {
 	Domain           string `json:"domain"`
 	SigningKey       string `json:"signingKey"`
 	WebAuthEndpoint  string `json:"webAuthEndpoint"`
-	TransferServer24 string `json:"transferServer24"`
+	TransferServer   string `json:"transferServer,omitempty"`
+	KYCServer        string `json:"kycServer,omitempty"`
+	QuoteServer      string `json:"quoteServer,omitempty"`
+	TransferServer24 string `json:"transferServer24,omitempty"`
 	AssetCode        string `json:"assetCode"`
 	AssetIssuer      string `json:"assetIssuer"`
 }

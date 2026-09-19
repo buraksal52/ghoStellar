@@ -9,6 +9,7 @@ import (
 	"net/url"
 	"strings"
 
+	"github.com/BurntSushi/toml"
 	"github.com/stellar/go-stellar-sdk/clients/stellartoml"
 )
 
@@ -35,6 +36,29 @@ func (c *Client) FetchTOML(domain string) (*stellartoml.Response, error) {
 	return resp, nil
 }
 
+func (c *Client) FetchQuoteServer(domain string) (string, error) {
+	u := "https://" + domain + stellartoml.WellKnownPath
+	req, err := http.NewRequest(http.MethodGet, u, nil)
+	if err != nil {
+		return "", err
+	}
+	resp, err := c.hc.Do(req)
+	if err != nil {
+		return "", fmt.Errorf("%s: %w", ErrTomlUnavailable, err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode >= 400 {
+		return "", fmt.Errorf("%s: stellar.toml returned %d", ErrTomlUnavailable, resp.StatusCode)
+	}
+	var fields struct {
+		AnchorQuoteServer string `toml:"ANCHOR_QUOTE_SERVER"`
+	}
+	if _, err := toml.NewDecoder(io.LimitReader(resp.Body, stellartoml.StellarTomlMaxSize)).Decode(&fields); err != nil {
+		return "", fmt.Errorf("%s: parse ANCHOR_QUOTE_SERVER: %w", ErrTomlUnavailable, err)
+	}
+	return fields.AnchorQuoteServer, nil
+}
+
 // SEP10Challenge relays the anchor's own SEP-10 challenge back to the
 // caller verbatim — this is the anchor's challenge, not ours (see
 // docs/reference/platform/anchor-entegrasyonu.md's "İki ayrı SEP-10
@@ -43,6 +67,9 @@ func (c *Client) SEP10Challenge(ctx context.Context, webAuthEndpoint, account st
 	u, err := url.Parse(webAuthEndpoint)
 	if err != nil {
 		return "", fmt.Errorf("%s: bad WEB_AUTH_ENDPOINT: %w", ErrUpstreamFailed, err)
+	}
+	if err := requireHTTPS(u); err != nil {
+		return "", err
 	}
 	q := u.Query()
 	q.Set("account", account)
@@ -115,6 +142,50 @@ func (c *Client) SEP24Transactions(ctx context.Context, transferServer, anchorTo
 	return body, nil
 }
 
+// ProxyJSON forwards a SEP call to a server discovered from the configured
+// anchor's stellar.toml. The outbound client's hostname guard remains the
+// authority for which hosts can be reached.
+func (c *Client) ProxyJSON(ctx context.Context, method, base, path, rawQuery, bearer string, payload []byte) (json.RawMessage, error) {
+	u, err := url.Parse(strings.TrimRight(base, "/") + "/" + strings.TrimLeft(path, "/"))
+	if err != nil {
+		return nil, fmt.Errorf("%s: bad SEP endpoint: %w", ErrUpstreamFailed, err)
+	}
+	if err := requireHTTPS(u); err != nil {
+		return nil, err
+	}
+	u.RawQuery = rawQuery
+	var body io.Reader
+	if payload != nil {
+		body = strings.NewReader(string(payload))
+	}
+	req, err := http.NewRequestWithContext(ctx, method, u.String(), body)
+	if err != nil {
+		return nil, err
+	}
+	if bearer != "" {
+		req.Header.Set("Authorization", "Bearer "+bearer)
+	}
+	if payload != nil {
+		req.Header.Set("Content-Type", "application/json")
+	}
+	resp, err := c.hc.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("%s: %w", ErrUpstreamFailed, err)
+	}
+	defer resp.Body.Close()
+	responseBody, err := io.ReadAll(io.LimitReader(resp.Body, 2<<20))
+	if err != nil {
+		return nil, err
+	}
+	if resp.StatusCode >= 400 {
+		return nil, fmt.Errorf("%s: anchor returned %d: %s", ErrUpstreamFailed, resp.StatusCode, string(responseBody))
+	}
+	if !json.Valid(responseBody) {
+		return nil, fmt.Errorf("%s: anchor returned invalid JSON", ErrUpstreamFailed)
+	}
+	return json.RawMessage(responseBody), nil
+}
+
 func (c *Client) getJSON(ctx context.Context, u string, out any) error {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u, nil)
 	if err != nil {
@@ -132,6 +203,13 @@ func (c *Client) getJSON(ctx context.Context, u string, out any) error {
 }
 
 func (c *Client) postJSON(ctx context.Context, u, bearer string, payload []byte, out any) error {
+	parsed, err := url.Parse(u)
+	if err != nil {
+		return err
+	}
+	if err := requireHTTPS(parsed); err != nil {
+		return err
+	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, u, strings.NewReader(string(payload)))
 	if err != nil {
 		return err
@@ -150,4 +228,11 @@ func (c *Client) postJSON(ctx context.Context, u, bearer string, payload []byte,
 		return fmt.Errorf("%s: anchor returned %d: %s", ErrUpstreamFailed, resp.StatusCode, string(body))
 	}
 	return json.Unmarshal(body, out)
+}
+
+func requireHTTPS(u *url.URL) error {
+	if u == nil || u.Scheme != "https" || u.Hostname() == "" || u.User != nil {
+		return fmt.Errorf("%s: anchor endpoint must use HTTPS and contain no credentials", ErrUpstreamFailed)
+	}
+	return nil
 }

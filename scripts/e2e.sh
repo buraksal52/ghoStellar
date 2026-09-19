@@ -12,7 +12,7 @@
 set -euo pipefail
 
 EDGE="${1:-http://localhost:9080}"
-ASSET_CODE="${ASSET_CODE:-SRT}"
+ASSET_CODE="${ASSET_CODE:-USDC}"
 
 need() { command -v "$1" >/dev/null || { echo "missing dependency: $1" >&2; exit 1; }; }
 need stellar
