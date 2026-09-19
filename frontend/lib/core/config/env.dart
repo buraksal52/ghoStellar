@@ -11,11 +11,10 @@ class Env {
   static const String horizonUrl = 'https://horizon-testnet.stellar.org';
   static const String sorobanRpcUrl = 'https://soroban-testnet.stellar.org';
 
-  /// APISIX edge gateway. Override with `--dart-define=GATEWAY_BASE_URL=...`
-  /// for a device that can't reach `localhost` (e.g. a physical phone
-  /// talking to a dev machine on the LAN).
+  /// Production backend. Override with `--dart-define=GATEWAY_BASE_URL=...`
+  /// to use a local or alternative deployment.
   static const String gatewayBaseUrl = String.fromEnvironment(
     'GATEWAY_BASE_URL',
-    defaultValue: 'http://localhost:9080',
+    defaultValue: 'https://ghostellar-production.up.railway.app',
   );
 }
