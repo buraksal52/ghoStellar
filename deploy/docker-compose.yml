@@ -1,0 +1,254 @@
+# Local-Payment MVP — microservice profile (default). Hand-written in the
+# shape tools/render would produce (plan's "Render tool'u almama kararı"):
+# one isolated block per service, ${VAR:-default} env, so a future jump in
+# component count can adopt Agent-Tale's render tool without a rewrite.
+#
+# `name:` is pinned — without it the compose project name follows this
+# file's parent directory, and a rename/move detaches the postgres_data
+# volume from what you already have (a real footgun both reference
+# projects hit before fixing it).
+name: local-payment
+
+volumes:
+  postgres_data: {}
+
+services:
+  postgres:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-localpayment}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-localpayment}
+      POSTGRES_DB: ${POSTGRES_DB:-localpayment}
+    ports:
+      - "${POSTGRES_HOST_PORT:-5434}:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-localpayment} -d ${POSTGRES_DB:-localpayment}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  migrate:
+    image: migrate/migrate:v4.17.1
+    depends_on:
+      postgres:
+        condition: service_healthy
+    volumes:
+      - ./migrations:/migrations:ro
+    command:
+      - -path=/migrations
+      - -database=postgres://${POSTGRES_USER:-localpayment}:${POSTGRES_PASSWORD:-localpayment}@postgres:5432/${POSTGRES_DB:-localpayment}?sslmode=disable
+      - up
+    restart: "no"
+
+  pay-chain-gateway:
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile.go
+      args:
+        SERVICE: gatewaysvc
+    container_name: local_payment_chain_gateway
+    environment:
+      LISTEN_ADDR: ":8082"
+      INTERNAL_API_KEY: ${INTERNAL_API_KEY}
+      HORIZON_URL: ${HORIZON_URL:-https://horizon-testnet.stellar.org}
+      SOROBAN_RPC_URL: ${SOROBAN_RPC_URL:-https://soroban-testnet.stellar.org}
+    ports:
+      - "8082:8082"
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "-q", "http://localhost:8082/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 15s
+    restart: unless-stopped
+
+  pay-auth-service:
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile.go
+      args:
+        SERVICE: authsvc
+    container_name: local_payment_auth
+    environment:
+      LISTEN_ADDR: ":8081"
+      DATABASE_URL: ${DATABASE_URL}
+      SEP10_SIGNING_SEED: ${SEP10_SIGNING_SEED}
+      HOME_DOMAIN: ${HOME_DOMAIN:-localhost}
+      WEB_AUTH_DOMAIN: ${WEB_AUTH_DOMAIN:-localhost}
+      NETWORK_PASSPHRASE: ${NETWORK_PASSPHRASE:-Test SDF Network ; September 2015}
+      JWT_PRIVATE_KEY_PATH: /secrets/jwt_private.pem
+      JWT_PUBLIC_KEY_PATH: /secrets/jwt_public.pem
+    volumes:
+      - ./secrets:/secrets:ro
+    ports:
+      - "8081:8081"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "-q", "http://localhost:8081/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+    restart: unless-stopped
+
+  pay-cheque-service:
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile.go
+      args:
+        SERVICE: chequesvc
+    container_name: local_payment_cheque
+    environment:
+      LISTEN_ADDR: ":8083"
+      DATABASE_URL: ${DATABASE_URL}
+      INTERNAL_API_KEY: ${INTERNAL_API_KEY}
+      CHAIN_GATEWAY_URL: http://pay-chain-gateway:8082
+      JWT_PUBLIC_KEY_PATH: /secrets/jwt_public.pem
+      PAY_ESCROW_CONTRACT_ID: ${PAY_ESCROW_CONTRACT_ID}
+      ASSET_SAC_CONTRACT_ID: ${ASSET_SAC_CONTRACT_ID}
+      ASSET_CODE: ${ASSET_CODE:-SRT}
+      ASSET_ISSUER: ${ASSET_ISSUER}
+      ASSET_DECIMALS: ${ASSET_DECIMALS:-7}
+      NETWORK_PASSPHRASE: ${NETWORK_PASSPHRASE:-Test SDF Network ; September 2015}
+    volumes:
+      - ./secrets:/secrets:ro
+    ports:
+      - "8083:8083"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+      pay-chain-gateway:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "-q", "http://localhost:8083/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+    restart: unless-stopped
+
+  pay-tx-service:
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile.go
+      args:
+        SERVICE: txsvc
+    container_name: local_payment_tx
+    environment:
+      LISTEN_ADDR: ":8084"
+      DATABASE_URL: ${DATABASE_URL}
+      INTERNAL_API_KEY: ${INTERNAL_API_KEY}
+      CHAIN_GATEWAY_URL: http://pay-chain-gateway:8082
+      JWT_PUBLIC_KEY_PATH: /secrets/jwt_public.pem
+    volumes:
+      - ./secrets:/secrets:ro
+    ports:
+      - "8084:8084"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+      pay-chain-gateway:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "-q", "http://localhost:8084/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+    restart: unless-stopped
+
+  pay-anchor-service:
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile.go
+      args:
+        SERVICE: anchorsvc
+    container_name: local_payment_anchor
+    environment:
+      LISTEN_ADDR: ":8086"
+      DATABASE_URL: ${DATABASE_URL}
+      INTERNAL_API_KEY: ${INTERNAL_API_KEY}
+      CHAIN_GATEWAY_URL: http://pay-chain-gateway:8082
+      JWT_PUBLIC_KEY_PATH: /secrets/jwt_public.pem
+      ANCHOR_ID: ${ANCHOR_ID:-default}
+      ANCHOR_DOMAIN: ${ANCHOR_DOMAIN:-testanchor.stellar.org}
+      ASSET_CODE: ${ASSET_CODE:-SRT}
+      ASSET_ISSUER: ${ASSET_ISSUER}
+      ASSET_DECIMALS: ${ASSET_DECIMALS:-7}
+      NETWORK_PASSPHRASE: ${NETWORK_PASSPHRASE:-Test SDF Network ; September 2015}
+    volumes:
+      - ./secrets:/secrets:ro
+    ports:
+      - "8086:8086"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+      pay-chain-gateway:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "-q", "http://localhost:8086/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+    restart: unless-stopped
+
+  pay-scheduler-service:
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile.go
+      args:
+        SERVICE: schedulersvc
+    container_name: local_payment_scheduler
+    environment:
+      LISTEN_ADDR: ":8085"
+      INTERNAL_API_KEY: ${INTERNAL_API_KEY}
+      CHAIN_GATEWAY_URL: http://pay-chain-gateway:8082
+      CHEQUE_SERVICE_URL: http://pay-cheque-service:8083
+      PAY_ESCROW_CONTRACT_ID: ${PAY_ESCROW_CONTRACT_ID}
+      NETWORK_PASSPHRASE: ${NETWORK_PASSPHRASE:-Test SDF Network ; September 2015}
+      KEEPER_SECRET_SEED: ${KEEPER_SECRET_SEED}
+      SWEEP_INTERVAL_SECONDS: ${SWEEP_INTERVAL_SECONDS:-60}
+      BUMP_INTERVAL_SECONDS: ${BUMP_INTERVAL_SECONDS:-21600}
+    ports:
+      - "8085:8085"
+    depends_on:
+      pay-chain-gateway:
+        condition: service_healthy
+      pay-cheque-service:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "-q", "http://localhost:8085/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 15s
+    restart: unless-stopped
+
+  apisix:
+    image: apache/apisix:3.14.1-debian
+    container_name: local_payment_apisix
+    environment:
+      APISIX_STAND_ALONE: "true"
+    volumes:
+      - ./apisix/config.yaml:/usr/local/apisix/conf/config.yaml:ro
+      - ./apisix/apisix.yaml:/usr/local/apisix/conf/apisix.yaml:ro
+    ports:
+      - "9080:9080"
+      - "9443:9443"
+    # No depends_on upstreams on purpose — APISIX retries failed upstreams
+    # on its own; a hard dependency edge here just adds a startup-order
+    # constraint with no benefit (plan's "Docker / Compose" gotcha list).
+    restart: unless-stopped

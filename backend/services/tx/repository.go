@@ -1,0 +1,90 @@
+package tx
+
+import (
+	"context"
+	"errors"
+
+	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgxpool"
+)
+
+// Repository holds only SQL (architecture.md §13's file template).
+type Repository struct {
+	pool *pgxpool.Pool
+}
+
+func NewRepository(pool *pgxpool.Pool) *Repository {
+	return &Repository{pool: pool}
+}
+
+// ErrKeyInFlight means a submission with this idempotency key already
+// exists and has not finished yet — the caller should not submit again
+// (D3/D5-style single-flight, not a hard duplicate rejection: the FIRST
+// caller's result is what eventually satisfies both).
+var ErrKeyInFlight = errors.New("tx: idempotency key already in flight")
+
+// BeginSubmission atomically claims idempotencyKey: it succeeds once per
+// key. A second concurrent call with the same key gets ErrKeyInFlight
+// instead of double-submitting (B2: safe re-query, never a duplicate send).
+func (r *Repository) BeginSubmission(ctx context.Context, s Submission) error {
+	_, err := r.pool.Exec(ctx, `
+		INSERT INTO pay.idempotency_keys (key, stellar_address, request_hash, status)
+		VALUES ($1, $2, $3, 'pending')
+	`, s.IdempotencyKey, s.StellarAddress, s.Purpose)
+	if err != nil {
+		return ErrKeyInFlight
+	}
+	_, err = r.pool.Exec(ctx, `
+		INSERT INTO pay.submissions (idempotency_key, stellar_address, purpose, state)
+		VALUES ($1, $2, $3, 'pending')
+	`, s.IdempotencyKey, s.StellarAddress, s.Purpose)
+	return err
+}
+
+func (r *Repository) CompleteSubmission(ctx context.Context, key, txHash, state, resultCode string, responseJSON []byte) error {
+	_, err := r.pool.Exec(ctx, `
+		UPDATE pay.submissions
+		SET tx_hash = $2, state = $3, result_code = $4, updated_at = now()
+		WHERE idempotency_key = $1
+	`, key, txHash, state, resultCode)
+	if err != nil {
+		return err
+	}
+	_, err = r.pool.Exec(ctx, `
+		UPDATE pay.idempotency_keys SET status = 'done', response_json = $2 WHERE key = $1
+	`, key, responseJSON)
+	return err
+}
+
+func (r *Repository) GetSubmission(ctx context.Context, key string) (Submission, error) {
+	var s Submission
+	err := r.pool.QueryRow(ctx, `
+		SELECT idempotency_key, stellar_address, purpose, coalesce(tx_hash,''), state, coalesce(result_code,''), created_at, updated_at
+		FROM pay.submissions WHERE idempotency_key = $1
+	`, key).Scan(&s.IdempotencyKey, &s.StellarAddress, &s.Purpose, &s.TxHash, &s.State, &s.ResultCode, &s.CreatedAt, &s.UpdatedAt)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return Submission{}, ErrNotFoundInRepo
+	}
+	return s, err
+}
+
+// GetIdempotentResponse returns a previously stored response for key if the
+// submission already completed — the D3 short-circuit for a retried
+// request.
+func (r *Repository) GetIdempotentResponse(ctx context.Context, key string) (json []byte, done bool, err error) {
+	var status string
+	err = r.pool.QueryRow(ctx, `
+		SELECT status, response_json FROM pay.idempotency_keys WHERE key = $1
+	`, key).Scan(&status, &json)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, false, nil
+	}
+	if err != nil {
+		return nil, false, err
+	}
+	return json, status == "done", nil
+}
+
+// ErrNotFoundInRepo signals "no such row" up to Service, which maps it to
+// tx.not_found.
+var ErrNotFoundInRepo = errors.New("tx: not found")

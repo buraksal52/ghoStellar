@@ -1,0 +1,605 @@
+package cheque
+
+import (
+	"context"
+	"crypto/rand"
+	"encoding/base64"
+	"encoding/binary"
+	"errors"
+	"fmt"
+	"math/big"
+	"time"
+
+	"github.com/oklog/ulid/v2"
+	"github.com/stellar/go-stellar-sdk/xdr"
+
+	"github.com/local-payment/backend/pkg/dbx"
+	"github.com/local-payment/backend/pkg/money"
+	"github.com/local-payment/backend/pkg/stellarx"
+	"github.com/local-payment/backend/ports"
+)
+
+// Cheque validity (p2p doc §0 rule 2 / §9.H1) and the pool's withdraw lock
+// (§7 / §9.H2) — kept in sync with contracts/soroban/pay-escrow/src/lib.rs's
+// own constants; the contract is the actual enforcement point (D6), these
+// mirror them only for building correct unsigned XDR and readable /sync
+// countdowns.
+const (
+	chequeValidity = 7 * 24 * time.Hour
+	// Ledger close time varies; ~5s/ledger is Stellar's design target, used
+	// only to size the force_collect pre-auth entry's expiration ledger —
+	// an approximation is fine because the CONTRACT'S OWN check is against
+	// ledger timestamp seconds, not this estimate (D7).
+	approxLedgersPerWeek = uint32(7 * 24 * 60 * 60 / 5)
+)
+
+var ErrDBNotReadyErr = errors.New(ErrDBNotReady)
+
+type Config struct {
+	EscrowContractID  string
+	TokenContractID   string // the SAC address pay-escrow moves (plan's Açık Varsayım #1: one asset for the MVP)
+	AssetCode         string
+	AssetIssuer       string
+	Decimals          uint8
+	NetworkPassphrase string
+}
+
+type Service struct {
+	cfg   Config
+	pool  *dbx.Pool
+	chain ports.ChainGateway
+}
+
+func NewService(cfg Config, pool *dbx.Pool, chain ports.ChainGateway) *Service {
+	return &Service{cfg: cfg, pool: pool, chain: chain}
+}
+
+func (s *Service) repo() (*Repository, error) {
+	p := s.pool.Get()
+	if p == nil {
+		return nil, ErrDBNotReadyErr
+	}
+	return NewRepository(p), nil
+}
+
+func (s *Service) simulator() stellarx.Simulator {
+	return func(ctx context.Context, unsignedXDR string) (string, error) {
+		res, err := s.chain.SimulateTransaction(ctx, unsignedXDR)
+		if err != nil {
+			return "", err
+		}
+		if !res.Success {
+			return "", fmt.Errorf("simulation failed: %s", res.Error)
+		}
+		return res.TransactionDataXDR, nil
+	}
+}
+
+// CreateChequeResult is what POST /cheques returns: the unsigned lock XDR
+// plus the force_collect pre-authorization payload the device must also
+// sign (two separate signatures from the same key, per the plan's
+// "Kritik Mimari Karar").
+type CreateChequeResult struct {
+	ChequeID           string    `json:"chequeId"`
+	LockXDR            string    `json:"lockXdr"`
+	PreauthEntryXDR    string    `json:"preauthEntryXdr"`    // unsigned SorobanAuthorizationEntry, base64
+	PreauthPayloadHash string    `json:"preauthPayloadHash"` // base64 sha256 the device must sign
+	ExpiresAt          time.Time `json:"expiresAt"`
+}
+
+// CreateCheque runs the p2p doc's §9.A validations (A1, A4/F3, A5, A6 — A3
+// is enforced by the reservation's partial unique index) and, once they
+// pass, reserves the amount and returns everything the device needs to
+// sign: the unsigned `lock` transaction and the unsigned force_collect
+// pre-authorization entry.
+func (s *Service) CreateCheque(ctx context.Context, sender, receiver, amountStr string) (CreateChequeResult, error) {
+	repo, err := s.repo()
+	if err != nil {
+		return CreateChequeResult{}, err
+	}
+
+	if sender == receiver {
+		return CreateChequeResult{}, errSelfTransfer
+	}
+	if !stellarx.IsValidAccountAddress(receiver) {
+		return CreateChequeResult{}, errInvalidReceiver
+	}
+	asset := money.AssetID{ContractID: s.cfg.TokenContractID, Code: s.cfg.AssetCode, Issuer: s.cfg.AssetIssuer}
+	amount, err := money.ParseAmount(amountStr, asset, s.cfg.Decimals)
+	if err != nil || amount.Raw.Sign() <= 0 {
+		return CreateChequeResult{}, errInvalidAmount
+	}
+
+	trustline, err := s.chain.GetTrustline(ctx, receiver, s.cfg.AssetCode, s.cfg.AssetIssuer)
+	if err != nil {
+		return CreateChequeResult{}, fmt.Errorf("%w: %v", errChainUnavailable, err)
+	}
+	if !trustline.Exists {
+		return CreateChequeResult{}, errReceiverNoTrustline
+	}
+
+	senderAccount, err := s.chain.GetAccount(ctx, sender)
+	if err != nil {
+		return CreateChequeResult{}, fmt.Errorf("%w: %v", errChainUnavailable, err)
+	}
+	if !hasSufficientBalance(senderAccount, s.cfg.AssetCode, s.cfg.AssetIssuer, amount.Raw, s.cfg.Decimals) {
+		return CreateChequeResult{}, errInsufficientBalance
+	}
+
+	chequeID := ulid.Make()
+	expiresAt := time.Now().Add(chequeValidity)
+
+	c := Cheque{
+		ID:              chequeID.String(),
+		SenderAddress:   sender,
+		ReceiverAddress: receiver,
+		TokenContract:   s.cfg.TokenContractID,
+		AmountRaw:       amount.Raw.String(),
+		Decimals:        s.cfg.Decimals,
+		State:           StateImzaliRezerve,
+		ExpiresAt:       expiresAt,
+	}
+	if err := repo.CreateReservedCheque(ctx, c); err != nil {
+		if errors.Is(err, ErrAlreadyActiveInRepo) {
+			return CreateChequeResult{}, errAlreadyActive
+		}
+		return CreateChequeResult{}, fmt.Errorf("cheque: create reservation: %w", err)
+	}
+
+	lockArgs, err := scArgs(
+		scAddr(sender), scBytes(chequeID[:]), scAddr(receiver),
+		scAddr(s.cfg.TokenContractID), scI128(amount.Raw), scU64(uint64(expiresAt.Unix())),
+	)
+	if err != nil {
+		return CreateChequeResult{}, fmt.Errorf("cheque: build lock args: %w", err)
+	}
+	lockOp, err := stellarx.InvokeContract(s.cfg.EscrowContractID, sender, "lock", lockArgs...)
+	if err != nil {
+		return CreateChequeResult{}, fmt.Errorf("cheque: build lock op: %w", err)
+	}
+	lockXDR, err := stellarx.AssembleInvocation(ctx, s.simulator(), s.cfg.NetworkPassphrase, sender, senderAccount.Sequence, lockOp)
+	if err != nil {
+		return CreateChequeResult{}, fmt.Errorf("cheque: assemble lock tx: %w", err)
+	}
+
+	ledger, err := s.chain.GetLedger(ctx)
+	if err != nil {
+		return CreateChequeResult{}, fmt.Errorf("%w: %v", errChainUnavailable, err)
+	}
+	nonce, err := randomNonce()
+	if err != nil {
+		return CreateChequeResult{}, fmt.Errorf("cheque: generate nonce: %w", err)
+	}
+	entryXDR, payloadHash, err := stellarx.BuildForceCollectAuthEntry(
+		s.cfg.NetworkPassphrase, s.cfg.EscrowContractID,
+		sender, receiver, s.cfg.TokenContractID, amount.Raw, chequeID[:],
+		uint64(expiresAt.Unix()), uint32(ledger.Sequence)+approxLedgersPerWeek, nonce,
+	)
+	if err != nil {
+		return CreateChequeResult{}, fmt.Errorf("cheque: build force_collect auth entry: %w", err)
+	}
+
+	return CreateChequeResult{
+		ChequeID:           c.ID,
+		LockXDR:            lockXDR,
+		PreauthEntryXDR:    base64.StdEncoding.EncodeToString(entryXDR),
+		PreauthPayloadHash: base64.StdEncoding.EncodeToString(payloadHash),
+		ExpiresAt:          expiresAt,
+	}, nil
+}
+
+// StorePreauth saves the device-signed force_collect authorization entry
+// (base64 XDR, with Credentials.Address.Signature now filled in) so it can
+// be handed to the receiver later.
+func (s *Service) StorePreauth(ctx context.Context, chequeID, signedEntryXDR string) error {
+	repo, err := s.repo()
+	if err != nil {
+		return err
+	}
+	if _, err := repo.GetCheque(ctx, chequeID); err != nil {
+		return mapRepoErr(err)
+	}
+	return repo.SetPreauthEntry(ctx, chequeID, signedEntryXDR)
+}
+
+// ConfirmLock is called once the device has submitted the signed lock XDR
+// via pay-tx-service and it succeeded — it moves the cheque from
+// IMZALI_REZERVE to HAVUZDA. See SERVICE.md's "Kapsam sınırlaması" for why
+// this MVP takes the caller's word (backed by tx-service's own direct
+// chain interaction) rather than independently re-deriving state from a
+// ScVal-decoded on-chain read.
+func (s *Service) ConfirmLock(ctx context.Context, chequeID, txHash string) error {
+	repo, err := s.repo()
+	if err != nil {
+		return err
+	}
+	if err := repo.SetLockTxHash(ctx, chequeID, txHash); err != nil {
+		return err
+	}
+	if err := repo.Transition(ctx, chequeID, StateImzaliRezerve, StateHavuzda, "user_action", txHash); err != nil {
+		if errors.Is(err, ErrBadTransitionInRepo) {
+			return nil // D3: already applied (replay-safe)
+		}
+		return err
+	}
+	return nil
+}
+
+// ClaimXDR builds the unsigned claim transaction for the cheque's receiver.
+func (s *Service) ClaimXDR(ctx context.Context, chequeID, receiver string) (string, error) {
+	repo, err := s.repo()
+	if err != nil {
+		return "", err
+	}
+	c, err := repo.GetCheque(ctx, chequeID)
+	if err != nil {
+		return "", mapRepoErr(err)
+	}
+	if c.ReceiverAddress != receiver {
+		return "", errInvalidReceiver
+	}
+	if c.State != StateHavuzda {
+		return "", errTerminalState
+	}
+	if time.Now().After(c.ExpiresAt) {
+		return "", errExpired
+	}
+
+	receiverAccount, err := s.chain.GetAccount(ctx, receiver)
+	if err != nil {
+		return "", fmt.Errorf("%w: %v", errChainUnavailable, err)
+	}
+	idBytes, err := decodeULID(chequeID)
+	if err != nil {
+		return "", err
+	}
+	claimArgs, err := scArgs(scBytes(idBytes))
+	if err != nil {
+		return "", err
+	}
+	op, err := stellarx.InvokeContract(s.cfg.EscrowContractID, receiver, "claim", claimArgs...)
+	if err != nil {
+		return "", err
+	}
+	return stellarx.AssembleInvocation(ctx, s.simulator(), s.cfg.NetworkPassphrase, receiver, receiverAccount.Sequence, op)
+}
+
+// ConfirmClaim moves a cheque from HAVUZDA to TALEP_EDILDI (money has moved;
+// ONAYLANDI/KAPANDI follow once the receiver acks the receipt, p2p doc §9.I).
+func (s *Service) ConfirmClaim(ctx context.Context, chequeID, txHash string) error {
+	repo, err := s.repo()
+	if err != nil {
+		return err
+	}
+	if err := repo.Transition(ctx, chequeID, StateHavuzda, StateTalepEdildi, "user_action", txHash); err != nil {
+		if errors.Is(err, ErrBadTransitionInRepo) {
+			return nil
+		}
+		return err
+	}
+	return nil
+}
+
+// AcknowledgeReceipt is the p2p doc §9.I receipt: purely a ledger-closing
+// step, the money already moved at claim time.
+func (s *Service) AcknowledgeReceipt(ctx context.Context, chequeID string) error {
+	repo, err := s.repo()
+	if err != nil {
+		return err
+	}
+	if err := repo.Transition(ctx, chequeID, StateTalepEdildi, StateOnaylandi, "user_action", ""); err != nil && !errors.Is(err, ErrBadTransitionInRepo) {
+		return err
+	}
+	if err := repo.Transition(ctx, chequeID, StateOnaylandi, StateKapandi, "user_action", ""); err != nil && !errors.Is(err, ErrBadTransitionInRepo) {
+		return err
+	}
+	return nil
+}
+
+// ForceCollectXDR builds the unsigned force_collect transaction, submitted
+// by the receiver but authorized by the sender's stored pre-signed entry
+// (p2p doc §5/§6.3).
+func (s *Service) ForceCollectXDR(ctx context.Context, chequeID, receiver string) (string, error) {
+	repo, err := s.repo()
+	if err != nil {
+		return "", err
+	}
+	c, err := repo.GetCheque(ctx, chequeID)
+	if err != nil {
+		return "", mapRepoErr(err)
+	}
+	if c.ReceiverAddress != receiver {
+		return "", errInvalidReceiver
+	}
+	if c.State != StateImzaliRezerve && c.State != StateFonlaniyor {
+		return "", errTerminalState // already Funded (use claim) or already terminal
+	}
+	if c.PreauthEntryXDR == "" {
+		return "", errBadRequest
+	}
+
+	entryBytes, err := base64.StdEncoding.DecodeString(c.PreauthEntryXDR)
+	if err != nil {
+		return "", fmt.Errorf("cheque: decode stored preauth entry: %w", err)
+	}
+	amountRaw, ok := new(big.Int).SetString(c.AmountRaw, 10)
+	if !ok {
+		return "", fmt.Errorf("cheque: corrupt amount_raw %q", c.AmountRaw)
+	}
+	idBytes, err := decodeULID(chequeID)
+	if err != nil {
+		return "", err
+	}
+
+	receiverAccount, err := s.chain.GetAccount(ctx, receiver)
+	if err != nil {
+		return "", fmt.Errorf("%w: %v", errChainUnavailable, err)
+	}
+
+	fcArgs, err := scArgs(
+		scAddr(c.SenderAddress), scBytes(idBytes), scAddr(c.ReceiverAddress),
+		scAddr(c.TokenContract), scI128(amountRaw), scU64(uint64(c.ExpiresAt.Unix())),
+	)
+	if err != nil {
+		return "", err
+	}
+	op, err := stellarx.InvokeContract(s.cfg.EscrowContractID, receiver, "force_collect", fcArgs...)
+	if err != nil {
+		return "", err
+	}
+	if err := stellarx.AttachAuthEntry(op, entryBytes); err != nil {
+		return "", err
+	}
+	xdrStr, err := stellarx.AssembleInvocation(ctx, s.simulator(), s.cfg.NetworkPassphrase, receiver, receiverAccount.Sequence, op)
+	if err != nil {
+		return "", err
+	}
+
+	_ = repo.Transition(ctx, chequeID, c.State, StateZorlaTahsilDenendi, "user_action", "") // best-effort marker; terminal outcome recorded on confirm
+	return xdrStr, nil
+}
+
+// ConfirmForceCollect records force_collect's on-chain outcome:
+// Collected -> KAPANDI, Bounced -> KARSILIKSIZ (D2/D8 — the sender is never
+// treated as in debt either way).
+func (s *Service) ConfirmForceCollect(ctx context.Context, chequeID, txHash string, collected bool) error {
+	repo, err := s.repo()
+	if err != nil {
+		return err
+	}
+	to := StateKarsiliksiz
+	if collected {
+		to = StateKapandi
+	}
+	if err := repo.Transition(ctx, chequeID, StateZorlaTahsilDenendi, to, "user_action", txHash); err != nil && !errors.Is(err, ErrBadTransitionInRepo) {
+		return err
+	}
+	return nil
+}
+
+// ExpiredFundedCheques returns every HAVUZDA cheque past its expiry — what
+// pay-scheduler-service sweeps to submit a permissionless refund for (p2p
+// doc §6.2, §9.B1).
+func (s *Service) ExpiredFundedCheques(ctx context.Context) ([]Cheque, error) {
+	repo, err := s.repo()
+	if err != nil {
+		return nil, err
+	}
+	return repo.ExpiredFundedCheques(ctx, time.Now())
+}
+
+// MarkRefunded records a scheduler-submitted permissionless refund's
+// outcome: HAVUZDA -> IADE_EDILEBILIR -> IADE_EDILDI in one call, since the
+// scheduler only observes the already-completed submission (D9: nobody
+// waited on the sender or receiver being online for this).
+func (s *Service) MarkRefunded(ctx context.Context, chequeID, txHash string) error {
+	repo, err := s.repo()
+	if err != nil {
+		return err
+	}
+	if err := repo.Transition(ctx, chequeID, StateHavuzda, StateIadeEdilebilir, "scheduler_sweep", ""); err != nil && !errors.Is(err, ErrBadTransitionInRepo) {
+		return err
+	}
+	if err := repo.Transition(ctx, chequeID, StateIadeEdilebilir, StateIadeEdildi, "scheduler_sweep", txHash); err != nil && !errors.Is(err, ErrBadTransitionInRepo) {
+		return err
+	}
+	return nil
+}
+
+// Sync is the Forced Sync endpoint: every pending cheque and the pool
+// balance for address, in one call (p2p doc §1, §5).
+func (s *Service) Sync(ctx context.Context, address string) (SyncView, error) {
+	repo, err := s.repo()
+	if err != nil {
+		return SyncView{}, err
+	}
+	cheques, err := repo.ListActiveForAddress(ctx, address)
+	if err != nil {
+		return SyncView{}, err
+	}
+	pool, _, err := repo.GetPool(ctx, address)
+	if err != nil {
+		return SyncView{}, err
+	}
+	trustline, err := s.chain.GetTrustline(ctx, address, s.cfg.AssetCode, s.cfg.AssetIssuer)
+	if err != nil {
+		return SyncView{}, fmt.Errorf("%w: %v", errChainUnavailable, err)
+	}
+	ledger, err := s.chain.GetLedger(ctx)
+	if err != nil {
+		return SyncView{}, fmt.Errorf("%w: %v", errChainUnavailable, err)
+	}
+
+	return SyncView{
+		Cheques:        cheques,
+		Pool:           pool,
+		TrustlineReady: trustline.Exists,
+		Ledger:         ledger.Sequence,
+		ServerTimeUnix: time.Now().Unix(),
+	}, nil
+}
+
+// ---- Havuz (pool) ----------------------------------------------------
+
+// PoolDepositXDR builds the unsigned deposit transaction. Always allowed
+// (p2p doc §7) — no reservation, no balance pre-check beyond what the
+// contract itself enforces atomically.
+func (s *Service) PoolDepositXDR(ctx context.Context, owner, amountStr string) (string, error) {
+	asset := money.AssetID{ContractID: s.cfg.TokenContractID, Code: s.cfg.AssetCode, Issuer: s.cfg.AssetIssuer}
+	amount, err := money.ParseAmount(amountStr, asset, s.cfg.Decimals)
+	if err != nil || amount.Raw.Sign() <= 0 {
+		return "", errInvalidAmount
+	}
+	ownerAccount, err := s.chain.GetAccount(ctx, owner)
+	if err != nil {
+		return "", fmt.Errorf("%w: %v", errChainUnavailable, err)
+	}
+	depositArgs, err := scArgs(scAddr(owner), scAddr(s.cfg.TokenContractID), scI128(amount.Raw))
+	if err != nil {
+		return "", err
+	}
+	op, err := stellarx.InvokeContract(s.cfg.EscrowContractID, owner, "deposit", depositArgs...)
+	if err != nil {
+		return "", err
+	}
+	return stellarx.AssembleInvocation(ctx, s.simulator(), s.cfg.NetworkPassphrase, owner, ownerAccount.Sequence, op)
+}
+
+// PoolWithdrawXDR builds the unsigned withdraw transaction. The contract —
+// not this service — is what actually rejects an early withdraw (H2,
+// "backend'e güvenilmez"); this only pre-checks so the device gets a fast,
+// friendly cheque.pool_withdraw_locked instead of paying a network fee to
+// find out on-chain.
+func (s *Service) PoolWithdrawXDR(ctx context.Context, owner, amountStr string) (string, error) {
+	repo, err := s.repo()
+	if err != nil {
+		return "", err
+	}
+	pool, exists, err := repo.GetPool(ctx, owner)
+	if err != nil {
+		return "", err
+	}
+	if exists && pool.LastDepositLedger > 0 {
+		unlocksAt := time.Unix(pool.LastDepositLedger, 0).Add(chequeValidity) // same 1-week constant as §9.H2
+		if time.Now().Before(unlocksAt) {
+			return "", errPoolWithdrawLocked
+		}
+	}
+	asset := money.AssetID{ContractID: s.cfg.TokenContractID, Code: s.cfg.AssetCode, Issuer: s.cfg.AssetIssuer}
+	amount, err := money.ParseAmount(amountStr, asset, s.cfg.Decimals)
+	if err != nil || amount.Raw.Sign() <= 0 {
+		return "", errInvalidAmount
+	}
+	ownerAccount, err := s.chain.GetAccount(ctx, owner)
+	if err != nil {
+		return "", fmt.Errorf("%w: %v", errChainUnavailable, err)
+	}
+	withdrawArgs, err := scArgs(scAddr(owner), scI128(amount.Raw))
+	if err != nil {
+		return "", err
+	}
+	op, err := stellarx.InvokeContract(s.cfg.EscrowContractID, owner, "withdraw", withdrawArgs...)
+	if err != nil {
+		return "", err
+	}
+	return stellarx.AssembleInvocation(ctx, s.simulator(), s.cfg.NetworkPassphrase, owner, ownerAccount.Sequence, op)
+}
+
+func (s *Service) ConfirmPoolDeposit(ctx context.Context, owner, amountStr string, ledgerSeq int64) error {
+	repo, err := s.repo()
+	if err != nil {
+		return err
+	}
+	return repo.RecordDeposit(ctx, owner, amountStr, s.cfg.Decimals, ledgerSeq)
+}
+
+func (s *Service) ConfirmPoolWithdraw(ctx context.Context, owner, amountStr string) error {
+	repo, err := s.repo()
+	if err != nil {
+		return err
+	}
+	return repo.RecordWithdraw(ctx, owner, amountStr)
+}
+
+// ---- helpers -----------------------------------------------------------
+
+func hasSufficientBalance(acc ports.AccountInfo, assetCode, assetIssuer string, amount *big.Int, decimals uint8) bool {
+	for _, b := range acc.Balances {
+		if b.AssetCode != assetCode || (assetCode != "native" && b.AssetIssuer != assetIssuer) {
+			continue
+		}
+		bal, err := money.ParseAmount(b.Balance, money.AssetID{Code: assetCode, Issuer: assetIssuer}, decimals)
+		if err != nil {
+			return false
+		}
+		return bal.Raw.Cmp(amount) >= 0
+	}
+	return false
+}
+
+func randomNonce() (int64, error) {
+	var b [8]byte
+	if _, err := rand.Read(b[:]); err != nil {
+		return 0, err
+	}
+	n := int64(binary.BigEndian.Uint64(b[:]))
+	if n < 0 {
+		n = -n
+	}
+	return n, nil
+}
+
+func decodeULID(s string) ([]byte, error) {
+	id, err := ulid.ParseStrict(s)
+	if err != nil {
+		return nil, fmt.Errorf("%w: bad cheque id", errBadRequest)
+	}
+	return id[:], nil
+}
+
+// scValFunc and scArgs let the ScVal-building call sites above read as a
+// flat list of intent (scAddr(x), scI128(y), ...) instead of a wall of
+// individual error checks, while still surfacing the first construction
+// error instead of panicking.
+type scValFunc func() (xdr.ScVal, error)
+
+func scAddr(address string) scValFunc {
+	return func() (xdr.ScVal, error) { return stellarx.ScAddress(address) }
+}
+func scBytes(b []byte) scValFunc  { return func() (xdr.ScVal, error) { return stellarx.ScBytes(b) } }
+func scI128(v *big.Int) scValFunc { return func() (xdr.ScVal, error) { return stellarx.ScI128(v) } }
+func scU64(v uint64) scValFunc    { return func() (xdr.ScVal, error) { return stellarx.ScUint64(v) } }
+
+func scArgs(fns ...scValFunc) ([]xdr.ScVal, error) {
+	out := make([]xdr.ScVal, len(fns))
+	for i, fn := range fns {
+		v, err := fn()
+		if err != nil {
+			return nil, err
+		}
+		out[i] = v
+	}
+	return out, nil
+}
+
+func mapRepoErr(err error) error {
+	if errors.Is(err, ErrNotFoundInRepo) {
+		return errNotFound
+	}
+	return err
+}
+
+var (
+	errInsufficientBalance = errors.New(ErrInsufficientBalance)
+	errAlreadyActive       = errors.New(ErrAlreadyActive)
+	errInvalidReceiver     = errors.New(ErrInvalidReceiver)
+	errReceiverNoTrustline = errors.New(ErrReceiverNoTrustline)
+	errSelfTransfer        = errors.New(ErrSelfTransfer)
+	errInvalidAmount       = errors.New(ErrInvalidAmount)
+	errExpired             = errors.New(ErrExpired)
+	errTerminalState       = errors.New(ErrTerminalState)
+	errNotFound            = errors.New(ErrNotFound)
+	errPoolWithdrawLocked  = errors.New(ErrPoolWithdrawLocked)
+	errBadRequest          = errors.New(ErrBadRequest)
+	errChainUnavailable    = errors.New(ErrChainUnavailable)
+)

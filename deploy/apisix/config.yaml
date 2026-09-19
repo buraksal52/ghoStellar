@@ -1,0 +1,25 @@
+# APISIX standalone config — no etcd, no Admin API. Routes come from
+# apisix.yaml (config_provider: yaml). Do not hand-edit apisix.yaml's route
+# list without also updating this file's plugin allow-list.
+apisix:
+  node_listen: 9080
+  enable_admin: false
+  # Docker's embedded DNS re-resolves every 3s by default, which floods it
+  # under any real traffic and produces spurious 503s — 30s is the fix both
+  # reference projects converged on independently (plan's "Docker /
+  # Compose" gotcha list).
+  dns_resolver:
+    - 127.0.0.11
+  dns_resolver_valid: 30
+
+deployment:
+  role: data_plane
+  role_data_plane:
+    config_provider: yaml
+
+plugins:
+  - cors
+  - fault-injection
+  - limit-req
+  - proxy-rewrite
+  - request-id

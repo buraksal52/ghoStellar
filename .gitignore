@@ -1,0 +1,19 @@
+# Go
+backend/**/*.exe
+backend/**/*.test
+
+# Rust
+contracts/soroban/**/target/
+
+# Secrets / local env — never commit real keys
+deploy/secrets/
+deploy/env/.env
+
+# Editor / OS
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+
+# Claude Code session artifacts
+.claude/

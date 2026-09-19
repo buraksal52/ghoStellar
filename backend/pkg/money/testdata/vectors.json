@@ -1,0 +1,23 @@
+{
+  "_comment": "Shared money.Amount test vectors — asserted identically by services/pkg/money (Go) and apps/packages/money (TS). Keep both test suites reading this file; a mismatch here is exactly the kind of Fr/serialization drift architecture.txt §7 exists to prevent for money, and the ZK-rail plan documents the analogous risk for field elements. hi/lo are strings (not JSON numbers) because uint64 values like 2^64-1 lose precision in JS's float64 JSON numbers; parse them with strconv.ParseInt/ParseUint (Go) or BigInt() (TS).",
+  "decimalStringRoundTrip": [
+    { "input": "1234", "decimals": 7, "raw": "12340000000", "rendered": "1234.0000000" },
+    { "input": "1234.56789", "decimals": 7, "raw": "12345678900", "rendered": "1234.5678900" },
+    { "input": "0.0000000", "decimals": 7, "raw": "0", "rendered": "0.0000000" },
+    { "input": "-42.5", "decimals": 2, "raw": "-4250", "rendered": "-42.50" },
+    { "input": "100", "decimals": 0, "raw": "100", "rendered": "100" },
+    { "input": "0", "decimals": 7, "raw": "0", "rendered": "0.0000000" }
+  ],
+  "parseAmountRejects": [
+    { "input": "1.12345678", "decimals": 7, "reason": "too many fractional digits" },
+    { "input": "abc", "decimals": 7, "reason": "not a decimal string" },
+    { "input": "1.2.3", "decimals": 7, "reason": "not a decimal string" },
+    { "input": "1e5", "decimals": 7, "reason": "scientific notation rejected" }
+  ],
+  "fromI128": [
+    { "hi": "0", "lo": "165", "decimals": 2, "raw": "165", "rendered": "1.65" },
+    { "hi": "0", "lo": "18446744073709551615", "decimals": 7, "raw": "18446744073709551615", "rendered": "1844674407370.9551615" },
+    { "hi": "-1", "lo": "18446744073709551615", "decimals": 0, "raw": "-1", "rendered": "-1" },
+    { "hi": "-1", "lo": "18446744073709551516", "decimals": 0, "raw": "-100", "rendered": "-100" }
+  ]
+}
