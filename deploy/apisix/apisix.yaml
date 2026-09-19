@@ -49,6 +49,12 @@ routes:
 
   - id: cheque
     uris:
+      # /cheques (no trailing segment) is POST /cheques itself
+      # (CreateCheque) — APISIX's radix-tree router treats /cheques/*
+      # as "one or more sub-segments", so it never matches the bare path
+      # on its own; without this line the edge 404s a call the service
+      # itself answers correctly (SERVICE.md #19a).
+      - /cheques
       - /cheques/*
       - /sync
       - /pool/*
@@ -83,6 +89,9 @@ routes:
 
   - id: anchor
     uris:
+      # /anchors (no trailing segment) is GET /anchors itself (List) — same
+      # radix-tree gap as the cheque route above (SERVICE.md #19a).
+      - /anchors
       - /anchors/*
     plugins:
       <<: *cors

@@ -6,6 +6,7 @@ import (
 	"context"
 	"net/http"
 	"os"
+	"time"
 
 	"github.com/local-payment/backend/pkg/authx"
 	"github.com/local-payment/backend/pkg/dbx"
@@ -53,7 +54,12 @@ func main() {
 
 	addr := envx.Get("LISTEN_ADDR", ":8084")
 	logger.Info("listening", "addr", addr)
-	if err := http.ListenAndServe(addr, httpx.WithRequestID(mux)); err != nil {
+	root := httpx.WithRequestID(httpx.Recover(logger, httpx.MaxBody(1<<20, mux)))
+	// WriteTimeout is raised above httpx's default: a submit here waits on
+	// pay-chain-gateway's own Horizon/Soroban round trip, which can
+	// legitimately take longer than the shared default allows.
+	writeTimeout := time.Duration(envx.GetInt("HTTP_WRITE_TIMEOUT_SECONDS", 60)) * time.Second
+	if err := httpx.ListenAndServe(ctx, addr, root, logger, httpx.ServeOptions{WriteTimeout: writeTimeout}); err != nil {
 		logger.Error("server stopped", "error", err)
 		os.Exit(1)
 	}

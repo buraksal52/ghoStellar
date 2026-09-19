@@ -4,9 +4,11 @@
 package main
 
 import (
+	"context"
 	"net/http"
 	"net/url"
 	"os"
+	"time"
 
 	"github.com/local-payment/backend/pkg/authx"
 	"github.com/local-payment/backend/pkg/envx"
@@ -46,7 +48,12 @@ func main() {
 	mux.Handle("/internal/", authx.RequireInternalKey(internalKey, internal))
 
 	logger.Info("listening", "addr", listenAddr, "soroban_enabled", sorobanURL != "")
-	if err := http.ListenAndServe(listenAddr, httpx.WithRequestID(mux)); err != nil {
+	root := httpx.WithRequestID(httpx.Recover(logger, httpx.MaxBody(1<<20, mux)))
+	// WriteTimeout is raised above httpx's default: this service's whole
+	// job is a Horizon/Soroban RPC round trip, which can legitimately take
+	// longer than the shared default allows.
+	writeTimeout := time.Duration(envx.GetInt("HTTP_WRITE_TIMEOUT_SECONDS", 60)) * time.Second
+	if err := httpx.ListenAndServe(context.Background(), listenAddr, root, logger, httpx.ServeOptions{WriteTimeout: writeTimeout}); err != nil {
 		logger.Error("server stopped", "error", err)
 		os.Exit(1)
 	}

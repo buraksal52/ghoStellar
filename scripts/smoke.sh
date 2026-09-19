@@ -37,6 +37,18 @@ check "/auth/challenge routes to pay-auth-service" 400 "$status"
 status=$(curl -s -o /dev/null -w "%{http_code}" "$EDGE/sync")
 check "/sync routes to pay-cheque-service" 401 "$status"
 
+# POST /cheques (no trailing segment) regression check (SERVICE.md #19a):
+# APISIX's /cheques/* uri only matched a sub-segment, so this used to 404
+# at the edge while the service itself (behind :8083 directly) correctly
+# answered 401. Expect 401 here, never 404.
+status=$(curl -s -o /dev/null -w "%{http_code}" -X POST "$EDGE/cheques")
+check "POST /cheques (no segment) routes to pay-cheque-service" 401 "$status"
+
+# GET /anchors (no trailing segment) has the identical gap on the anchor
+# route's uris.
+status=$(curl -s -o /dev/null -w "%{http_code}" "$EDGE/anchors")
+check "GET /anchors (no segment) routes to pay-anchor-service" 401 "$status"
+
 # X-Request-Id must be present on every response (httpx.WithRequestID).
 headers=$(curl -s -D - -o /dev/null -H "Origin: http://localhost:3000" "$EDGE/auth/challenge?account=not-a-valid-address")
 if echo "$headers" | grep -qi "^x-request-id:"; then

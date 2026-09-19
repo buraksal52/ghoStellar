@@ -73,7 +73,8 @@ func main() {
 
 	addr := envx.Get("LISTEN_ADDR", ":8081")
 	logger.Info("listening", "addr", addr)
-	if err := http.ListenAndServe(addr, httpx.WithRequestID(mux)); err != nil {
+	root := httpx.WithRequestID(httpx.Recover(logger, httpx.MaxBody(1<<20, mux)))
+	if err := httpx.ListenAndServe(ctx, addr, root, logger, httpx.ServeOptions{}); err != nil {
 		logger.Error("server stopped", "error", err)
 		os.Exit(1)
 	}

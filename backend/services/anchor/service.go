@@ -31,7 +31,7 @@ type Config struct {
 
 type Service struct {
 	cfg    Config
-	pool   *dbx.Pool
+	repos  func() (anchorRepo, error)
 	client *Client
 	chain  ports.ChainGateway
 	log    *slog.Logger
@@ -41,15 +41,19 @@ type Service struct {
 }
 
 func NewService(cfg Config, pool *dbx.Pool, client *Client, chain ports.ChainGateway, log *slog.Logger) *Service {
-	return &Service{cfg: cfg, pool: pool, client: client, chain: chain, log: log}
+	return &Service{cfg: cfg, client: client, chain: chain, log: log, repos: func() (anchorRepo, error) {
+		p := pool.Get()
+		if p == nil {
+			return nil, ErrDBNotReadyErr
+		}
+		return NewRepository(p), nil
+	}}
 }
 
-func (s *Service) repo() (*Repository, error) {
-	p := s.pool.Get()
-	if p == nil {
-		return nil, ErrDBNotReadyErr
-	}
-	return NewRepository(p), nil
+// newServiceWithRepo is the test seam: the same Service, wired to a
+// caller-supplied repo instead of a *dbx.Pool.
+func newServiceWithRepo(cfg Config, repo anchorRepo, client *Client, chain ports.ChainGateway, log *slog.Logger) *Service {
+	return &Service{cfg: cfg, client: client, chain: chain, log: log, repos: func() (anchorRepo, error) { return repo, nil }}
 }
 
 func (s *Service) checkID(id string) error {
@@ -212,7 +216,7 @@ func (s *Service) startInteractive(ctx context.Context, id, kind, anchorToken, s
 	if err != nil {
 		return "", "", err
 	}
-	repo, err := s.repo()
+	repo, err := s.repos()
 	if err != nil {
 		return "", "", err
 	}
@@ -233,7 +237,7 @@ func (s *Service) ReportTransaction(ctx context.Context, id, stellarAddress stri
 	if err := s.checkID(id); err != nil {
 		return err
 	}
-	repo, err := s.repo()
+	repo, err := s.repos()
 	if err != nil {
 		return err
 	}
@@ -246,7 +250,7 @@ func (s *Service) RecordSep6Transaction(ctx context.Context, id, stellarAddress 
 	if err := s.checkID(id); err != nil {
 		return err
 	}
-	repo, err := s.repo()
+	repo, err := s.repos()
 	if err != nil {
 		return err
 	}
@@ -255,7 +259,7 @@ func (s *Service) RecordSep6Transaction(ctx context.Context, id, stellarAddress 
 }
 
 func (s *Service) ListTransactions(ctx context.Context, stellarAddress string) ([]Transaction, error) {
-	repo, err := s.repo()
+	repo, err := s.repos()
 	if err != nil {
 		return nil, err
 	}
@@ -295,7 +299,7 @@ func (s *Service) TrustlineXDR(ctx context.Context, owner string) (string, error
 // ConfirmTrustline records that a change_trust op has been submitted
 // successfully — called by the client after pay-tx-service confirms it.
 func (s *Service) ConfirmTrustline(ctx context.Context, owner string, ledgerSeq int64) error {
-	repo, err := s.repo()
+	repo, err := s.repos()
 	if err != nil {
 		return err
 	}

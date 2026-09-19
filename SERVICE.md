@@ -54,13 +54,28 @@ tam çalışır durumda; monolith `docker-compose.mono.yml` bilinçli olarak
 eklenmedi — var olmayan bir binary'ye işaret eden bozuk bir compose
 dosyası yazmaktansa açıkça ertelemek tercih edildi.
 
-## 5. Entegrasyon testleri yazılmadı
+## 5. [Kapatıldı] Servis-katmanı birim testleri yazıldı; entegrasyon testleri hâlâ yok
 
-`pkg/money` ve `pkg/stellarx` birim testleri var (`go test ./pkg/...`),
-kontratın 17 testi geçiyor (`cargo test` içinde
-`contracts/soroban/pay-escrow`). Servislerin `service_test.go` dosyaları ve
-testcontainers tabanlı Postgres entegrasyon testleri (plan'ın Doğrulama
-bölümünde öngörülen) henüz yok — bu, en büyük tek eksik test yüzeyi.
+Her dört stateful servis (`cheque`, `tx`, `auth`, `anchor`) artık bir
+`<domain>Repo` arayüzü üzerinden `*dbx.Pool` yerine test edilebilir bir
+`repos func() (<domain>Repo, error)` alanına sahip; `newServiceWithRepo`
+test seam'i bellek-içi bir sahte repo enjekte ediyor. `pkg/authx`,
+`pkg/httpx`, `pkg/nethost`, `pkg/envx`, `ports/httpadapter`,
+`ports/directadapter`, ve altı servisin (`cheque`, `tx`, `auth`, `anchor`,
+`chain`, `scheduler`) `service_test.go`/`handler_test.go` dosyaları
+(`ports/portstest.FakeChain` paylaşılan `ports.ChainGateway` sahtesiyle)
+150+ test vakası ile eklendi — `go test ./...` Docker'sız, saniyeler
+içinde çalışıyor. Bu tur ikisini de bulup düzeltti: `/pool/confirm-deposit`
+ve `/pool/confirm-withdraw`'ın `money.ParseAmount`'tan hiç geçmeyen ondalık
+tutar hatası, ve üç `confirm-*` handler'ının sessizce yutulan JSON decode
+hatası (en ağırı `ConfirmForceCollect`'in bozuk gövdeyi `collected=false`
+sanması).
+
+Hâlâ yok: testcontainers tabanlı gerçek Postgres entegrasyon testleri (SQL'in
+kendisi — partial unique index, `UNIQUE(cheque_id, from_state, to_state)`
+transition guard'ı, `NUMERIC` taşması — hâlâ sadece migration dosyalarında,
+hiçbir testte doğrulanmıyor). `pkg/money`/`pkg/stellarx` birim testleri ve
+kontratın 17 testi (`cargo test`, `contracts/soroban/pay-escrow`) değişmedi.
 
 ## 6. `scripts/e2e.sh` yalnızca mutlu yolu kapsıyor
 
@@ -80,13 +95,11 @@ dediği için MVP'de sorun değil; gerçek bir anchor'a geçişte bu proxy'nin
 multipart gövdeleri de aktarması gerekecek (`io.Copy` + orijinal
 `Content-Type`'ı koruma).
 
-## 8. `pay-anchor-service.cachedInfo` için eşzamanlılık testi yok
+## 8. [Kapatıldı] `pay-anchor-service.cachedInfo` için eşzamanlılık testi eklendi
 
-`Info()`'daki `sync.Mutex` (bkz. kod yorumu) doğru ve mantık olarak
-minimal bir düzeltme, ama bunu kanıtlayan (`go test -race` altında
-race'i önce gösterip sonra düzeltmeyle geçen) özel bir eşzamanlı test
-yazılmadı. Düşük öncelik — davranış zaten doğru, yalnızca regresyon
-koruması eksik.
+`services/anchor/service_test.go`'daki `TestInfo_ConcurrentCallsAreRaceFree`,
+50 goroutine'in `Info()`'u eşzamanlı çağırmasını `go test -race` altında
+kanıtlıyor. `infoMu` kaldırılırsa bu test race detector'ı tetikler.
 
 ## 9. [Bilinçli kullanıcı kararı] Eligible Integration Partner entegrasyonu yok
 
@@ -141,13 +154,18 @@ kontrolünü doğrudan `chain.GetTrustline` ile zincirden yapıyor, bu tabloyu
 hiç okumuyor. İkisi de şema borcu; kapatma yolu ya gerçekten kullanmak ya
 da migration'dan çıkarmak.
 
-## 12. HTTP sunucuları sertleştirilmemiş
+## 12. [Kapatıldı] HTTP sunucuları sertleştirildi
 
-Altı `cmd/*/main.go` da çıplak `http.ListenAndServe(addr, ...)` çağırıyor:
-`ReadHeaderTimeout`/`ReadTimeout`/`WriteTimeout`/`IdleTimeout` yok (yavaş
-istemci/Slowloris'e açık), **graceful shutdown yok** (SIGTERM, submit
-sırasındaki bir isteği yarıda keser), panic-recovery middleware yok (tek
-bir handler panikle tüm process'i düşürür), istek gövdesi boyut sınırı yok.
+`pkg/httpx`'e üç ekleme: `Recover` (panic → 500 envelope, process ayakta
+kalır — `TestRecover_NextRequestStillWorks` bunu kanıtlıyor),
+`MaxBody` (`http.MaxBytesReader` sarmalayıcı, varsayılan 1 MiB), ve
+`ListenAndServe` (`ReadHeaderTimeout` 5s, `ReadTimeout` 15s,
+`WriteTimeout` 30s, `IdleTimeout` 60s, SIGINT/SIGTERM'de 15s drain'li
+graceful shutdown). Altı `cmd/*/main.go` da artık
+`httpx.ListenAndServe(ctx, addr, httpx.WithRequestID(httpx.Recover(logger,
+httpx.MaxBody(1<<20, mux))), logger, opts)` kullanıyor; `pay-tx-service` ve
+`pay-chain-gateway`, Horizon/Soroban round trip'i için `WriteTimeout`'u
+`HTTP_WRITE_TIMEOUT_SECONDS` (varsayılan 60s) ile yükseltiyor.
 
 ## 13. Erişim logu yok
 
@@ -186,35 +204,31 @@ sıyırır" diyor ama `apisix.yaml`'da `X-Internal-Api-Key`'i sıyıran/reddeden
 hiçbir plugin yok — servis portları açık kaldığı sürece bu varsayım
 doğrulanamaz.
 
-## 17. CI yok
+## 17. [Kapatıldı] CI eklendi
 
-`.github/` dizini bile yok; `go build/vet/test` ve
-`cargo test` (contracts/soroban/pay-escrow) her push'ta yalnızca elle
-çalıştırılıyor.
+`.github/workflows/ci.yml`: `go` işi `gofmt -l` (boş çıktı zorunlu),
+`go build ./...`, `go vet ./...`, `go test -race ./...` (`backend/`
+altında) çalıştırıyor; `contract` işi `cargo test`
+(`contracts/soroban/pay-escrow`, 17 test) çalıştırıyor. Her push ve PR'da.
 
 ## 18. Down migration yok
 
 `000001_init.up.sql` (ve bu turda eklenen `000002_pool_deposit_at.up.sql`)
 tek yönlü; `migrate ... down` için karşılık gelen `.down.sql` dosyaları yok.
 
-## 19a. [Bu turda doğrulama sırasında bulundu] APISIX, `POST /cheques`'i 404'lüyor
+## 19a. [Kapatıldı] APISIX, `POST /cheques`'i (ve `GET /anchors`'ı) 404'lüyordu
 
 `deploy/apisix/apisix.yaml`'daki `cheque` route'unun `uris` listesi
-`/cheques/*` (glob) + `/sync` + `/pool/*` içeriyor. APISIX'in radix-tree
+`/cheques/*` (glob) + `/sync` + `/pool/*` içeriyordu. APISIX'in radix-tree
 router'ında `/cheques/*` **yalnızca** `/cheques/` ile başlayan (bir alt
 segment içeren) yolları eşliyor — bir çek oluşturmak için kullanılan asıl
 uç, `POST /cheques` (segment yok), eşleşmiyor ve edge (9080) `404 Route Not
-Found` dönüyor. Servise doğrudan gidildiğinde (8083) aynı istek doğru
-şekilde 401 (auth eksik) dönüyor — yani hata yalnızca APISIX route
-tanımında, servis kodunda değil. Bu, `scripts/e2e.sh`'ın adım adım
-sırasını service-doğrudan portlarla test ederken görünmeyip yalnızca gerçek
-edge üzerinden koşulunca ortaya çıkan bir regresyon/eksik; bu tur
-onaylanan kapsam `deploy/apisix/`'e dokunmayı içermediği için
-**düzeltilmedi**, yalnızca burada kayda geçirildi.
-
-**Kapatma yolu:** `uris` listesine `/cheques` (segment'siz) satırını da
-ekle, ya da glob'u APISIX'in tam prefiks eşleşmesini destekleyen bir
-biçime çevir.
+Found` dönüyordu. Aynı gap, `anchor` route'unun `/anchors/*`'ında
+`GET /anchors` (List) için de vardı — bu tur doğrulama sırasında ek olarak
+bulundu. Her iki route'un `uris` listesine segment'siz satır
+(`/cheques`, `/anchors`) eklendi; `scripts/smoke.sh`'a bu iki uç için
+kimliksiz çağrının 401 (404 değil) dönmesini doğrulayan iki kalıcı kontrol
+eklendi.
 
 ## 19. JWT `aud`/`iss` taşımıyor
 

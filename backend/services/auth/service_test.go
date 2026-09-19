@@ -199,5 +199,3 @@ func TestService_DBNotReady(t *testing.T) {
 		t.Fatalf("got %v, want ErrDBNotReady", err)
 	}
 }
-
-var _ = time.Now // keep time import stable if trimmed

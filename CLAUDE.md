@@ -68,7 +68,8 @@ bash scripts/setup-secrets.sh         # dev JWT anahtarları + .env iskeleti
 bash scripts/dev-up.sh                # docker compose up --build
 bash scripts/smoke.sh                 # APISIX edge doğrulaması
 bash scripts/e2e.sh                   # testnet mutlu-yol senaryosu
-cd backend && go test ./...           # Go birim testleri
+cd backend && go test ./...           # Go birim testleri (150+ vaka)
+cd backend && go test -race ./...     # aynısı, race detector'la (CI'ın çalıştırdığı)
 cd contracts/soroban/pay-escrow && cargo test   # kontrat testleri (17)
 ```
 
