@@ -174,7 +174,15 @@ class _PoolPageState extends ConsumerState<PoolPage> {
                       controller: _amountController,
                       keyboardType: const TextInputType.numberWithOptions(decimal: true),
                       style: Theme.of(context).textTheme.headlineMedium,
-                      decoration: const InputDecoration(border: InputBorder.none, hintText: '0.00'),
+                      decoration: const InputDecoration(
+                        filled: false,
+                        isDense: true,
+                        contentPadding: EdgeInsets.zero,
+                        border: InputBorder.none,
+                        enabledBorder: InputBorder.none,
+                        focusedBorder: InputBorder.none,
+                        hintText: '0.00',
+                      ),
                       onChanged: (_) => setState(() {}),
                     ),
                   ),
@@ -183,6 +191,8 @@ class _PoolPageState extends ConsumerState<PoolPage> {
               ),
               const SizedBox(height: 8),
               Container(
+                // Full width: without it the divider shrinks to the text.
+                width: double.infinity,
                 padding: const EdgeInsets.only(top: 10),
                 decoration: BoxDecoration(border: Border(top: BorderSide(color: c.border))),
                 child: Text(

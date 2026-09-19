@@ -15,53 +15,82 @@ import '../features/send/send_page.dart';
 import '../features/settings/settings_page.dart';
 import '../features/shared/widgets/app_shell.dart';
 import 'auth_gate_page.dart';
+import 'soft_transition.dart';
 import 'splash_page.dart';
 
 final routerProvider = Provider<GoRouter>((ref) {
   return GoRouter(
     initialLocation: '/',
     routes: [
-      GoRoute(path: '/', builder: (context, state) => const SplashPage()),
+      GoRoute(
+        path: '/',
+        pageBuilder: (context, state) => softPage(state: state, child: const SplashPage()),
+      ),
       GoRoute(
         path: '/onboarding',
-        builder: (context, state) => const OnboardingStep1Page(),
+        pageBuilder: (context, state) =>
+            softPage(state: state, child: const OnboardingStep1Page()),
       ),
       GoRoute(
         path: '/onboarding/recovery',
-        builder: (context, state) {
+        pageBuilder: (context, state) {
           final words = state.extra as List<String>? ?? const [];
-          return OnboardingStep2Page(words: words);
+          return softPage(state: state, slide: true, child: OnboardingStep2Page(words: words));
         },
       ),
       GoRoute(
         path: '/onboarding/restore',
-        builder: (context, state) => const RestoreWalletPage(),
+        pageBuilder: (context, state) =>
+            softPage(state: state, slide: true, child: const RestoreWalletPage()),
       ),
-      GoRoute(path: '/auth-gate', builder: (context, state) => const AuthGatePage()),
+      GoRoute(
+        path: '/auth-gate',
+        pageBuilder: (context, state) => softPage(state: state, child: const AuthGatePage()),
+      ),
       ShellRoute(
         builder: (context, state, child) => AppShell(child: child),
         routes: [
-          GoRoute(path: '/home', builder: (context, state) => const HomePage()),
-          GoRoute(path: '/send', builder: (context, state) => const SendPage()),
-          GoRoute(path: '/receive', builder: (context, state) => const ReceivePage()),
-          GoRoute(path: '/pool', builder: (context, state) => const PoolPage()),
+          GoRoute(
+            path: '/home',
+            pageBuilder: (context, state) => softPage(state: state, child: const HomePage()),
+          ),
+          GoRoute(
+            path: '/send',
+            pageBuilder: (context, state) => softPage(state: state, child: const SendPage()),
+          ),
+          GoRoute(
+            path: '/receive',
+            pageBuilder: (context, state) => softPage(state: state, child: const ReceivePage()),
+          ),
+          GoRoute(
+            path: '/pool',
+            pageBuilder: (context, state) => softPage(state: state, child: const PoolPage()),
+          ),
           GoRoute(
             path: '/anchor',
-            builder: (context, state) => const AnchorDepositWithdrawPage(),
+            pageBuilder: (context, state) =>
+                softPage(state: state, child: const AnchorDepositWithdrawPage()),
           ),
           GoRoute(
             path: '/anchor/trustline',
-            builder: (context, state) => const TrustlineSetupPage(),
+            pageBuilder: (context, state) =>
+                softPage(state: state, slide: true, child: const TrustlineSetupPage()),
           ),
           GoRoute(
             path: '/anchor/webview',
-            builder: (context, state) {
+            pageBuilder: (context, state) {
               final args = state.extra as AnchorWebviewArgs;
-              return AnchorWebviewPage(args: args);
+              return softPage(state: state, slide: true, child: AnchorWebviewPage(args: args));
             },
           ),
-          GoRoute(path: '/activity', builder: (context, state) => const ActivityPage()),
-          GoRoute(path: '/settings', builder: (context, state) => const SettingsPage()),
+          GoRoute(
+            path: '/activity',
+            pageBuilder: (context, state) => softPage(state: state, child: const ActivityPage()),
+          ),
+          GoRoute(
+            path: '/settings',
+            pageBuilder: (context, state) => softPage(state: state, child: const SettingsPage()),
+          ),
         ],
       ),
     ],

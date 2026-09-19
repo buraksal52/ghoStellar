@@ -48,18 +48,28 @@ class AppShell extends ConsumerWidget {
       backgroundColor: c.bg,
       drawer: const AppDrawer(),
       appBar: AppBar(
-        leading: showBack
-            ? IconButton(
-                icon: const Icon(Icons.arrow_back),
-                onPressed: () => context.canPop() ? context.pop() : context.go('/home'),
-              )
-            : Builder(
-                builder: (ctx) => IconButton(
-                  icon: const Icon(Icons.menu),
-                  onPressed: () => Scaffold.of(ctx).openDrawer(),
+        // Keyed switchers so the title and back/menu icon fade instead of
+        // snapping when the route changes under the persistent app bar.
+        leading: AnimatedSwitcher(
+          duration: const Duration(milliseconds: 200),
+          child: showBack
+              ? IconButton(
+                  key: const ValueKey('back'),
+                  icon: const Icon(Icons.arrow_back),
+                  onPressed: () => context.canPop() ? context.pop() : context.go('/home'),
+                )
+              : Builder(
+                  key: const ValueKey('menu'),
+                  builder: (ctx) => IconButton(
+                    icon: const Icon(Icons.menu),
+                    onPressed: () => Scaffold.of(ctx).openDrawer(),
+                  ),
                 ),
-              ),
-        title: Text(title),
+        ),
+        title: AnimatedSwitcher(
+          duration: const Duration(milliseconds: 200),
+          child: Text(title, key: ValueKey(title)),
+        ),
         actions: [
           IconButton(
             icon: Icon(
