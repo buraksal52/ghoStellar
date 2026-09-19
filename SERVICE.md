@@ -87,3 +87,44 @@ minimal bir düzeltme, ama bunu kanıtlayan (`go test -race` altında
 race'i önce gösterip sonra düzeltmeyle geçen) özel bir eşzamanlı test
 yazılmadı. Düşük öncelik — davranış zaten doğru, yalnızca regresyon
 koruması eksik.
+
+## 9. [Bilinçli kullanıcı kararı] Eligible Integration Partner entegrasyonu yok
+
+`Pro Hackathon 2026 Tracks Handbook`'un "Genesis and Scale Track
+Requirements" madde 1'i, listedeki (DeFindex, Blend v2, Aquarius,
+Soroswap, Stellar Broker, Circle CCTP, Near Intents, Allbridge, Stellar
+Wallets Kit, Privy, DFNS, Bridge, BlindPay) veya tam SCF Integration
+List'ten bir protokolle entegrasyon istiyor. `pay-escrow` bizim kendi
+yazdığımız bir kontrat — listedeki hiçbir protokolle entegre değiliz.
+Bu, **Ecosystem Fit** kriterinin "Integrates an eligible Stellar
+protocol" maddesini karşılamıyor. Kullanıcı bu turda bilerek
+kapatmamayı seçti (bkz. plan dosyası "Uygunluk İncelemesi: Rise In ×
+Stellar Pro Hackathon 2026 Handbook", Bulgu A).
+
+**En doğal kapatma yolu:** Havuz (Pool) özelliği şu an parayı yalnızca
+`pay-escrow`'da tutuyor, getirisiz. `pay-cheque-service`'in
+`PoolDepositXDR`/`PoolWithdrawXDR`'ını, ham escrow yerine (veya ona ek
+olarak) bir **DeFindex** vault'una yönlendirmek hem ürünün kendi
+mantığına (rezerve para atıl durmasın) oturur hem de bu gereksinimi
+kapatır. Gerekli değişiklik: `pay-cheque-service`'e bir DeFindex
+istemcisi + vault contract ID config'i eklemek, `deposit`/`withdraw`
+XDR'larını DeFindex'in `invoke` şemasına göre kurmak.
+
+## 10. [Bilinçli kullanıcı kararı] Front-end / canlı public demo yok
+
+Handbook'un submission zorunlulukları arasında "Front-end / application
+URL" ve "Working live demo (a functional, publicly accessible
+application that judges can interact with)" var. Bu repo yalnızca
+backend — `docker compose` yerel ağda çalışıyor, hiçbir yerde public
+deploy edilmiş değil, hiçbir web/mobil arayüz yok. Bu, **Technical
+Implementation** ve **User Experience** kriterlerinin büyük kısmını ve
+submission portal'ının doğrudan zorunlu iki maddesini karşılamıyor —
+handbook'un en sert teslim şartıdır. Kullanıcı bu turda bilerek
+kapatmamayı seçti (aynı plan dosyası, Bulgu B); `CLAUDE.md`'nin "frontend
+ayrı aşama" kararıyla tutarlı.
+
+**Kapatma yolu (asgari):** API'yi (en azından `pay-cheque-service` +
+`pay-tx-service` + `pay-anchor-service`, APISIX arkasında) bir public
+host'a (fly.io, Railway) deploy etmek + `scripts/e2e.sh`'ın adımlarını
+sürebilen minimal bir web sayfası (Flutter beklemeden, tek sayfalık bir
+demo istemcisi) eklemek.
