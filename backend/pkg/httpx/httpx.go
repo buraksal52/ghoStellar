@@ -1,5 +1,5 @@
 // Package httpx provides the single HTTP response envelope and shared
-// middleware used by every Local-Payment service.
+// middleware used by every ghoStellar service.
 //
 // Success: {"data": ..., "meta": ...}
 // Error:   {"error": {"code", "message", "details"}}

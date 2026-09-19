@@ -1,10 +1,10 @@
-# CLAUDE.md — Local-Payment
+# CLAUDE.md — ghoStellar
 
 Bu dosya, bu depoda çalışan herkes (insan veya agent) için hub dokümandır.
 
-## Ne İnşa Ediyoruz
+## ghoStellar Ne İnşa Ediyor
 
-Stellar üzerinde non-custodial bir P2P ödeme MVP'si: kişiden kişiye "Çek"
+ghoStellar, Stellar üzerinde non-custodial bir P2P ödeme MVP'si: kişiden kişiye "Çek"
 gönderimi, "Havuz" mevduatı, ve bir anchor üzerinden fiat giriş/çıkışı.
 Backend Go mikroservisleri + tek bir Soroban kontratı. **Bu depo yalnızca
 backend'i kapsar** — Flutter mobil istemci ayrı bir adımda ele alınacak
@@ -57,8 +57,9 @@ Kapsam ve kararların tam gerekçesi:
   kullanılmaz (bkz. plan, "Kritik Mimari Karar").
 - `force_collect`'in ön-yetki XDR'ı (`pkg/stellarx.BuildForceCollectAuthEntry`)
   canlı ağda henüz doğrulanmadı — bkz. `SERVICE.md` madde 2.
-- Compose dosyasındaki `name: local-payment` satırını **silme** — silinirse
-  proje adı dizin adından türer ve named volume kopar (veri kaybı).
+- Compose dosyasındaki `name: local-payment` değerini mevcut kurulumun
+  uyumluluk kimliği olarak koru. ghoStellar ürün adıdır; Compose proje adı ve
+  Postgres hacim adları mevcut yerel veriyi korumak için legacy kalmıştır.
 
 ## Komutlar
 

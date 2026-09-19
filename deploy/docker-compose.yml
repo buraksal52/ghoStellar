@@ -1,4 +1,4 @@
-# Local-Payment MVP — microservice profile (default). Hand-written in the
+# ghoStellar MVP — microservice profile (default). Hand-written in the
 # shape tools/render would produce (plan's "Render tool'u almama kararı"):
 # one isolated block per service, ${VAR:-default} env, so a future jump in
 # component count can adopt Agent-Tale's render tool without a rewrite.
@@ -7,6 +7,8 @@
 # file's parent directory, and a rename/move detaches the postgres_data
 # volume from what you already have (a real footgun both reference
 # projects hit before fixing it).
+# Keep the legacy Compose identity so existing containers and the postgres_data
+# volume remain attached to their original project namespace.
 name: local-payment
 
 volumes:

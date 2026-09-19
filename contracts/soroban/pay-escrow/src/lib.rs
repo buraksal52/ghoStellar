@@ -1,5 +1,5 @@
 //! pay-escrow — the on-chain half of "Çek" (P2P cheque) and "Havuz" (pool
-//! deposit) for Local-Payment.
+//! deposit) for ghoStellar.
 //!
 //! # Why one contract holds both the cheque and the pre-authorized "zorla
 //! tahsil" (force collect), instead of Claimable Balance + Soroban escrow

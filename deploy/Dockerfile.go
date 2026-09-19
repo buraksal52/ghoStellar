@@ -3,7 +3,7 @@
 # "Docker / Compose" section). Build context is repo root so the module's
 # single go.mod is reachable.
 #
-#   docker build -f deploy/Dockerfile.go --build-arg SERVICE=authsvc -t local-payment/authsvc .
+#   docker build -f deploy/Dockerfile.go --build-arg SERVICE=authsvc -t ghostellar/authsvc .
 
 FROM golang:1.26-alpine AS builder
 ARG SERVICE

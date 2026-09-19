@@ -1,5 +1,5 @@
 // Package obs provides the structured JSON logger shared by every
-// Local-Payment service. OTel/Prometheus are explicitly out of scope for
+// ghoStellar service. OTel/Prometheus are explicitly out of scope for
 // this MVP (see the plan's "Kesilen prod fazlalıkları" section) — this
 // package stays a thin slog wrapper on purpose.
 package obs

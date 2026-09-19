@@ -1,6 +1,6 @@
 # P2P Çek ve Havuz (Pool) Mimarisi
 
-> **Local-Payment MVP Notu.** Bu doküman `C:\Projeler\De-Fi`'den değişmeden
+> **ghoStellar MVP Notu.** Bu doküman `C:\Projeler\De-Fi`'den değişmeden
 > taşındı — tasarım (durum makinesi, değişmezler D1-D9, case kataloğu)
 > aynen geçerli. Servis adları bu depoda `defi-*` değil `pay-*`
 > (`pay-tx-service`, `pay-chain-gateway`, `pay-cheque-service`). Bölüm
@@ -26,7 +26,7 @@ Bu dosya yaşayan bir referanstır. Kod değiştikçe bu dosya da güncellenir.
 dokümanla çatışmazsa geçerlidir; çatışırsa ana mimari kazanır. Para tipi
 kuralları (ana mimari Bölüm 7), event sözleşmesi (Bölüm 6), "yalnızca
 `defi-tx-service` submit eder" ve "yalnızca `defi-chain-gateway` zincire
-çıkar" kuralları (Bölüm 4) burada da aynen geçerlidir — Local-Payment'ta bu
+çıkar" kuralları (Bölüm 4) burada da aynen geçerlidir — ghoStellar'da bu
 servisler `pay-tx-service` / `pay-chain-gateway`'dir.
 
 | | |

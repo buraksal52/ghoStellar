@@ -1,9 +1,16 @@
-# Local-Payment
+# ghoStellar
 
+<<<<<<< HEAD
 Stellar üzerinde non-custodial P2P ödeme uygulaması: kişiden kişiye "Çek"
 gönderimi, ortak/kişisel "Havuz" mevduatı, ve TR Mock Anchor üzerinden
 gerçek bir fiat rayı (TRY girer, kullanılabilir bir Stellar bakiyesi
 çıkar — ya da tersi).
+=======
+Stellar üzerinde non-custodial P2P ödeme MVP'si: kişiden kişiye "Çek"
+gönderimi, "Havuz" mevduatı, TR Mock Anchor üzerinden fiat giriş/çıkışı. Bkz.
+[`CLAUDE.md`](CLAUDE.md) — hub doküman — ve
+[`docs/reference/platform/`](docs/reference/platform/) — tam mimari.
+>>>>>>> 672baf7 (docs updated)
 
 **Kullanılan Stellar Skill:** [`SKILL.md`](SKILL.md) — TR Mock Anchor'ın
 SEP-1/6/10/12/38 entegrasyon rehberi; `pay-anchor-service`'in tamamı bu

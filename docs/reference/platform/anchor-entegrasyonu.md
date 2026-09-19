@@ -2,7 +2,7 @@
 
 Ürünün fiat giriş/çıkış kapısı. `architecture.md`'nin De-Fi'deki atası bunu
 §16'da "kapsam dışı, gerekirse 15. servis olarak eklenir" diye bırakmıştı —
-Local-Payment'ta kapsamda ve `pay-anchor-service` (:8086) olarak yaşıyor.
+ghoStellar'da kapsamda ve `pay-anchor-service` (:8086) olarak yaşıyor.
 Hedef `tr-mock-anchor.fly.dev` üzerindeki testnet TR Mock Anchor'dır.
 TRY/USDC akışı SEP-6 ile çalışır; mevcut SEP-24 proxy geriye uyumluluk içindir.
 

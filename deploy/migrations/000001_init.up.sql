@@ -1,4 +1,4 @@
--- Local-Payment MVP schema. Chain is the single source of truth (D6,
+-- ghoStellar MVP schema. Chain is the single source of truth (D6,
 -- docs/reference/platform/architecture.md §8); every table here is a
 -- derived cache and carries ledger_seq so it can be rebuilt from the chain.
 -- Up-only, every statement idempotent (IF NOT EXISTS) — see architecture.md
