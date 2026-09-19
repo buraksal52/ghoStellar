@@ -42,7 +42,7 @@ func main() {
 	logger := obs.NewLogger("pay-monolith")
 	ctx := context.Background()
 
-	privPEM, err := os.ReadFile(envx.Get("JWT_PRIVATE_KEY_PATH", "/secrets/jwt_private.pem"))
+	privPEM, err := readKey("JWT_PRIVATE_KEY", "JWT_PRIVATE_KEY_PATH", "/secrets/jwt_private.pem")
 	if err != nil {
 		logger.Error("cannot read JWT private key", "error", err)
 		os.Exit(1)
@@ -52,7 +52,7 @@ func main() {
 		logger.Error("cannot parse JWT private key", "error", err)
 		os.Exit(1)
 	}
-	pubPEM, err := os.ReadFile(envx.Get("JWT_PUBLIC_KEY_PATH", "/secrets/jwt_public.pem"))
+	pubPEM, err := readKey("JWT_PUBLIC_KEY", "JWT_PUBLIC_KEY_PATH", "/secrets/jwt_public.pem")
 	if err != nil {
 		logger.Error("cannot read JWT public key", "error", err)
 		os.Exit(1)
@@ -167,7 +167,10 @@ func main() {
 	mux.Handle("/anchors/", dbx.RequireReady(pool, anchor.ErrDBNotReady, anchorProtected))
 	mux.Handle("/anchors", dbx.RequireReady(pool, anchor.ErrDBNotReady, anchorProtected)) // GET /anchors (no segment) — same radix-tree gap as apisix.yaml (SERVICE.md #19a)
 
-	addr := envx.Get("LISTEN_ADDR", ":8080")
+	// Railway assigns the listening port at runtime. The explicit wildcard
+	// host makes the service reachable through the container network; the
+	// LISTEN_ADDR override keeps the local Compose profile configurable.
+	addr := envx.Get("LISTEN_ADDR", "0.0.0.0:"+envx.Get("PORT", "8080"))
 	logger.Info("listening", "addr", addr, "mode", "monolith")
 	root := httpx.WithRequestID(httpx.AccessLog(logger, httpx.Recover(logger, httpx.MaxBody(1<<20, mux))))
 	writeTimeout := time.Duration(envx.GetInt("HTTP_WRITE_TIMEOUT_SECONDS", 60)) * time.Second
@@ -175,6 +178,15 @@ func main() {
 		logger.Error("server stopped", "error", err)
 		os.Exit(1)
 	}
+}
+
+// readKey accepts mounted secret files for Compose and secret environment
+// variables for platforms such as Railway.
+func readKey(envName, pathEnv, defaultPath string) ([]byte, error) {
+	if value := os.Getenv(envName); value != "" {
+		return []byte(value), nil
+	}
+	return os.ReadFile(envx.Get(pathEnv, defaultPath))
 }
 
 func unauthorized(w http.ResponseWriter) {
