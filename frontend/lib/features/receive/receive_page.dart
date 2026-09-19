@@ -20,6 +20,7 @@ class ReceivePage extends ConsumerStatefulWidget {
 
 class _ReceivePageState extends ConsumerState<ReceivePage> {
   bool _broadcasting = false;
+  bool _showQr = false;
 
   @override
   void initState() {
@@ -67,6 +68,15 @@ class _ReceivePageState extends ConsumerState<ReceivePage> {
     });
   }
 
+  // Always white, independent of theme: a dark-mode QR is unreadable to most scanners.
+  Widget _qrCard(String data) {
+    return Container(
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(color: Colors.white, borderRadius: BorderRadius.circular(16)),
+      child: QrImageView(data: data, size: 160),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final c = context.colors;
@@ -103,11 +113,7 @@ class _ReceivePageState extends ConsumerState<ReceivePage> {
                     ),
                   )
                 else if (me != null)
-                  Container(
-                    padding: const EdgeInsets.all(16),
-                    decoration: BoxDecoration(color: Colors.white, borderRadius: BorderRadius.circular(16)),
-                    child: QrImageView(data: me, size: 160),
-                  ),
+                  _qrCard(me),
                 const SizedBox(height: 18),
                 Text(
                   nfc.isEmulateSupported ? 'Ready to Receive' : 'Show this to the sender',
@@ -118,12 +124,27 @@ class _ReceivePageState extends ConsumerState<ReceivePage> {
                   width: 250,
                   child: Text(
                     nfc.isEmulateSupported
-                        ? "Bring the sender's device close to yours."
+                        ? "Bring the sender's device close — or show them your QR code."
                         : 'NFC tap-to-receive needs Android on both sides — scan this QR instead.',
                     textAlign: TextAlign.center,
                     style: TextStyle(fontSize: 13, color: c.muted),
                   ),
                 ),
+                if (nfc.isEmulateSupported && me != null) ...[
+                  const SizedBox(height: 6),
+                  TextButton.icon(
+                    onPressed: () => setState(() => _showQr = !_showQr),
+                    icon: Icon(Icons.qr_code_2, size: 18, color: c.text),
+                    label: Text(
+                      _showQr ? 'Hide QR code' : 'Show QR code',
+                      style: TextStyle(fontSize: 13, color: c.text),
+                    ),
+                  ),
+                  if (_showQr) ...[
+                    const SizedBox(height: 8),
+                    _qrCard(me),
+                  ],
+                ],
                 const SizedBox(height: 14),
                 if (_broadcasting)
                   Container(

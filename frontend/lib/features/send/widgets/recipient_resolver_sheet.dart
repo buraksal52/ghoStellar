@@ -3,6 +3,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:mobile_scanner/mobile_scanner.dart';
 
 import '../../../core/theme/app_colors.dart';
+import '../../../core/utils/stellar_address.dart';
 import '../../../state/core_providers.dart';
 
 /// Resolves the recipient's Stellar address via, in order of how the design
@@ -21,16 +22,40 @@ class _RecipientResolverSheetState extends ConsumerState<RecipientResolverSheet>
   bool _scanningNfc = false;
   bool _scanningQr = false;
   final _manualController = TextEditingController();
+  String? _scanError;
+  String? _manualError;
+
+  @override
+  void dispose() {
+    _manualController.dispose();
+    super.dispose();
+  }
 
   Future<void> _scanNfc() async {
     setState(() => _scanningNfc = true);
     final nfc = ref.read(nfcServiceProvider);
     try {
       final address = await nfc.startSendScan();
-      if (address != null && mounted) Navigator.of(context).pop(address);
+      if (address != null && mounted && StellarAddress.isValid(address)) {
+        Navigator.of(context).pop(address.trim());
+      }
     } finally {
       if (mounted) setState(() => _scanningNfc = false);
     }
+  }
+
+  void _onQrDetected(BarcodeCapture capture) {
+    final barcodes = capture.barcodes;
+    final code = barcodes.isNotEmpty ? barcodes.first.rawValue : null;
+    if (code == null) return;
+    if (StellarAddress.isValid(code)) {
+      Navigator.of(context).pop(code.trim());
+      return;
+    }
+    // The scanner fires many times per second for the same frame; only rebuild
+    // when the message actually changes.
+    const message = "That QR code isn't a Stellar address.";
+    if (_scanError != message) setState(() => _scanError = message);
   }
 
   @override
@@ -69,7 +94,10 @@ class _RecipientResolverSheetState extends ConsumerState<RecipientResolverSheet>
             width: double.infinity,
             height: 50,
             child: OutlinedButton.icon(
-              onPressed: () => setState(() => _scanningQr = !_scanningQr),
+              onPressed: () => setState(() {
+                _scanningQr = !_scanningQr;
+                _scanError = null;
+              }),
               icon: const Icon(Icons.qr_code_scanner),
               label: const Text('Scan QR Code'),
               style: OutlinedButton.styleFrom(side: BorderSide(color: c.border), foregroundColor: c.text),
@@ -78,18 +106,23 @@ class _RecipientResolverSheetState extends ConsumerState<RecipientResolverSheet>
           if (_scanningQr)
             SizedBox(
               height: 240,
-              child: MobileScanner(
-                onDetect: (capture) {
-                  final barcodes = capture.barcodes;
-                  final code = barcodes.isNotEmpty ? barcodes.first.rawValue : null;
-                  if (code != null) Navigator.of(context).pop(code);
-                },
-              ),
+              child: MobileScanner(onDetect: _onQrDetected),
+            ),
+          if (_scanError != null)
+            Padding(
+              padding: const EdgeInsets.only(top: 8),
+              child: Text(_scanError!, style: TextStyle(fontSize: 13, color: c.negative)),
             ),
           const SizedBox(height: 14),
           TextField(
             controller: _manualController,
-            decoration: const InputDecoration(hintText: 'Or paste recipient address (G...)'),
+            onChanged: (_) {
+              if (_manualError != null) setState(() => _manualError = null);
+            },
+            decoration: InputDecoration(
+              hintText: 'Or paste recipient address (G...)',
+              errorText: _manualError,
+            ),
           ),
           const SizedBox(height: 10),
           SizedBox(
@@ -98,7 +131,11 @@ class _RecipientResolverSheetState extends ConsumerState<RecipientResolverSheet>
             child: ElevatedButton(
               onPressed: () {
                 final v = _manualController.text.trim();
-                if (v.isNotEmpty) Navigator.of(context).pop(v);
+                if (StellarAddress.isValid(v)) {
+                  Navigator.of(context).pop(v);
+                } else if (v.isNotEmpty) {
+                  setState(() => _manualError = 'Enter a valid Stellar address (starts with G, 56 characters).');
+                }
               },
               style: ElevatedButton.styleFrom(backgroundColor: c.primary, foregroundColor: c.primaryText),
               child: const Text('Use this address'),
