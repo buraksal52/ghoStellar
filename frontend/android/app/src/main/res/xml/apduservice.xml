@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Custom, unregistered AID under the proprietary F0 prefix (ISO/IEC 7816-5
+  §8.2.1.1 reserves F0-FE for national/proprietary use) — this is our own
+  app-to-app NFC handshake, not a payment network AID, and is never routed
+  by the OS to any other app.
+-->
+<host-apdu-service xmlns:android="http://schemas.android.com/apk/res/android"
+    android:description="@string/hce_service_description"
+    android:requireDeviceUnlock="false">
+    <aid-group android:description="@string/hce_service_description"
+        android:category="other">
+        <aid-filter android:name="F047686F53746C" />
+    </aid-group>
+</host-apdu-service>

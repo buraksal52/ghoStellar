@@ -1,0 +1,54 @@
+import 'dart:convert';
+
+import 'package:shared_preferences/shared_preferences.dart';
+
+/// Client-observed-only log of pool/anchor actions this device has
+/// successfully submitted. There is no backend history endpoint for these
+/// (only a current-state snapshot), so this is a known, accepted gap — not
+/// authoritative, and lost on reinstall or a second device. Cheque history
+/// itself comes from `/sync` and does not need this.
+class LocalActivityEvent {
+  const LocalActivityEvent({
+    required this.kind, // 'pool_deposit' | 'pool_withdraw' | 'anchor_deposit' | 'anchor_withdraw'
+    required this.amount,
+    required this.assetCode,
+    required this.timestamp,
+  });
+
+  final String kind;
+  final String amount;
+  final String assetCode;
+  final DateTime timestamp;
+
+  Map<String, dynamic> toJson() => {
+        'kind': kind,
+        'amount': amount,
+        'assetCode': assetCode,
+        'timestamp': timestamp.toIso8601String(),
+      };
+
+  factory LocalActivityEvent.fromJson(Map<String, dynamic> json) => LocalActivityEvent(
+        kind: json['kind'] as String,
+        amount: json['amount'] as String,
+        assetCode: json['assetCode'] as String,
+        timestamp: DateTime.parse(json['timestamp'] as String),
+      );
+}
+
+class LocalActivityLog {
+  static const _key = 'ghoStellarLocalActivity';
+
+  Future<List<LocalActivityEvent>> readAll() async {
+    final prefs = await SharedPreferences.getInstance();
+    final raw = prefs.getStringList(_key) ?? const [];
+    return raw
+        .map((s) => LocalActivityEvent.fromJson(jsonDecode(s) as Map<String, dynamic>))
+        .toList();
+  }
+
+  Future<void> append(LocalActivityEvent event) async {
+    final prefs = await SharedPreferences.getInstance();
+    final raw = prefs.getStringList(_key) ?? const [];
+    await prefs.setStringList(_key, [...raw, jsonEncode(event.toJson())]);
+  }
+}
