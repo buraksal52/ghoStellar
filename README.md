@@ -21,7 +21,7 @@ docs/        mimari referans dokümanları
 
 ```sh
 bash scripts/setup-secrets.sh
-# deploy/env/.env dosyasını doldur: SEP10_SIGNING_SEED, KEEPER_SECRET_SEED,
+# deploy/.env dosyasını doldur: SEP10_SIGNING_SEED, KEEPER_SECRET_SEED,
 # PAY_ESCROW_CONTRACT_ID (bkz. contracts/soroban/pay-escrow/README.md),
 # ASSET_SAC_CONTRACT_ID, ASSET_ISSUER
 

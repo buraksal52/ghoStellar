@@ -20,12 +20,12 @@ else
 	echo "jwt_private.pem already exists, skipping."
 fi
 
-if [ ! -f "$SECRETS_DIR/../env/.env" ] && [ -f "$SECRETS_DIR/../env/example.env" ]; then
-	echo "Copying deploy/env/example.env -> deploy/env/.env (fill in the blanks before 'docker compose up')."
-	cp "$SECRETS_DIR/../env/example.env" "$SECRETS_DIR/../env/.env"
+if [ ! -f "$SECRETS_DIR/../.env" ] && [ -f "$SECRETS_DIR/../example.env" ]; then
+	echo "Copying deploy/example.env -> deploy/.env (fill in the blanks before 'docker compose up')."
+	cp "$SECRETS_DIR/../example.env" "$SECRETS_DIR/../.env"
 fi
 
-INTERNAL_KEY_FILE="$SECRETS_DIR/../env/.env"
+INTERNAL_KEY_FILE="$SECRETS_DIR/../.env"
 if [ -f "$INTERNAL_KEY_FILE" ] && ! grep -q "^INTERNAL_API_KEY=.\+" "$INTERNAL_KEY_FILE"; then
 	KEY="$(openssl rand -hex 32)"
 	if grep -q "^INTERNAL_API_KEY=" "$INTERNAL_KEY_FILE"; then
@@ -33,10 +33,10 @@ if [ -f "$INTERNAL_KEY_FILE" ] && ! grep -q "^INTERNAL_API_KEY=.\+" "$INTERNAL_K
 	else
 		echo "INTERNAL_API_KEY=${KEY}" >> "$INTERNAL_KEY_FILE"
 	fi
-	echo "Generated INTERNAL_API_KEY in deploy/env/.env."
+	echo "Generated INTERNAL_API_KEY in deploy/.env."
 fi
 
 echo "Done."
-echo "Still need, in deploy/env/.env: SEP10_SIGNING_SEED, KEEPER_SECRET_SEED,"
+echo "Still need, in deploy/.env: SEP10_SIGNING_SEED, KEEPER_SECRET_SEED,"
 echo "PAY_ESCROW_CONTRACT_ID, ASSET_SAC_CONTRACT_ID, ASSET_ISSUER — see that"
 echo "file's comments and contracts/soroban/pay-escrow/README.md."

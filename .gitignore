@@ -7,7 +7,7 @@ contracts/soroban/**/target/
 
 # Secrets / local env — never commit real keys
 deploy/secrets/
-deploy/env/.env
+deploy/.env
 
 # Editor / OS
 .vscode/

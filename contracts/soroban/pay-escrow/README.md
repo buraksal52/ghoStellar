@@ -23,7 +23,7 @@ stellar contract deploy \
 ```
 
 The printed contract id (`C...`) is `PAY_ESCROW_CONTRACT_ID` in
-`deploy/env/example.env`. The asset it holds is the anchor's SAC (Stellar
+`deploy/example.env`. The asset it holds is the anchor's SAC (Stellar
 Asset Contract) address for the MVP asset — see the plan's Açık Varsayım #1
 and `docs/reference/platform/anchor-entegrasyonu.md`.
 
