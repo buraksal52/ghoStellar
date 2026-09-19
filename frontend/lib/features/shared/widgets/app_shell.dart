@@ -18,6 +18,15 @@ const _titles = {
   '/settings': 'Settings',
 };
 
+const _barSwitchDuration = Duration(milliseconds: 280);
+
+/// Same fade-through as the page transitions (see `router/soft_transition.dart`):
+/// the old title/icon is gone before the new one appears, so they never overlap.
+Widget _barSwitchTransition(Widget child, Animation<double> animation) => FadeTransition(
+      opacity: animation.drive(CurveTween(curve: const Interval(0.5, 1.0, curve: Curves.easeInOutCubic))),
+      child: child,
+    );
+
 const _navRoutes = ['/home', '/send', '/receive', '/pool', '/settings'];
 const _navIcons = [
   Icons.home_rounded,
@@ -51,7 +60,8 @@ class AppShell extends ConsumerWidget {
         // Keyed switchers so the title and back/menu icon fade instead of
         // snapping when the route changes under the persistent app bar.
         leading: AnimatedSwitcher(
-          duration: const Duration(milliseconds: 200),
+          duration: _barSwitchDuration,
+          transitionBuilder: _barSwitchTransition,
           child: showBack
               ? IconButton(
                   key: const ValueKey('back'),
@@ -67,7 +77,14 @@ class AppShell extends ConsumerWidget {
                 ),
         ),
         title: AnimatedSwitcher(
-          duration: const Duration(milliseconds: 200),
+          duration: _barSwitchDuration,
+          transitionBuilder: _barSwitchTransition,
+          // Default layout centers the children, so titles of different
+          // widths would slide sideways while switching; keep them start-aligned.
+          layoutBuilder: (current, previous) => Stack(
+            alignment: Alignment.centerLeft,
+            children: [...previous, ?current],
+          ),
           child: Text(title, key: ValueKey(title)),
         ),
         actions: [

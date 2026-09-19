@@ -20,6 +20,12 @@ class GhoStellarApp extends ConsumerWidget {
       theme: AppTheme.light(),
       darkTheme: AppTheme.dark(),
       routerConfig: router,
+      // Page transitions fade through transparency; without a themed backdrop
+      // the window's black would flash between the outgoing and incoming page.
+      builder: (context, child) => ColoredBox(
+        color: Theme.of(context).scaffoldBackgroundColor,
+        child: child,
+      ),
     );
   }
 }
