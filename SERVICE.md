@@ -68,3 +68,22 @@ Plan'ın Doğrulama bölümündeki 4 senaryodan yalnızca 1.si (lock→claim→C
 scriptlenmiş durumda. 2-4 (force_collect, süre aşımı iadesi, havuz kilidi)
 kontrat testlerinde (`test.rs`) doğrulanıyor ama servisler üzerinden uçtan
 uca scriptlenmedi.
+
+## 7. `pay-anchor-service`'in SEP-6/12/38 proxy'si yalnızca JSON gövdeyi destekliyor
+
+`services/anchor/handler.go`'daki `sepProxy` her gövdeyi `json.Valid` ile
+doğrular ve `client.go`'daki `ProxyJSON` her zaman `Content-Type:
+application/json` zorlar. Gerçek SEP-12 KYC akışı kimlik fotoğrafı gibi
+dosyalar için `multipart/form-data` kullanabilir — bu proxy üzerinden
+**çalışmaz**. TR Mock Anchor "KYC otomatik onaylanır, dosya gerekmez"
+dediği için MVP'de sorun değil; gerçek bir anchor'a geçişte bu proxy'nin
+multipart gövdeleri de aktarması gerekecek (`io.Copy` + orijinal
+`Content-Type`'ı koruma).
+
+## 8. `pay-anchor-service.cachedInfo` için eşzamanlılık testi yok
+
+`Info()`'daki `sync.Mutex` (bkz. kod yorumu) doğru ve mantık olarak
+minimal bir düzeltme, ama bunu kanıtlayan (`go test -race` altında
+race'i önce gösterip sonra düzeltmeyle geçen) özel bir eşzamanlı test
+yazılmadı. Düşük öncelik — davranış zaten doğru, yalnızca regresyon
+koruması eksik.

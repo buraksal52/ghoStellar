@@ -5,6 +5,9 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
+	"net/url"
+	"sync"
 
 	"github.com/stellar/go-stellar-sdk/txnbuild"
 
@@ -19,12 +22,11 @@ var ErrDBNotReadyErr = errors.New(ErrDBNotReady)
 // §10). The {id} in every route is kept for forward compatibility with a
 // real allow-list once more than one anchor is onboarded.
 type Config struct {
-	AnchorID          string
-	AnchorDomain      string
-	AssetCode         string
-	AssetIssuer       string
-	Decimals          uint8
-	NetworkPassphrase string
+	AnchorID     string
+	AnchorDomain string
+	AssetCode    string
+	AssetIssuer  string
+	Decimals     uint8
 }
 
 type Service struct {
@@ -32,12 +34,14 @@ type Service struct {
 	pool   *dbx.Pool
 	client *Client
 	chain  ports.ChainGateway
+	log    *slog.Logger
 
+	infoMu     sync.Mutex
 	cachedInfo *Info
 }
 
-func NewService(cfg Config, pool *dbx.Pool, client *Client, chain ports.ChainGateway) *Service {
-	return &Service{cfg: cfg, pool: pool, client: client, chain: chain}
+func NewService(cfg Config, pool *dbx.Pool, client *Client, chain ports.ChainGateway, log *slog.Logger) *Service {
+	return &Service{cfg: cfg, pool: pool, client: client, chain: chain, log: log}
 }
 
 func (s *Service) repo() (*Repository, error) {
@@ -59,10 +63,19 @@ func (s *Service) checkID(id string) error {
 // stellar.toml. A real implementation would TTL this cache; the MVP
 // re-resolves once per process lifetime, which is enough for a demo/single
 // anchor and avoids a cache-invalidation feature nobody asked for yet.
+//
+// Guarded by infoMu: Info is called concurrently by every request this
+// service handles (challenge, deposit, withdraw, every sep6/12/38 call),
+// so both the cache read/write and the allow-list registration below must
+// be serialized — a bare pointer field here would be a genuine data race.
 func (s *Service) Info(ctx context.Context, id string) (Info, error) {
 	if err := s.checkID(id); err != nil {
 		return Info{}, err
 	}
+
+	s.infoMu.Lock()
+	defer s.infoMu.Unlock()
+
 	if s.cachedInfo != nil {
 		return *s.cachedInfo, nil
 	}
@@ -70,10 +83,32 @@ func (s *Service) Info(ctx context.Context, id string) (Info, error) {
 	if err != nil {
 		return Info{}, err
 	}
+	// ANCHOR_QUOTE_SERVER has no field on the SDK's stellartoml.Response,
+	// so it takes a second fetch of the same toml. That fetch is a
+	// best-effort lookup of an OPTIONAL field, not a hard dependency: a
+	// transient failure here must never block SEP-10 auth or SEP-6
+	// deposit/withdraw, which never needed it (fixes the single-point-of-
+	// failure this used to be).
 	quoteServer, err := s.client.FetchQuoteServer(s.cfg.AnchorDomain)
 	if err != nil {
-		return Info{}, err
+		s.log.Warn("anchor: could not resolve ANCHOR_QUOTE_SERVER; SEP-38 quotes will be unavailable", "error", err)
+		quoteServer = ""
 	}
+
+	// Register every host this anchor's OWN toml delegates to. A real
+	// anchor commonly hosts its home domain and its SEP-6/10/38 API on
+	// different hosts (e.g. a bare domain plus an `api.` subdomain); the
+	// SSRF allow-list otherwise only ever contains the bare ANCHOR_DOMAIN
+	// used to fetch the toml, which would silently break every anchor
+	// call whose endpoint lives elsewhere. Every host added here still
+	// comes from the operator-configured anchor's own published
+	// configuration, never from a request (architecture.md §10).
+	for _, endpoint := range []string{toml.WebAuthEndpoint, toml.TransferServer, toml.KycServer, quoteServer, toml.TransferServer0024} {
+		if host := hostnameOf(endpoint); host != "" {
+			s.client.AllowHost(host)
+		}
+	}
+
 	info := Info{
 		ID:               s.cfg.AnchorID,
 		Domain:           s.cfg.AnchorDomain,
@@ -88,6 +123,17 @@ func (s *Service) Info(ctx context.Context, id string) (Info, error) {
 	}
 	s.cachedInfo = &info
 	return info, nil
+}
+
+func hostnameOf(rawURL string) string {
+	if rawURL == "" {
+		return ""
+	}
+	u, err := url.Parse(rawURL)
+	if err != nil {
+		return ""
+	}
+	return u.Hostname()
 }
 
 // ProxySep6, ProxySep12, and ProxySep38 forward standards-defined API calls

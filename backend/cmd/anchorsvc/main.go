@@ -50,14 +50,13 @@ func main() {
 	)
 
 	svc := anchor.NewService(anchor.Config{
-		AnchorID:          envx.Get("ANCHOR_ID", "default"),
-		AnchorDomain:      anchorDomain,
-		AssetCode:         envx.Get("ASSET_CODE", "USDC"),
-		AssetIssuer:       envx.Get("ASSET_ISSUER", "GBBD47IF6LWK7P7MDEVSCWR7DPUWV3NY3DTQEVFL4NAT4AQH3ZLLFLA5"),
-		Decimals:          uint8(envx.GetInt("ASSET_DECIMALS", 7)),
-		NetworkPassphrase: envx.Get("NETWORK_PASSPHRASE", "Test SDF Network ; September 2015"),
-	}, pool, anchorClient, chainGW)
-	handler := anchor.NewHandler(svc)
+		AnchorID:     envx.Get("ANCHOR_ID", "default"),
+		AnchorDomain: anchorDomain,
+		AssetCode:    envx.Get("ASSET_CODE", "USDC"),
+		AssetIssuer:  envx.Get("ASSET_ISSUER", "GBBD47IF6LWK7P7MDEVSCWR7DPUWV3NY3DTQEVFL4NAT4AQH3ZLLFLA5"),
+		Decimals:     uint8(envx.GetInt("ASSET_DECIMALS", 7)),
+	}, pool, anchorClient, chainGW, logger)
+	handler := anchor.NewHandler(svc, logger)
 
 	mux := http.NewServeMux()
 	mux.Handle("GET /health", httpx.HealthHandler(pool.Ready))

@@ -11,6 +11,8 @@ import (
 
 	"github.com/BurntSushi/toml"
 	"github.com/stellar/go-stellar-sdk/clients/stellartoml"
+
+	"github.com/local-payment/backend/pkg/nethost"
 )
 
 // Client is pay-anchor-service's only outbound HTTP surface — every call
@@ -24,6 +26,17 @@ type Client struct {
 
 func NewClient(hc *http.Client) *Client {
 	return &Client{hc: hc}
+}
+
+// AllowHost grows this client's SSRF allow-list to also permit host. Used
+// once an anchor's own SEP-1 toml has been resolved and is found to
+// legitimately delegate SEP-6/10/38 traffic to a different host than the
+// bare ANCHOR_DOMAIN used to fetch it — a common, real-world anchor
+// topology (see docs/reference/platform/anchor-entegrasyonu.md). The host
+// being added still came from the operator-configured anchor's OWN
+// published configuration, never from a request.
+func (c *Client) AllowHost(host string) {
+	nethost.AddAllowedHost(c.hc, host)
 }
 
 // FetchTOML resolves domain's SEP-1 stellar.toml.

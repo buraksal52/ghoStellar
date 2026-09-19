@@ -1,7 +1,9 @@
 #!/usr/bin/env bash
 # scripts/e2e.sh — testnet end-to-end happy path (plan's Doğrulama
-# scenario 1): two accounts, friendbot, trustline, write a cheque, lock,
-# claim, assert Claimed.
+# scenario 1): two accounts, friendbot, trustline, fund the sender via the
+# TR Mock Anchor's SEP-6 deposit, write a cheque, lock, claim, assert
+# Claimed. See docs/reference/platform/anchor-entegrasyonu.md for the
+# SEP-6 flow this script drives.
 #
 # Scenarios 2-4 (force_collect, timeout refund, pool lock) are exercised by
 # contracts/soroban/pay-escrow/src/test.rs on the contract side already;
@@ -48,7 +50,41 @@ for pair in "e2e_sender:$SENDER_TOKEN" "e2e_receiver:$RECEIVER_TOKEN"; do
 	curl -s -X POST "$EDGE/tx/submit" -H "Authorization: Bearer $token" -H 'Content-Type: application/json' \
 		-d "$(jq -n --arg xdr "$signed" --arg key "trustline-$name" '{idempotencyKey:$key,purpose:"auth.trustline",kind:"classic",xdr:$xdr}')" >/dev/null
 done
-echo "(fund both accounts with $ASSET_CODE via the anchor's deposit flow manually before continuing — see anchor-entegrasyonu.md)"
+echo "== Funding sender via the TR Mock Anchor (SEP-6 deposit) =="
+anchor_login() {
+	# The anchor's own SEP-10 challenge is issued for whichever account our
+	# bearer JWT (X-Internal caller identity) resolves to server-side — see
+	# anchor.Handler.Challenge — so this only needs the signing key alias.
+	local name="$1"
+	local challenge_xdr signed_xdr
+	challenge_xdr=$(curl -s "$EDGE/anchors/default/auth/challenge" -H "Authorization: Bearer ${SENDER_TOKEN}" | jq -r '.data.transaction')
+	signed_xdr=$(stellar tx sign --sign-with-key "$name" --network testnet <<<"$challenge_xdr")
+	curl -s -X POST "$EDGE/anchors/default/auth/token" -H "Authorization: Bearer ${SENDER_TOKEN}" -H 'Content-Type: application/json' \
+		-d "$(jq -n --arg tx "$signed_xdr" '{transaction:$tx}')" | jq -r '.data.token'
+}
+ANCHOR_TOKEN=$(anchor_login e2e_sender)
+
+deposit_resp=$(curl -s -G "$EDGE/anchors/default/sep6/deposit" \
+	-H "Authorization: Bearer ${SENDER_TOKEN}" -H "X-Anchor-Token: ${ANCHOR_TOKEN}" \
+	--data-urlencode "asset_code=${ASSET_CODE}" --data-urlencode "amount=1000")
+DEPOSIT_ID=$(echo "$deposit_resp" | jq -r '.data.id')
+echo "deposit id=$DEPOSIT_ID, how=$(echo "$deposit_resp" | jq -r '.data.how')"
+
+echo "== Simulating the bank transfer (mock-anchor-only endpoint) =="
+curl -s -X POST "$EDGE/anchors/default/sep6/tx/${DEPOSIT_ID}/simulate-bank-transfer" \
+	-H "Authorization: Bearer ${SENDER_TOKEN}" -H "X-Anchor-Token: ${ANCHOR_TOKEN}" -H 'Content-Type: application/json' \
+	-d '{"amount":"1000"}' >/dev/null
+
+echo "== Polling for deposit completion =="
+for _ in $(seq 1 20); do
+	status=$(curl -s -G "$EDGE/anchors/default/sep6/transaction" -H "Authorization: Bearer ${SENDER_TOKEN}" -H "X-Anchor-Token: ${ANCHOR_TOKEN}" \
+		--data-urlencode "id=${DEPOSIT_ID}" | jq -r '.data.transaction.status')
+	echo "  status=$status"
+	[ "$status" = "completed" ] && break
+	sleep 3
+done
+curl -s -X POST "$EDGE/anchors/default/transactions/${DEPOSIT_ID}/report" -H "Authorization: Bearer ${SENDER_TOKEN}" -H 'Content-Type: application/json' \
+	-d "$(jq -n --arg amt "1000" '{kind:"deposit",state:"completed",amount:$amt,decimals:7}')" >/dev/null
 
 echo "== Writing a cheque: sender -> receiver, 10 $ASSET_CODE =="
 create_resp=$(curl -s -X POST "$EDGE/cheques" -H "Authorization: Bearer $SENDER_TOKEN" -H 'Content-Type: application/json' \

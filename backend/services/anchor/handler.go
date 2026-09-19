@@ -1,10 +1,10 @@
 package anchor
 
 import (
-	"bytes"
 	"encoding/json"
 	"errors"
 	"io"
+	"log/slog"
 	"net/http"
 	"net/url"
 	"strings"
@@ -15,6 +15,7 @@ import (
 
 type Handler struct {
 	svc *Service
+	log *slog.Logger
 }
 
 func (h *Handler) sepProxy(w http.ResponseWriter, r *http.Request, sep string) {
@@ -84,24 +85,31 @@ func (h *Handler) sepProxy(w http.ResponseWriter, r *http.Request, sep string) {
 			if txID != "" {
 				kind := path
 				address, _ := callerAddress(r)
+				// Best-effort: the anchor has ALREADY accepted this
+				// deposit/withdraw at this point (result holds its real
+				// {id,how,more_info_url,...} response). A local bookkeeping
+				// failure here must never make a genuinely successful
+				// anchor call look like a failure to the user — that would
+				// hide their deposit instructions / withdraw destination
+				// even though the anchor-side transaction really exists.
+				// Log and continue; the user's own report call or a future
+				// reconcile pass can repair the local row.
 				if err := h.svc.RecordSep6Transaction(r.Context(), id, address, Transaction{ID: txID, Kind: kind, State: "pending_user_transfer_start"}); err != nil {
-					writeAnchorError(w, err)
-					return
+					h.log.Warn("failed to record sep6 transaction locally; anchor call itself succeeded",
+						"anchor_id", id, "tx_id", txID, "kind", kind, "error", err)
 				}
 			}
 		}
 	}
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(http.StatusOK)
-	_, _ = w.Write(bytes.TrimSpace(result))
+	httpx.WriteData(w, http.StatusOK, result)
 }
 
 func (h *Handler) Sep6(w http.ResponseWriter, r *http.Request)  { h.sepProxy(w, r, "sep6") }
 func (h *Handler) Sep12(w http.ResponseWriter, r *http.Request) { h.sepProxy(w, r, "sep12") }
 func (h *Handler) Sep38(w http.ResponseWriter, r *http.Request) { h.sepProxy(w, r, "sep38") }
 
-func NewHandler(svc *Service) *Handler {
-	return &Handler{svc: svc}
+func NewHandler(svc *Service, log *slog.Logger) *Handler {
+	return &Handler{svc: svc, log: log}
 }
 
 func callerAddress(r *http.Request) (string, bool) {
