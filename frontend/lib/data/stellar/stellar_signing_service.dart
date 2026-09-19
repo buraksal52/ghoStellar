@@ -17,9 +17,16 @@ class StellarSigningService {
   /// Signs an unsigned transaction envelope XDR (classic or Soroban — both
   /// are `Transaction`/`FeeBumpTransaction` envelopes at this layer) and
   /// returns the signed envelope, base64-encoded, ready for `/tx/submit`.
-  String signTransactionXdr(String unsignedXdrBase64, KeyPair signer) {
+  String signTransactionXdr(
+    String unsignedXdrBase64,
+    KeyPair signer, {
+    String? networkPassphrase,
+  }) {
     final tx = AbstractTransaction.fromEnvelopeXdrString(unsignedXdrBase64);
-    tx.sign(signer, _network);
+    tx.sign(
+      signer,
+      networkPassphrase == null ? _network : Network(networkPassphrase),
+    );
     return tx.toEnvelopeXdrBase64();
   }
 
@@ -28,8 +35,9 @@ class StellarSigningService {
   /// from the entry's own root invocation + credentials + network id, so no
   /// separately-supplied payload hash is needed on the client side.
   String signAuthEntryXdr(String unsignedEntryXdrBase64, KeyPair signer) {
-    final entry =
-        SorobanAuthorizationEntry.fromBase64EncodedXdr(unsignedEntryXdrBase64);
+    final entry = SorobanAuthorizationEntry.fromBase64EncodedXdr(
+      unsignedEntryXdrBase64,
+    );
     entry.sign(signer, _network);
     return entry.toBase64EncodedXdrString();
   }

@@ -27,8 +27,11 @@ class AuthNotifier extends AsyncNotifier<bool> {
       final store = ref.read(secureWalletStoreProvider);
 
       final challenge = await authApi.challenge(keyPair.accountId);
-      final signedXdr =
-          signing.signTransactionXdr(challenge.transaction, keyPair);
+      final signedXdr = signing.signTransactionXdr(
+        challenge.transaction,
+        keyPair,
+        networkPassphrase: challenge.networkPassphrase,
+      );
       final pair = await authApi.token(signedXdr);
       await store.saveTokens(
         accessToken: pair.accessToken,
@@ -46,4 +49,6 @@ class AuthNotifier extends AsyncNotifier<bool> {
   }
 }
 
-final authProvider = AsyncNotifierProvider<AuthNotifier, bool>(AuthNotifier.new);
+final authProvider = AsyncNotifierProvider<AuthNotifier, bool>(
+  AuthNotifier.new,
+);
