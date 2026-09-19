@@ -15,82 +15,6 @@ yapılandırmalarıyla eşleştirilmiştir.
 ## 1. Çalışan Sistem Topolojisi
 
 ```mermaid
-<<<<<<< HEAD
-graph TD
-    Client["İstemci (testnet hesapları, curl/CLI)"]
-    Gateway["APISIX Gateway :9080\nrouting / CORS / ratelimit"]
-    Auth["pay-auth-service :8081\nSEP-10, RS256 JWT"]
-    Cheque["pay-cheque-service :8083\nÇek + Havuz state machine"]
-    Tx["pay-tx-service :8084\ntek submit noktası"]
-    Anchor["pay-anchor-service :8086\nSEP-1/6/10/12/38 proxy"]
-    Scheduler["pay-scheduler-service :8085\nizinsiz refund sweep"]
-    Chain["pay-chain-gateway :8082\ntek zincir çıkış noktası"]
-    DB[("Postgres\nşema: pay")]
-    Horizon[("Horizon API")]
-    Soroban[("Soroban RPC")]
-    Escrow["pay-escrow kontratı\nCDD7FWHQIAF2Z57CMZUO5BT4TY4VTIZKXLYD4WKQ7HDLO5IQOYU6V3ID"]
-    TRAnchor["TR Mock Anchor\ntr-mock-anchor.fly.dev"]
-
-    Client -->|HTTPS| Gateway
-    Gateway --> Auth
-    Gateway --> Cheque
-    Gateway --> Tx
-    Gateway --> Anchor
-
-    Auth -.X-Internal-Api-Key.-> Chain
-    Cheque -.X-Internal-Api-Key.-> Chain
-    Tx -.X-Internal-Api-Key.-> Chain
-    Anchor -.X-Internal-Api-Key.-> Chain
-    Scheduler -.X-Internal-Api-Key.-> Chain
-    Scheduler -.X-Internal-Api-Key.-> Cheque
-
-    Auth --> DB
-    Cheque --> DB
-    Tx --> DB
-    Anchor --> DB
-
-    Chain --> Horizon
-    Chain --> Soroban
-    Soroban --> Escrow
-
-    Anchor -->|"SSRF allow-list'ten geçen HTTPS"| TRAnchor
-```
-
-<details>
-<summary>Aynı topolojinin ASCII hâli (Mermaid render olmayan ortamlar için)</summary>
-
-```
-                    +------------------------------+
-                    |     APISIX Gateway (:9080)    |
-                    |  routing / CORS / ratelimit   |
-                    +---------------+----------------+
-   +----------+----------+----------+----------+----------+
-   |          |          |          |          |
-+--v--+  +----v----+  +--v--+  +----v----+  +--v------+
-|auth |  | cheque  |  | tx  |  | anchor  |  |scheduler|
-|:8081|  | :8083   |  |:8084|  | :8086   |  | :8085   |
-+--+--+  +----+----+  +--+--+  +----+----+  +----+----+
-   |          |            |         |             |
-   +----------+---(internal HTTP, X-Internal-Api-Key)---+
-                          |
-                +---------v----------+
-                |  pay-chain-gateway |  <- tek zincir cikis noktasi
-                |    (:8082)         |
-                +---------+----------+
-                          |
-              +-----------+-----------+
-              |                       |
-      +-------v-------+     +---------v---------+
-      |  Horizon API  |     |   Soroban RPC     |
-      +---------------+     +-------------------+
-```
-
-</details>
-
-`pay-auth-service`'in zincire ihtiyacı yok (SEP-10 challenge/verify saf
-kriptografidir). `pay-scheduler-service` `pay-chain-gateway` ve
-`pay-cheque-service`'in internal uçlarını çağırır, kendi HTTP API'si yok.
-=======
 flowchart TB
     client["Mobil istemci<br/>(bu depoda yok)"]
     edge["APISIX Gateway<br/>:9080 / :9443<br/>routing · CORS · rate limit"]
@@ -214,7 +138,41 @@ Anchor JWT kalıcı depoya yazılmaz. SEP-6 `/info` dışında proxy uçları
 ghoStellar JWT'sindeki Stellar adresiyle eşleştirilir. Anchor işlem durumu halen
 istemci raporuna dayanır; backend anchor'dan bağımsız doğrulama yapmaz. Ayrıntı:
 [`anchor-entegrasyonu.md`](anchor-entegrasyonu.md).
->>>>>>> 672baf7 (docs updated)
+
+<details>
+<summary>Genel topolojinin ASCII hâli (Mermaid render olmayan ortamlar için)</summary>
+
+```
+                    +------------------------------+
+                    |     APISIX Gateway (:9080)    |
+                    |  routing / CORS / ratelimit   |
+                    +---------------+----------------+
+   +----------+----------+----------+----------+----------+
+   |          |          |          |          |
++--v--+  +----v----+  +--v--+  +----v----+  +--v------+
+|auth |  | cheque  |  | tx  |  | anchor  |  |scheduler|
+|:8081|  | :8083   |  |:8084|  | :8086   |  | :8085   |
++--+--+  +----+----+  +--+--+  +----+----+  +----+----+
+   |          |            |         |             |
+   +----------+---(internal HTTP, X-Internal-Api-Key)---+
+                          |
+                +---------v----------+
+                |  pay-chain-gateway |  <- tek zincir cikis noktasi
+                |    (:8082)         |
+                +---------+----------+
+                          |
+              +-----------+-----------+
+              |                       |
+      +-------v-------+     +---------v---------+
+      |  Horizon API  |     |   Soroban RPC     |
+      +---------------+     +-------------------+
+```
+
+`pay-escrow` kontratı (testnet:
+`CDD7FWHQIAF2Z57CMZUO5BT4TY4VTIZKXLYD4WKQ7HDLO5IQOYU6V3ID`) Soroban RPC'nin
+arkasında yaşar; Çek + Havuz'un tüm zincir-üstü durumu orada tutulur.
+
+</details>
 
 ## 2. Servis Envanteri
 
