@@ -3,6 +3,7 @@ package cheque
 import (
 	"encoding/json"
 	"errors"
+	"io"
 	"net/http"
 
 	"github.com/local-payment/backend/pkg/authx"
@@ -114,7 +115,10 @@ func (h *Handler) ConfirmLock(w http.ResponseWriter, r *http.Request) {
 	}
 	id := r.PathValue("id")
 	var req confirmRequest
-	_ = json.NewDecoder(r.Body).Decode(&req)
+	if err := decodeConfirmBody(r, &req); err != nil {
+		httpx.WriteError(w, http.StatusBadRequest, ErrBadRequest, "invalid JSON body", nil)
+		return
+	}
 	if err := h.svc.ConfirmLock(r.Context(), id, caller, req.TxHash); err != nil {
 		writeChequeError(w, err)
 		return
@@ -130,7 +134,10 @@ func (h *Handler) ConfirmClaim(w http.ResponseWriter, r *http.Request) {
 	}
 	id := r.PathValue("id")
 	var req confirmRequest
-	_ = json.NewDecoder(r.Body).Decode(&req)
+	if err := decodeConfirmBody(r, &req); err != nil {
+		httpx.WriteError(w, http.StatusBadRequest, ErrBadRequest, "invalid JSON body", nil)
+		return
+	}
 	if err := h.svc.ConfirmClaim(r.Context(), id, caller, req.TxHash); err != nil {
 		writeChequeError(w, err)
 		return
@@ -153,8 +160,13 @@ func (h *Handler) AcknowledgeReceipt(w http.ResponseWriter, r *http.Request) {
 }
 
 type confirmForceCollectRequest struct {
-	TxHash    string `json:"txHash"`
-	Collected bool   `json:"collected"`
+	TxHash string `json:"txHash"`
+	// Collected is a pointer so a missing/malformed field is distinguishable
+	// from an explicit `false` — this is the most consequential state
+	// transition in the product (a nil default silently masquerading as
+	// `false` would mark a real collection as KARSILIKSIZ), so it must be
+	// rejected rather than defaulted.
+	Collected *bool `json:"collected"`
 }
 
 func (h *Handler) ConfirmForceCollect(w http.ResponseWriter, r *http.Request) {
@@ -165,12 +177,34 @@ func (h *Handler) ConfirmForceCollect(w http.ResponseWriter, r *http.Request) {
 	}
 	id := r.PathValue("id")
 	var req confirmForceCollectRequest
-	_ = json.NewDecoder(r.Body).Decode(&req)
-	if err := h.svc.ConfirmForceCollect(r.Context(), id, caller, req.TxHash, req.Collected); err != nil {
+	if err := decodeConfirmBody(r, &req); err != nil || req.Collected == nil {
+		httpx.WriteError(w, http.StatusBadRequest, ErrBadRequest, "collected is required", nil)
+		return
+	}
+	if err := h.svc.ConfirmForceCollect(r.Context(), id, caller, req.TxHash, *req.Collected); err != nil {
 		writeChequeError(w, err)
 		return
 	}
 	httpx.WriteData(w, http.StatusOK, map[string]bool{"confirmed": true})
+}
+
+// decodeConfirmBody decodes a request body that MUST be present and
+// well-formed JSON — unlike the {} bodies confirm-lock/confirm-claim accept
+// with an empty txHash, a malformed body here is an error, not a silent
+// zero-value default (Fix 2: the three confirm-* handlers used to swallow
+// this error with `_ = json.NewDecoder(...).Decode(...)`).
+func decodeConfirmBody(r *http.Request, v any) error {
+	dec := json.NewDecoder(r.Body)
+	if err := dec.Decode(v); err != nil {
+		if err == io.EOF {
+			// An empty body is the documented shape for confirm-lock/
+			// confirm-claim (scripts/e2e.sh sends '{}', which decodes the
+			// same as EOF into a zero-value struct) — leave v untouched.
+			return nil
+		}
+		return err
+	}
+	return nil
 }
 
 func (h *Handler) Sync(w http.ResponseWriter, r *http.Request) {

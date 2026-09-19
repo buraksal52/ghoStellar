@@ -45,8 +45,8 @@ type Config struct {
 }
 
 type Service struct {
-	cfg  Config
-	pool *dbx.Pool
+	cfg   Config
+	repos func() (authRepo, error)
 }
 
 // NewService constructs a Service. pool need not be connected yet — every
@@ -55,15 +55,19 @@ type Service struct {
 // (pkg/dbx), rather than requiring a two-phase "attach the repo later"
 // wiring dance.
 func NewService(cfg Config, pool *dbx.Pool) *Service {
-	return &Service{cfg: cfg, pool: pool}
+	return &Service{cfg: cfg, repos: func() (authRepo, error) {
+		p := pool.Get()
+		if p == nil {
+			return nil, ErrDBNotReady
+		}
+		return NewRepository(p), nil
+	}}
 }
 
-func (s *Service) repo() (*Repository, error) {
-	p := s.pool.Get()
-	if p == nil {
-		return nil, ErrDBNotReady
-	}
-	return NewRepository(p), nil
+// newServiceWithRepo is the test seam: the same Service, wired to a
+// caller-supplied repo instead of a *dbx.Pool.
+func newServiceWithRepo(cfg Config, repo authRepo) *Service {
+	return &Service{cfg: cfg, repos: func() (authRepo, error) { return repo, nil }}
 }
 
 // Challenge builds a SEP-10 challenge transaction for account to sign.
@@ -119,7 +123,7 @@ func (s *Service) VerifyAndMint(ctx context.Context, signedChallengeXDR string) 
 		return TokenPair{}, User{}, fmt.Errorf("%w: %v", errInvalidSignature, err)
 	}
 
-	repo, err := s.repo()
+	repo, err := s.repos()
 	if err != nil {
 		return TokenPair{}, User{}, err
 	}
@@ -176,7 +180,7 @@ func (s *Service) mintPair(stellarAccount string) (TokenPair, error) {
 }
 
 func (s *Service) GetProfile(ctx context.Context, address string) (User, error) {
-	repo, err := s.repo()
+	repo, err := s.repos()
 	if err != nil {
 		return User{}, err
 	}

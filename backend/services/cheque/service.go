@@ -46,20 +46,33 @@ type Config struct {
 
 type Service struct {
 	cfg   Config
-	pool  *dbx.Pool
+	repos func() (chequeRepo, error)
 	chain ports.ChainGateway
 }
 
 func NewService(cfg Config, pool *dbx.Pool, chain ports.ChainGateway) *Service {
-	return &Service{cfg: cfg, pool: pool, chain: chain}
+	return &Service{cfg: cfg, chain: chain, repos: func() (chequeRepo, error) {
+		p := pool.Get()
+		if p == nil {
+			return nil, ErrDBNotReadyErr
+		}
+		return NewRepository(p), nil
+	}}
 }
 
-func (s *Service) repo() (*Repository, error) {
-	p := s.pool.Get()
-	if p == nil {
-		return nil, ErrDBNotReadyErr
-	}
-	return NewRepository(p), nil
+// newServiceWithRepo is the test seam: the same Service, wired to a
+// caller-supplied repo (production *Repository or a test fake) instead of a
+// *dbx.Pool. Package-private — only this package's tests construct one.
+func newServiceWithRepo(cfg Config, repo chequeRepo, chain ports.ChainGateway) *Service {
+	return &Service{cfg: cfg, chain: chain, repos: func() (chequeRepo, error) { return repo, nil }}
+}
+
+// asset returns the configured asset's identity, shared by every code path
+// that must parse a caller-supplied amount string through pkg/money instead
+// of touching it as a raw string (CLAUDE.md: money is never a bare string
+// off the API boundary without going through money.ParseAmount first).
+func (s *Service) asset() money.AssetID {
+	return money.AssetID{ContractID: s.cfg.TokenContractID, Code: s.cfg.AssetCode, Issuer: s.cfg.AssetIssuer}
 }
 
 func (s *Service) simulator() stellarx.Simulator {
@@ -93,7 +106,7 @@ type CreateChequeResult struct {
 // sign: the unsigned `lock` transaction and the unsigned force_collect
 // pre-authorization entry.
 func (s *Service) CreateCheque(ctx context.Context, sender, receiver, amountStr string) (CreateChequeResult, error) {
-	repo, err := s.repo()
+	repo, err := s.repos()
 	if err != nil {
 		return CreateChequeResult{}, err
 	}
@@ -104,8 +117,7 @@ func (s *Service) CreateCheque(ctx context.Context, sender, receiver, amountStr 
 	if !stellarx.IsValidAccountAddress(receiver) {
 		return CreateChequeResult{}, errInvalidReceiver
 	}
-	asset := money.AssetID{ContractID: s.cfg.TokenContractID, Code: s.cfg.AssetCode, Issuer: s.cfg.AssetIssuer}
-	amount, err := money.ParseAmount(amountStr, asset, s.cfg.Decimals)
+	amount, err := money.ParseAmount(amountStr, s.asset(), s.cfg.Decimals)
 	if err != nil || amount.Raw.Sign() <= 0 {
 		return CreateChequeResult{}, errInvalidAmount
 	}
@@ -195,7 +207,7 @@ func (s *Service) CreateCheque(ctx context.Context, sender, receiver, amountStr 
 // ID could overwrite the real sender's signed authorization with garbage,
 // permanently breaking the receiver's force_collect path.
 func (s *Service) StorePreauth(ctx context.Context, chequeID, caller, signedEntryXDR string) error {
-	repo, err := s.repo()
+	repo, err := s.repos()
 	if err != nil {
 		return err
 	}
@@ -217,7 +229,7 @@ func (s *Service) StorePreauth(ctx context.Context, chequeID, caller, signedEntr
 // ScVal-decoded on-chain read. Only the cheque's own sender may confirm it
 // (the sender is the only party who ever holds the lock tx's signature).
 func (s *Service) ConfirmLock(ctx context.Context, chequeID, caller, txHash string) error {
-	repo, err := s.repo()
+	repo, err := s.repos()
 	if err != nil {
 		return err
 	}
@@ -242,7 +254,7 @@ func (s *Service) ConfirmLock(ctx context.Context, chequeID, caller, txHash stri
 
 // ClaimXDR builds the unsigned claim transaction for the cheque's receiver.
 func (s *Service) ClaimXDR(ctx context.Context, chequeID, receiver string) (string, error) {
-	repo, err := s.repo()
+	repo, err := s.repos()
 	if err != nil {
 		return "", err
 	}
@@ -283,7 +295,7 @@ func (s *Service) ClaimXDR(ctx context.Context, chequeID, receiver string) (stri
 // ONAYLANDI/KAPANDI follow once the receiver acks the receipt, p2p doc §9.I).
 // Only the cheque's own receiver may confirm it.
 func (s *Service) ConfirmClaim(ctx context.Context, chequeID, caller, txHash string) error {
-	repo, err := s.repo()
+	repo, err := s.repos()
 	if err != nil {
 		return err
 	}
@@ -307,7 +319,7 @@ func (s *Service) ConfirmClaim(ctx context.Context, chequeID, caller, txHash str
 // step, the money already moved at claim time. Only the cheque's own
 // receiver may acknowledge it.
 func (s *Service) AcknowledgeReceipt(ctx context.Context, chequeID, caller string) error {
-	repo, err := s.repo()
+	repo, err := s.repos()
 	if err != nil {
 		return err
 	}
@@ -331,7 +343,7 @@ func (s *Service) AcknowledgeReceipt(ctx context.Context, chequeID, caller strin
 // by the receiver but authorized by the sender's stored pre-signed entry
 // (p2p doc §5/§6.3).
 func (s *Service) ForceCollectXDR(ctx context.Context, chequeID, receiver string) (string, error) {
-	repo, err := s.repo()
+	repo, err := s.repos()
 	if err != nil {
 		return "", err
 	}
@@ -397,7 +409,7 @@ func (s *Service) ForceCollectXDR(ctx context.Context, chequeID, receiver string
 // consequential state in the product, and must not be forgeable by a
 // non-party.
 func (s *Service) ConfirmForceCollect(ctx context.Context, chequeID, caller, txHash string, collected bool) error {
-	repo, err := s.repo()
+	repo, err := s.repos()
 	if err != nil {
 		return err
 	}
@@ -422,7 +434,7 @@ func (s *Service) ConfirmForceCollect(ctx context.Context, chequeID, caller, txH
 // pay-scheduler-service sweeps to submit a permissionless refund for (p2p
 // doc §6.2, §9.B1).
 func (s *Service) ExpiredFundedCheques(ctx context.Context) ([]Cheque, error) {
-	repo, err := s.repo()
+	repo, err := s.repos()
 	if err != nil {
 		return nil, err
 	}
@@ -434,7 +446,7 @@ func (s *Service) ExpiredFundedCheques(ctx context.Context) ([]Cheque, error) {
 // scheduler only observes the already-completed submission (D9: nobody
 // waited on the sender or receiver being online for this).
 func (s *Service) MarkRefunded(ctx context.Context, chequeID, txHash string) error {
-	repo, err := s.repo()
+	repo, err := s.repos()
 	if err != nil {
 		return err
 	}
@@ -450,7 +462,7 @@ func (s *Service) MarkRefunded(ctx context.Context, chequeID, txHash string) err
 // Sync is the Forced Sync endpoint: every pending cheque and the pool
 // balance for address, in one call (p2p doc §1, §5).
 func (s *Service) Sync(ctx context.Context, address string) (SyncView, error) {
-	repo, err := s.repo()
+	repo, err := s.repos()
 	if err != nil {
 		return SyncView{}, err
 	}
@@ -486,8 +498,7 @@ func (s *Service) Sync(ctx context.Context, address string) (SyncView, error) {
 // (p2p doc §7) — no reservation, no balance pre-check beyond what the
 // contract itself enforces atomically.
 func (s *Service) PoolDepositXDR(ctx context.Context, owner, amountStr string) (string, error) {
-	asset := money.AssetID{ContractID: s.cfg.TokenContractID, Code: s.cfg.AssetCode, Issuer: s.cfg.AssetIssuer}
-	amount, err := money.ParseAmount(amountStr, asset, s.cfg.Decimals)
+	amount, err := money.ParseAmount(amountStr, s.asset(), s.cfg.Decimals)
 	if err != nil || amount.Raw.Sign() <= 0 {
 		return "", errInvalidAmount
 	}
@@ -512,7 +523,7 @@ func (s *Service) PoolDepositXDR(ctx context.Context, owner, amountStr string) (
 // friendly cheque.pool_withdraw_locked instead of paying a network fee to
 // find out on-chain.
 func (s *Service) PoolWithdrawXDR(ctx context.Context, owner, amountStr string) (string, error) {
-	repo, err := s.repo()
+	repo, err := s.repos()
 	if err != nil {
 		return "", err
 	}
@@ -529,8 +540,7 @@ func (s *Service) PoolWithdrawXDR(ctx context.Context, owner, amountStr string) 
 	// pool.LastDepositAt zero (row predates migration 000002, or was never
 	// set) skips this fast pre-check entirely — the contract's own
 	// WithdrawLocked check (D6) is the real enforcement point either way.
-	asset := money.AssetID{ContractID: s.cfg.TokenContractID, Code: s.cfg.AssetCode, Issuer: s.cfg.AssetIssuer}
-	amount, err := money.ParseAmount(amountStr, asset, s.cfg.Decimals)
+	amount, err := money.ParseAmount(amountStr, s.asset(), s.cfg.Decimals)
 	if err != nil || amount.Raw.Sign() <= 0 {
 		return "", errInvalidAmount
 	}
@@ -549,20 +559,34 @@ func (s *Service) PoolWithdrawXDR(ctx context.Context, owner, amountStr string) 
 	return stellarx.AssembleInvocation(ctx, s.simulator(), s.cfg.NetworkPassphrase, owner, ownerAccount.Sequence, op)
 }
 
+// ConfirmPoolDeposit records a confirmed on-chain deposit against the read
+// cache. amountStr is the same caller-supplied decimal string every other
+// money-accepting endpoint takes — it MUST go through money.ParseAmount
+// before it reaches storage, or it silently becomes a raw (non-scaled)
+// integer in a NUMERIC(40,0) column (CLAUDE.md: money is never a bare
+// string off the API boundary).
 func (s *Service) ConfirmPoolDeposit(ctx context.Context, owner, amountStr string, ledgerSeq int64) error {
-	repo, err := s.repo()
+	repo, err := s.repos()
 	if err != nil {
 		return err
 	}
-	return repo.RecordDeposit(ctx, owner, amountStr, s.cfg.Decimals, ledgerSeq)
+	amount, err := money.ParseAmount(amountStr, s.asset(), s.cfg.Decimals)
+	if err != nil || amount.Raw.Sign() <= 0 {
+		return errInvalidAmount
+	}
+	return repo.RecordDeposit(ctx, owner, amount.Raw.String(), s.cfg.Decimals, ledgerSeq)
 }
 
 func (s *Service) ConfirmPoolWithdraw(ctx context.Context, owner, amountStr string) error {
-	repo, err := s.repo()
+	repo, err := s.repos()
 	if err != nil {
 		return err
 	}
-	return repo.RecordWithdraw(ctx, owner, amountStr)
+	amount, err := money.ParseAmount(amountStr, s.asset(), s.cfg.Decimals)
+	if err != nil || amount.Raw.Sign() <= 0 {
+		return errInvalidAmount
+	}
+	return repo.RecordWithdraw(ctx, owner, amount.Raw.String())
 }
 
 // ---- helpers -----------------------------------------------------------

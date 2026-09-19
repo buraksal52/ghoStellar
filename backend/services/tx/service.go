@@ -18,20 +18,24 @@ import (
 var ErrDBNotReadyErr = errors.New(ErrDBNotReady)
 
 type Service struct {
-	pool  *dbx.Pool
+	repos func() (txRepo, error)
 	chain ports.ChainGateway
 }
 
 func NewService(pool *dbx.Pool, chain ports.ChainGateway) *Service {
-	return &Service{pool: pool, chain: chain}
+	return &Service{chain: chain, repos: func() (txRepo, error) {
+		p := pool.Get()
+		if p == nil {
+			return nil, ErrDBNotReadyErr
+		}
+		return NewRepository(p), nil
+	}}
 }
 
-func (s *Service) repo() (*Repository, error) {
-	p := s.pool.Get()
-	if p == nil {
-		return nil, ErrDBNotReadyErr
-	}
-	return NewRepository(p), nil
+// newServiceWithRepo is the test seam: the same Service, wired to a
+// caller-supplied repo instead of a *dbx.Pool.
+func newServiceWithRepo(repo txRepo, chain ports.ChainGateway) *Service {
+	return &Service{chain: chain, repos: func() (txRepo, error) { return repo, nil }}
 }
 
 // SubmitRequest is one call to Submit.
@@ -56,7 +60,7 @@ type SubmitResponse struct {
 // IdempotencyKey. A repeat call with the same key returns the original
 // result (D3) instead of submitting again.
 func (s *Service) Submit(ctx context.Context, req SubmitRequest) (SubmitResponse, error) {
-	repo, err := s.repo()
+	repo, err := s.repos()
 	if err != nil {
 		return SubmitResponse{}, err
 	}
@@ -117,7 +121,7 @@ func (s *Service) Submit(ctx context.Context, req SubmitRequest) (SubmitResponse
 }
 
 func (s *Service) GetSubmission(ctx context.Context, key string) (Submission, error) {
-	repo, err := s.repo()
+	repo, err := s.repos()
 	if err != nil {
 		return Submission{}, err
 	}
