@@ -76,8 +76,11 @@ class _ReceivePageState extends ConsumerState<ReceivePage> {
 
     return ListView(
       children: [
-        SizedBox(
-          height: 260,
+        // minHeight, not a fixed height: the content (~280-310px) is taller than
+        // 260 and a fixed box overflows; this keeps it centered when short and
+        // lets it grow (the ListView scrolls) when not.
+        ConstrainedBox(
+          constraints: const BoxConstraints(minHeight: 260),
           child: Center(
             child: Column(
               mainAxisSize: MainAxisSize.min,

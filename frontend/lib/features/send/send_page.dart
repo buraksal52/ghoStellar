@@ -95,16 +95,25 @@ class _SendPageState extends ConsumerState<SendPage> {
                 crossAxisAlignment: CrossAxisAlignment.baseline,
                 textBaseline: TextBaseline.alphabetic,
                 children: [
-                  SizedBox(
-                    width: 190,
+                  Expanded(
                     child: TextField(
                       controller: _amountController,
                       keyboardType: const TextInputType.numberWithOptions(decimal: true),
                       style: Theme.of(context).textTheme.displayLarge,
-                      decoration: const InputDecoration(border: InputBorder.none, hintText: '0.00'),
+                      decoration: const InputDecoration(
+                        // The global input theme fills fields; the amount sits directly on the card.
+                        filled: false,
+                        isDense: true,
+                        contentPadding: EdgeInsets.zero,
+                        border: InputBorder.none,
+                        enabledBorder: InputBorder.none,
+                        focusedBorder: InputBorder.none,
+                        hintText: '0.00',
+                      ),
                       onChanged: (_) => setState(() {}),
                     ),
                   ),
+                  const SizedBox(width: 12),
                   Text('XLM', style: TextStyle(fontSize: 16, fontWeight: FontWeight.w600, color: c.info)),
                 ],
               ),

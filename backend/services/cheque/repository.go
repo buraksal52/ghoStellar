@@ -166,7 +166,9 @@ func (r *Repository) ListActiveForAddress(ctx context.Context, address string) (
 	}
 	defer rows.Close()
 
-	var out []Cheque
+	// Non-nil so an empty result serializes as [] rather than null — the
+	// mobile client's generated parser casts /sync's "cheques" to a List.
+	out := []Cheque{}
 	for rows.Next() {
 		var c Cheque
 		if err := rows.Scan(&c.ID, &c.SenderAddress, &c.ReceiverAddress, &c.TokenContract, &c.AmountRaw, &c.Decimals,
@@ -191,7 +193,7 @@ func (r *Repository) ExpiredFundedCheques(ctx context.Context, asOf time.Time) (
 		return nil, err
 	}
 	defer rows.Close()
-	var out []Cheque
+	out := []Cheque{}
 	for rows.Next() {
 		var c Cheque
 		if err := rows.Scan(&c.ID, &c.SenderAddress, &c.ReceiverAddress, &c.TokenContract, &c.AmountRaw, &c.Decimals,

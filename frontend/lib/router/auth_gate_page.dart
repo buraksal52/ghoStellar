@@ -64,6 +64,18 @@ class _AuthGatePageState extends ConsumerState<AuthGatePage> {
                       textAlign: TextAlign.center,
                       style: Theme.of(context).textTheme.bodyMedium,
                     ),
+                    const SizedBox(height: 12),
+                    // The catch-all above also swallows non-network failures
+                    // (e.g. a response that fails to parse), so surface the
+                    // real cause.
+                    SelectableText(
+                      _error!,
+                      textAlign: TextAlign.center,
+                      style: Theme.of(context)
+                          .textTheme
+                          .bodySmall
+                          ?.copyWith(color: c.negative),
+                    ),
                     const SizedBox(height: 20),
                     ElevatedButton(
                       onPressed: _run,

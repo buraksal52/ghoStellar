@@ -78,7 +78,8 @@ func (r *Repository) ListForAddress(ctx context.Context, address string) ([]Tran
 		return nil, err
 	}
 	defer rows.Close()
-	var out []Transaction
+	// Non-nil so an empty result serializes as [] rather than null.
+	out := []Transaction{}
 	for rows.Next() {
 		var t Transaction
 		if err := rows.Scan(&t.ID, &t.AnchorID, &t.StellarAddress, &t.Kind, &t.State, &t.AmountRaw, &t.Decimals,
