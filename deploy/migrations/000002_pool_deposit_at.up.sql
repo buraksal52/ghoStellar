@@ -1,0 +1,13 @@
+-- Fixes the pool withdraw lock unit mismatch (SERVICE.md item this migration
+-- closes): pay-escrow's on-chain `last_deposit_at` (lib.rs) is a unix-second
+-- timestamp, but pay.pool_deposits.last_deposit_ledger was being written
+-- with a LEDGER SEQUENCE and then fed into time.Unix() as if it were
+-- seconds — the pre-check's 1-week comparison always evaluated to "already
+-- unlocked" (a ledger sequence like ~2,000,000 decodes to Jan 1970). The
+-- contract itself was never at risk (D6), only this service's fast,
+-- friendly pre-check.
+--
+-- last_deposit_ledger is kept as-is (still a real ledger sequence, useful
+-- for cache bookkeeping); this adds a second column carrying the actual
+-- wall-clock approximation the lock comparison needs.
+ALTER TABLE pay.pool_deposits ADD COLUMN IF NOT EXISTS last_deposit_at TIMESTAMPTZ;

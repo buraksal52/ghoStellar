@@ -208,10 +208,11 @@ func (r *Repository) GetPool(ctx context.Context, owner string) (PoolDeposit, bo
 	var p PoolDeposit
 	p.OwnerAddress = owner
 	var lastLedger *int64
+	var lastDepositAt *time.Time
 	err := r.pool.QueryRow(ctx, `
-		SELECT amount_raw::text, decimals, last_deposit_ledger, updated_at
+		SELECT amount_raw::text, decimals, last_deposit_ledger, last_deposit_at, updated_at
 		FROM pay.pool_deposits WHERE owner_address = $1
-	`, owner).Scan(&p.AmountRaw, &p.Decimals, &lastLedger, &p.UpdatedAt)
+	`, owner).Scan(&p.AmountRaw, &p.Decimals, &lastLedger, &lastDepositAt, &p.UpdatedAt)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return PoolDeposit{OwnerAddress: owner, AmountRaw: "0"}, false, nil
 	}
@@ -221,31 +222,42 @@ func (r *Repository) GetPool(ctx context.Context, owner string) (PoolDeposit, bo
 	if lastLedger != nil {
 		p.LastDepositLedger = *lastLedger
 	}
+	if lastDepositAt != nil {
+		p.LastDepositAt = *lastDepositAt
+	}
 	return p, true, nil
 }
 
 // RecordDeposit upserts the cache row after a deposit XDR has been
 // confirmed on-chain (Confirm handler) — the pool's own withdraw lock is
 // enforced by the contract itself (D6); this row is only the read-side
-// cache /sync serves quickly.
+// cache /sync serves quickly and the withdraw pre-check's data source.
+// last_deposit_at = now() (server wall-clock at confirm time) approximates
+// the contract's own ledger-close timestamp closely enough for a
+// fail-fast pre-check — see PoolDeposit.LastDepositAt's doc comment.
 func (r *Repository) RecordDeposit(ctx context.Context, owner, amountRaw string, decimals uint8, ledgerSeq int64) error {
 	_, err := r.pool.Exec(ctx, `
-		INSERT INTO pay.pool_deposits (owner_address, amount_raw, decimals, last_deposit_ledger, ledger_seq)
-		VALUES ($1, $2, $3, $4, $4)
+		INSERT INTO pay.pool_deposits (owner_address, amount_raw, decimals, last_deposit_ledger, last_deposit_at, ledger_seq)
+		VALUES ($1, $2, $3, $4, now(), $4)
 		ON CONFLICT (owner_address) DO UPDATE SET
 			amount_raw = pay.pool_deposits.amount_raw + EXCLUDED.amount_raw,
 			decimals = EXCLUDED.decimals,
 			last_deposit_ledger = EXCLUDED.last_deposit_ledger,
+			last_deposit_at = now(),
 			ledger_seq = EXCLUDED.ledger_seq,
 			updated_at = now()
 	`, owner, amountRaw, decimals, ledgerSeq)
 	return err
 }
 
+// RecordWithdraw debits the cache row. The amount_raw >= $2 guard stops the
+// cache from ever going negative on a double-recorded or out-of-order
+// withdraw confirm — the contract is still the actual balance authority
+// (D6), this only keeps the read-side cache from lying to /sync.
 func (r *Repository) RecordWithdraw(ctx context.Context, owner, amountRaw string) error {
 	_, err := r.pool.Exec(ctx, `
 		UPDATE pay.pool_deposits SET amount_raw = amount_raw - $2, updated_at = now()
-		WHERE owner_address = $1
+		WHERE owner_address = $1 AND amount_raw >= $2
 	`, owner, amountRaw)
 	return err
 }

@@ -151,6 +151,7 @@ func (s *Service) mintPair(stellarAccount string) (TokenPair, error) {
 		RegisteredClaims: jwt.RegisteredClaims{
 			ExpiresAt: jwt.NewNumericDate(now.Add(accessTokenTTL)),
 			IssuedAt:  jwt.NewNumericDate(now),
+			Subject:   "access", // authx.VerifyAccessToken requires this — a refresh token must never work as a bearer token
 		},
 		StellarAccount: stellarAccount,
 	}

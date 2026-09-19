@@ -54,11 +54,19 @@ type Cheque struct {
 
 // PoolDeposit is one row of pay.pool_deposits.
 type PoolDeposit struct {
-	OwnerAddress      string    `json:"ownerAddress"`
-	AmountRaw         string    `json:"amountRaw"`
-	Decimals          uint8     `json:"decimals"`
-	LastDepositLedger int64     `json:"lastDepositLedger,omitempty"`
-	UpdatedAt         time.Time `json:"updatedAt"`
+	OwnerAddress      string `json:"ownerAddress"`
+	AmountRaw         string `json:"amountRaw"`
+	Decimals          uint8  `json:"decimals"`
+	LastDepositLedger int64  `json:"lastDepositLedger,omitempty"`
+	// LastDepositAt approximates pay-escrow's own last_deposit_at (unix
+	// seconds, lib.rs) with the server's wall-clock time at RecordDeposit —
+	// used only to size this service's fast pre-check for the withdraw
+	// lock; the contract's own check against its stored ledger-close
+	// timestamp is the actual enforcement point (D6). Zero for rows written
+	// before migration 000002, in which case the pre-check is skipped and
+	// left entirely to the contract.
+	LastDepositAt time.Time `json:"lastDepositAt"`
+	UpdatedAt     time.Time `json:"updatedAt"`
 }
 
 // SyncView is the Forced Sync response: everything the app needs to decide

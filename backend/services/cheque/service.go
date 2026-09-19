@@ -190,14 +190,21 @@ func (s *Service) CreateCheque(ctx context.Context, sender, receiver, amountStr 
 
 // StorePreauth saves the device-signed force_collect authorization entry
 // (base64 XDR, with Credentials.Address.Signature now filled in) so it can
-// be handed to the receiver later.
-func (s *Service) StorePreauth(ctx context.Context, chequeID, signedEntryXDR string) error {
+// be handed to the receiver later. Only the cheque's own sender may store
+// this — otherwise anyone who learns the (unguessable but not secret) cheque
+// ID could overwrite the real sender's signed authorization with garbage,
+// permanently breaking the receiver's force_collect path.
+func (s *Service) StorePreauth(ctx context.Context, chequeID, caller, signedEntryXDR string) error {
 	repo, err := s.repo()
 	if err != nil {
 		return err
 	}
-	if _, err := repo.GetCheque(ctx, chequeID); err != nil {
+	c, err := repo.GetCheque(ctx, chequeID)
+	if err != nil {
 		return mapRepoErr(err)
+	}
+	if c.SenderAddress != caller {
+		return errNotFound // not "forbidden": don't confirm the ID is valid to a non-party
 	}
 	return repo.SetPreauthEntry(ctx, chequeID, signedEntryXDR)
 }
@@ -207,11 +214,19 @@ func (s *Service) StorePreauth(ctx context.Context, chequeID, signedEntryXDR str
 // IMZALI_REZERVE to HAVUZDA. See SERVICE.md's "Kapsam sınırlaması" for why
 // this MVP takes the caller's word (backed by tx-service's own direct
 // chain interaction) rather than independently re-deriving state from a
-// ScVal-decoded on-chain read.
-func (s *Service) ConfirmLock(ctx context.Context, chequeID, txHash string) error {
+// ScVal-decoded on-chain read. Only the cheque's own sender may confirm it
+// (the sender is the only party who ever holds the lock tx's signature).
+func (s *Service) ConfirmLock(ctx context.Context, chequeID, caller, txHash string) error {
 	repo, err := s.repo()
 	if err != nil {
 		return err
+	}
+	c, err := repo.GetCheque(ctx, chequeID)
+	if err != nil {
+		return mapRepoErr(err)
+	}
+	if c.SenderAddress != caller {
+		return errNotFound
 	}
 	if err := repo.SetLockTxHash(ctx, chequeID, txHash); err != nil {
 		return err
@@ -266,10 +281,18 @@ func (s *Service) ClaimXDR(ctx context.Context, chequeID, receiver string) (stri
 
 // ConfirmClaim moves a cheque from HAVUZDA to TALEP_EDILDI (money has moved;
 // ONAYLANDI/KAPANDI follow once the receiver acks the receipt, p2p doc §9.I).
-func (s *Service) ConfirmClaim(ctx context.Context, chequeID, txHash string) error {
+// Only the cheque's own receiver may confirm it.
+func (s *Service) ConfirmClaim(ctx context.Context, chequeID, caller, txHash string) error {
 	repo, err := s.repo()
 	if err != nil {
 		return err
+	}
+	c, err := repo.GetCheque(ctx, chequeID)
+	if err != nil {
+		return mapRepoErr(err)
+	}
+	if c.ReceiverAddress != caller {
+		return errNotFound
 	}
 	if err := repo.Transition(ctx, chequeID, StateHavuzda, StateTalepEdildi, "user_action", txHash); err != nil {
 		if errors.Is(err, ErrBadTransitionInRepo) {
@@ -281,11 +304,19 @@ func (s *Service) ConfirmClaim(ctx context.Context, chequeID, txHash string) err
 }
 
 // AcknowledgeReceipt is the p2p doc §9.I receipt: purely a ledger-closing
-// step, the money already moved at claim time.
-func (s *Service) AcknowledgeReceipt(ctx context.Context, chequeID string) error {
+// step, the money already moved at claim time. Only the cheque's own
+// receiver may acknowledge it.
+func (s *Service) AcknowledgeReceipt(ctx context.Context, chequeID, caller string) error {
 	repo, err := s.repo()
 	if err != nil {
 		return err
+	}
+	c, err := repo.GetCheque(ctx, chequeID)
+	if err != nil {
+		return mapRepoErr(err)
+	}
+	if c.ReceiverAddress != caller {
+		return errNotFound
 	}
 	if err := repo.Transition(ctx, chequeID, StateTalepEdildi, StateOnaylandi, "user_action", ""); err != nil && !errors.Is(err, ErrBadTransitionInRepo) {
 		return err
@@ -361,11 +392,21 @@ func (s *Service) ForceCollectXDR(ctx context.Context, chequeID, receiver string
 
 // ConfirmForceCollect records force_collect's on-chain outcome:
 // Collected -> KAPANDI, Bounced -> KARSILIKSIZ (D2/D8 — the sender is never
-// treated as in debt either way).
-func (s *Service) ConfirmForceCollect(ctx context.Context, chequeID, txHash string, collected bool) error {
+// treated as in debt either way). Only the cheque's own receiver may report
+// this — collected=false marks the cheque KARSILIKSIZ ("bounced"), the most
+// consequential state in the product, and must not be forgeable by a
+// non-party.
+func (s *Service) ConfirmForceCollect(ctx context.Context, chequeID, caller, txHash string, collected bool) error {
 	repo, err := s.repo()
 	if err != nil {
 		return err
+	}
+	c, err := repo.GetCheque(ctx, chequeID)
+	if err != nil {
+		return mapRepoErr(err)
+	}
+	if c.ReceiverAddress != caller {
+		return errNotFound
 	}
 	to := StateKarsiliksiz
 	if collected {
@@ -479,12 +520,15 @@ func (s *Service) PoolWithdrawXDR(ctx context.Context, owner, amountStr string) 
 	if err != nil {
 		return "", err
 	}
-	if exists && pool.LastDepositLedger > 0 {
-		unlocksAt := time.Unix(pool.LastDepositLedger, 0).Add(chequeValidity) // same 1-week constant as §9.H2
+	if exists && !pool.LastDepositAt.IsZero() {
+		unlocksAt := pool.LastDepositAt.Add(chequeValidity) // same 1-week constant as §9.H2
 		if time.Now().Before(unlocksAt) {
 			return "", errPoolWithdrawLocked
 		}
 	}
+	// pool.LastDepositAt zero (row predates migration 000002, or was never
+	// set) skips this fast pre-check entirely — the contract's own
+	// WithdrawLocked check (D6) is the real enforcement point either way.
 	asset := money.AssetID{ContractID: s.cfg.TokenContractID, Code: s.cfg.AssetCode, Issuer: s.cfg.AssetIssuer}
 	amount, err := money.ParseAmount(amountStr, asset, s.cfg.Decimals)
 	if err != nil || amount.Raw.Sign() <= 0 {

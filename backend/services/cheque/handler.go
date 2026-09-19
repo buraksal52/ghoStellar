@@ -54,13 +54,18 @@ type preauthRequest struct {
 }
 
 func (h *Handler) StorePreauth(w http.ResponseWriter, r *http.Request) {
+	caller, ok := callerAddress(r)
+	if !ok {
+		httpx.WriteError(w, http.StatusUnauthorized, "auth.invalid_token", "missing bearer claims", nil)
+		return
+	}
 	id := r.PathValue("id")
 	var req preauthRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.SignedEntryXDR == "" {
 		httpx.WriteError(w, http.StatusBadRequest, ErrBadRequest, "signedEntryXdr is required", nil)
 		return
 	}
-	if err := h.svc.StorePreauth(r.Context(), id, req.SignedEntryXDR); err != nil {
+	if err := h.svc.StorePreauth(r.Context(), id, caller, req.SignedEntryXDR); err != nil {
 		writeChequeError(w, err)
 		return
 	}
@@ -102,10 +107,15 @@ type confirmRequest struct {
 }
 
 func (h *Handler) ConfirmLock(w http.ResponseWriter, r *http.Request) {
+	caller, ok := callerAddress(r)
+	if !ok {
+		httpx.WriteError(w, http.StatusUnauthorized, "auth.invalid_token", "missing bearer claims", nil)
+		return
+	}
 	id := r.PathValue("id")
 	var req confirmRequest
 	_ = json.NewDecoder(r.Body).Decode(&req)
-	if err := h.svc.ConfirmLock(r.Context(), id, req.TxHash); err != nil {
+	if err := h.svc.ConfirmLock(r.Context(), id, caller, req.TxHash); err != nil {
 		writeChequeError(w, err)
 		return
 	}
@@ -113,10 +123,15 @@ func (h *Handler) ConfirmLock(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) ConfirmClaim(w http.ResponseWriter, r *http.Request) {
+	caller, ok := callerAddress(r)
+	if !ok {
+		httpx.WriteError(w, http.StatusUnauthorized, "auth.invalid_token", "missing bearer claims", nil)
+		return
+	}
 	id := r.PathValue("id")
 	var req confirmRequest
 	_ = json.NewDecoder(r.Body).Decode(&req)
-	if err := h.svc.ConfirmClaim(r.Context(), id, req.TxHash); err != nil {
+	if err := h.svc.ConfirmClaim(r.Context(), id, caller, req.TxHash); err != nil {
 		writeChequeError(w, err)
 		return
 	}
@@ -124,8 +139,13 @@ func (h *Handler) ConfirmClaim(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) AcknowledgeReceipt(w http.ResponseWriter, r *http.Request) {
+	caller, ok := callerAddress(r)
+	if !ok {
+		httpx.WriteError(w, http.StatusUnauthorized, "auth.invalid_token", "missing bearer claims", nil)
+		return
+	}
 	id := r.PathValue("id")
-	if err := h.svc.AcknowledgeReceipt(r.Context(), id); err != nil {
+	if err := h.svc.AcknowledgeReceipt(r.Context(), id, caller); err != nil {
 		writeChequeError(w, err)
 		return
 	}
@@ -138,10 +158,15 @@ type confirmForceCollectRequest struct {
 }
 
 func (h *Handler) ConfirmForceCollect(w http.ResponseWriter, r *http.Request) {
+	caller, ok := callerAddress(r)
+	if !ok {
+		httpx.WriteError(w, http.StatusUnauthorized, "auth.invalid_token", "missing bearer claims", nil)
+		return
+	}
 	id := r.PathValue("id")
 	var req confirmForceCollectRequest
 	_ = json.NewDecoder(r.Body).Decode(&req)
-	if err := h.svc.ConfirmForceCollect(r.Context(), id, req.TxHash, req.Collected); err != nil {
+	if err := h.svc.ConfirmForceCollect(r.Context(), id, caller, req.TxHash, req.Collected); err != nil {
 		writeChequeError(w, err)
 		return
 	}

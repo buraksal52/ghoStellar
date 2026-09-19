@@ -31,7 +31,11 @@ type Claims struct {
 }
 
 // VerifyJWT verifies a bearer token against the auth service's published
-// RS256 public key and returns its claims.
+// RS256 public key and returns its claims. This is the raw verifier — it
+// accepts any valid token regardless of its `sub` (access or refresh).
+// pay-auth-service's own Refresh flow needs exactly this (it must accept a
+// refresh token to mint a new access token). Every other caller wants
+// VerifyAccessToken instead — see its doc comment.
 func VerifyJWT(token string, publicKey *rsa.PublicKey) (Claims, error) {
 	var claims Claims
 	parsed, err := jwt.ParseWithClaims(token, &claims, func(t *jwt.Token) (any, error) {
@@ -44,6 +48,31 @@ func VerifyJWT(token string, publicKey *rsa.PublicKey) (Claims, error) {
 		return Claims{}, ErrInvalidToken
 	}
 	if claims.StellarAccount == "" {
+		return Claims{}, ErrInvalidToken
+	}
+	return claims, nil
+}
+
+// accessTokenSubject is the `sub` claim minted onto access tokens
+// (services/auth/service.go's mintPair) — the only subject VerifyAccessToken
+// accepts. Kept as a shared constant instead of a magic string on both
+// sides of the auth/authx package boundary.
+const accessTokenSubject = "access"
+
+// VerifyAccessToken verifies a bearer token AND requires it to be an access
+// token, not a refresh token. Access and refresh tokens are signed with the
+// same key and both carry a populated StellarAccount, so without this check
+// a refresh token — deliberately long-lived (30 days) so the client doesn't
+// need to re-sign a SEP-10 challenge often — would work as a bearer token on
+// every protected route, defeating the short access-token TTL entirely.
+// Fail-closed: a token with an empty or unrecognized `sub` is rejected, not
+// just one explicitly marked "refresh".
+func VerifyAccessToken(token string, publicKey *rsa.PublicKey) (Claims, error) {
+	claims, err := VerifyJWT(token, publicKey)
+	if err != nil {
+		return Claims{}, err
+	}
+	if claims.Subject != accessTokenSubject {
 		return Claims{}, ErrInvalidToken
 	}
 	return claims, nil
@@ -76,7 +105,8 @@ const claimsKey ctxKey = 0
 // RequireBearer is middleware that verifies the Authorization header on
 // user-facing routes and injects Claims into the request context. onError is
 // called (envelope + status) when verification fails, so handlers stay
-// decoupled from httpx.
+// decoupled from httpx. Only access tokens are accepted — see
+// VerifyAccessToken.
 func RequireBearer(publicKey *rsa.PublicKey, onError func(w http.ResponseWriter), next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		auth := r.Header.Get("Authorization")
@@ -85,7 +115,7 @@ func RequireBearer(publicKey *rsa.PublicKey, onError func(w http.ResponseWriter)
 			onError(w)
 			return
 		}
-		claims, err := VerifyJWT(token, publicKey)
+		claims, err := VerifyAccessToken(token, publicKey)
 		if err != nil {
 			onError(w)
 			return

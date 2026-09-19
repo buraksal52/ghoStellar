@@ -128,3 +128,97 @@ ayrı aşama" kararıyla tutarlı.
 host'a (fly.io, Railway) deploy etmek + `scripts/e2e.sh`'ın adımlarını
 sürebilen minimal bir web sayfası (Flutter beklemeden, tek sayfalık bir
 demo istemcisi) eklemek.
+
+## 11. `pay.audit_log` ve `pay.trustlines` fiilen ölü tablo
+
+`pay.audit_log` migration'da (`000001_init.up.sql`) var ama Go kodunun
+**hiçbir yerinden** yazılmıyor — `architecture.md §11`'in vaat ettiği
+"append-only audit trail" (quote/XDR üretimi, submission, risk reddi)
+gerçekte tutulmuyor. `pay.trustlines` ise yalnızca
+`services/anchor/repository.go`'daki `SetTrustline` ile **yazılıyor**,
+hiçbir yerden `SELECT` edilmiyor — `pay-cheque-service` kendi trustline
+kontrolünü doğrudan `chain.GetTrustline` ile zincirden yapıyor, bu tabloyu
+hiç okumuyor. İkisi de şema borcu; kapatma yolu ya gerçekten kullanmak ya
+da migration'dan çıkarmak.
+
+## 12. HTTP sunucuları sertleştirilmemiş
+
+Altı `cmd/*/main.go` da çıplak `http.ListenAndServe(addr, ...)` çağırıyor:
+`ReadHeaderTimeout`/`ReadTimeout`/`WriteTimeout`/`IdleTimeout` yok (yavaş
+istemci/Slowloris'e açık), **graceful shutdown yok** (SIGTERM, submit
+sırasındaki bir isteği yarıda keser), panic-recovery middleware yok (tek
+bir handler panikle tüm process'i düşürür), istek gövdesi boyut sınırı yok.
+
+## 13. Erişim logu yok
+
+`httpx.WithRequestID` yalnızca `X-Request-Id` header'ı basıyor/taşıyor;
+hiçbir yerde metod/yol/durum/süre loglanmıyor. `pkg/obs`'un "her log
+satırı request_id taşısın" kuralının loglayacağı bir istek logu yok —
+prod'da bir isteğin ne olduğunu yalnızca uygulama seviyesindeki hata
+logları anlatıyor.
+
+## 14. Asılı kalan idempotency key'ler kurtarılmıyor
+
+`services/tx/repository.go`'daki `BeginSubmission`, `pay.idempotency_keys`'e
+`status='pending'` yazıp submit'i dener; süreç tam bu sırada ölürse (crash,
+OOM, deploy) key sonsuza dek `pending` kalır ve `ErrKeyInFlight` yüzünden
+aynı Idempotency-Key ile hiçbir zaman yeniden denenemez (kalıcı 409).
+`expires_at` kolonu (24 saat) var ama onu okuyup temizleyen hiçbir iş yok —
+`pay-scheduler-service`'e doğal bir iş.
+
+## 15. `pay-scheduler-service`, `pay-tx-service`'i atlıyor
+
+`CLAUDE.md`'nin "Yalnızca `pay-tx-service` transaction submit eder" kuralına
+rağmen `services/scheduler/service.go`'daki `refundOne`/`BumpEscrowInstance`
+doğrudan `chain.SubmitSoroban` çağırıyor — belgelenmemiş tek istisna
+(keeper anahtarının fee-payer-only doğası nedeniyle risk düşük, ama kural
+metninde bu istisna yok). Ayrıca `SweepExpiredCheques`'te backoff/dead-letter
+yok: sürekli başarısız olan bir çek her `SWEEP_INTERVAL_SECONDS`'ta (varsayılan
+60sn) sonsuza dek yeniden denenir.
+
+## 16. Servis portları APISIX'i bypass ediyor
+
+`deploy/docker-compose.yml` her servisi (8081-8086) doğrudan host'a açıyor;
+`deploy/apisix/apisix.yaml`'daki rate-limit/CORS/`internal-deny` yalnızca
+9080 (APISIX edge) üzerinden geçen trafiğe uygulanıyor. Ayrıca
+`pkg/authx/authx.go`'daki `RequireInternalKey` yorumu "gateway bu header'ı
+sıyırır" diyor ama `apisix.yaml`'da `X-Internal-Api-Key`'i sıyıran/reddeden
+hiçbir plugin yok — servis portları açık kaldığı sürece bu varsayım
+doğrulanamaz.
+
+## 17. CI yok
+
+`.github/` dizini bile yok; `go build/vet/test` ve
+`cargo test` (contracts/soroban/pay-escrow) her push'ta yalnızca elle
+çalıştırılıyor.
+
+## 18. Down migration yok
+
+`000001_init.up.sql` (ve bu turda eklenen `000002_pool_deposit_at.up.sql`)
+tek yönlü; `migrate ... down` için karşılık gelen `.down.sql` dosyaları yok.
+
+## 19a. [Bu turda doğrulama sırasında bulundu] APISIX, `POST /cheques`'i 404'lüyor
+
+`deploy/apisix/apisix.yaml`'daki `cheque` route'unun `uris` listesi
+`/cheques/*` (glob) + `/sync` + `/pool/*` içeriyor. APISIX'in radix-tree
+router'ında `/cheques/*` **yalnızca** `/cheques/` ile başlayan (bir alt
+segment içeren) yolları eşliyor — bir çek oluşturmak için kullanılan asıl
+uç, `POST /cheques` (segment yok), eşleşmiyor ve edge (9080) `404 Route Not
+Found` dönüyor. Servise doğrudan gidildiğinde (8083) aynı istek doğru
+şekilde 401 (auth eksik) dönüyor — yani hata yalnızca APISIX route
+tanımında, servis kodunda değil. Bu, `scripts/e2e.sh`'ın adım adım
+sırasını service-doğrudan portlarla test ederken görünmeyip yalnızca gerçek
+edge üzerinden koşulunca ortaya çıkan bir regresyon/eksik; bu tur
+onaylanan kapsam `deploy/apisix/`'e dokunmayı içermediği için
+**düzeltilmedi**, yalnızca burada kayda geçirildi.
+
+**Kapatma yolu:** `uris` listesine `/cheques` (segment'siz) satırını da
+ekle, ya da glob'u APISIX'in tam prefiks eşleşmesini destekleyen bir
+biçime çevir.
+
+## 19. JWT `aud`/`iss` taşımıyor
+
+`pkg/authx.Claims` yalnızca `stellar_account` ve (bu turdan itibaren)
+`sub` taşıyor; SEP-10 sonrası JWT'ler genelde `WEB_AUTH_DOMAIN`'e `aud`
+olarak bağlanır. Anahtar tamamen kendi imzamız olduğu için istismar yüzeyi
+dar, ama spec uyumu eksik.
