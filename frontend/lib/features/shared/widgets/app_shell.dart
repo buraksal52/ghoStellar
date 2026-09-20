@@ -7,6 +7,8 @@ import 'package:go_router/go_router.dart';
 import '../../../core/config/env.dart';
 import '../../../core/theme/app_colors.dart';
 import '../../../core/theme/theme_provider.dart';
+import '../../../state/auth_providers.dart';
+import '../../../state/connectivity_providers.dart';
 import '../../../state/home_providers.dart';
 import '../../../state/inbox_providers.dart';
 import '../../../state/offline_providers.dart';
@@ -138,6 +140,24 @@ class _AppShellState extends ConsumerState<AppShell> with WidgetsBindingObserver
     if (mounted) ref.read(offlineSpentRequestIdsProvider.notifier).hydrate(ids);
   }
 
+  /// The banner's "Retry" — unlike [_comeOnline] (which only refreshes data
+  /// that already degrades gracefully offline), this also finishes the SEP-10
+  /// login `AuthGatePage` couldn't complete at cold start, so a successful
+  /// retry leaves the wallet properly authenticated rather than merely
+  /// looking online. `ApiClient`'s reachability callback clears
+  /// [offlineModeProvider] itself the moment any request gets through.
+  Future<void> _retryConnection() async {
+    try {
+      if (!(ref.read(authProvider).value ?? false)) {
+        await ref.read(authProvider.notifier).login();
+      }
+      await ref.read(syncProvider.notifier).refresh();
+      _comeOnline();
+    } catch (_) {
+      // Still offline — the banner just stays up; nothing else to do here.
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     final c = context.colors;
@@ -194,10 +214,17 @@ class _AppShellState extends ConsumerState<AppShell> with WidgetsBindingObserver
           ),
         ],
       ),
-      body: Stack(
+      body: Column(
         children: [
-          Padding(padding: const EdgeInsets.fromLTRB(20, 0, 20, 0), child: widget.child),
-          const SigningOverlay(),
+          if (ref.watch(offlineModeProvider)) _OfflineBanner(onRetry: _retryConnection),
+          Expanded(
+            child: Stack(
+              children: [
+                Padding(padding: const EdgeInsets.fromLTRB(20, 0, 20, 0), child: widget.child),
+                const SigningOverlay(),
+              ],
+            ),
+          ),
         ],
       ),
       bottomNavigationBar: BottomNavigationBar(
@@ -218,5 +245,48 @@ class _AppShellState extends ConsumerState<AppShell> with WidgetsBindingObserver
   int _currentIndex(String location) {
     final i = _navRoutes.indexOf(location);
     return i == -1 ? 0 : i;
+  }
+}
+
+/// Shown across the top of every screen in the shell while
+/// [offlineModeProvider] is set. Sending still works while this is up — a
+/// scanned/tapped request is answered with a signed classic payment built
+/// from the cached snapshot (`offline_providers.dart`) instead of a cheque —
+/// this is purely informational, plus a manual way to check again sooner
+/// than the next app resume.
+class _OfflineBanner extends StatelessWidget {
+  const _OfflineBanner({required this.onRetry});
+
+  final VoidCallback onRetry;
+
+  @override
+  Widget build(BuildContext context) {
+    final c = context.colors;
+    return Material(
+      color: c.negative.withValues(alpha: 0.12),
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+        child: Row(
+          children: [
+            Icon(Icons.wifi_off, size: 16, color: c.negative),
+            const SizedBox(width: 8),
+            Expanded(
+              child: Text(
+                'Offline — payments you send are handed directly to the receiver.',
+                style: Theme.of(context).textTheme.bodySmall?.copyWith(color: c.negative),
+              ),
+            ),
+            TextButton(
+              onPressed: onRetry,
+              style: TextButton.styleFrom(
+                padding: const EdgeInsets.symmetric(horizontal: 8),
+                minimumSize: Size.zero,
+              ),
+              child: const Text('Retry'),
+            ),
+          ],
+        ),
+      ),
+    );
   }
 }

@@ -10,6 +10,7 @@ import '../data/api/models/tx_models.dart';
 import '../data/storage/offline_payment_store.dart';
 import '../data/stellar/offline_account_cache.dart';
 import '../data/stellar/offline_payment_builder.dart';
+import '../data/stellar/offline_payment_verifier.dart';
 import 'core_providers.dart';
 import 'sync_providers.dart';
 import 'wallet_providers.dart';
@@ -23,19 +24,112 @@ const classicStellarDecimals = 7;
 final offlineAccountCacheProvider = Provider((ref) => OfflineAccountCache());
 final offlinePaymentStoreProvider = Provider((ref) => OfflinePaymentStore());
 
+/// Thin decorator around `TxApi.submit` — used by every call site that can
+/// advance this wallet's own sequence number (cheque lock, pool, claim,
+/// trustline, anchor withdraw, and this file's own `_submit`), so the
+/// cached [accountSnapshotProvider] never drifts behind the chain within a
+/// single foreground session. `POST /tx/submit` is, per architecture.md §4,
+/// the only way this app ever moves anything on chain — so it's the one
+/// funnel that can't be forgotten the way a 9th call site forgetting a
+/// paired `refresh()` call could be. This is what an *offline* payment,
+/// signed later against a snapshot that had silently gone stale, used to
+/// die to (`tx_bad_seq`, permanently dropped) — see `_recoverFromBadSeq`'s
+/// doc comment for the rest of that fix.
+///
+/// Lives here rather than in `core_providers.dart` (where `TxApi` and every
+/// other API wrapper live) because it depends on `accountSnapshotProvider`,
+/// defined below — putting it in `core_providers.dart` would make that file
+/// import this one, which this file already imports the other way around.
+/// `TxApi` itself stays a plain, `ref`-free data-layer class so `FakeTxApi`
+/// overrides in tests keep working unmodified.
+class ChainSubmitter {
+  ChainSubmitter(this._ref);
+  final Ref _ref;
+
+  Future<SubmitResponse> submit({
+    required String idempotencyKey,
+    required String purpose,
+    required TxKind kind,
+    required String xdr,
+  }) async {
+    // Marked stale *before* the refresh below runs, so a refresh that fails
+    // (or this whole call gets cancelled/the process dies mid-flight) never
+    // leaves `ensureFresh` trusting an unconfirmed snapshot — only a refresh
+    // that actually succeeds clears it.
+    //
+    // Awaited, not fire-and-forget: a submit reaching the network is exactly
+    // the moment worth paying one extra Horizon round trip for, and doing it
+    // in the background instead would leave every caller racing an
+    // in-flight snapshot update with no way to know when it's done — which
+    // is what let this go untested (and unnoticed) the first time.
+    Future<void> refreshSnapshot() {
+      _ref.read(accountSnapshotProvider.notifier).markStale();
+      return _ref.read(accountSnapshotProvider.notifier).refresh();
+    }
+
+    try {
+      final resp = await _ref.read(txApiProvider).submit(
+            idempotencyKey: idempotencyKey,
+            purpose: purpose,
+            kind: kind,
+            xdr: xdr,
+          );
+      await refreshSnapshot(); // A successful submit is the clearest signal this account's sequence just moved.
+      return resp;
+    } on ApiException catch (e) {
+      if (e.code == 'tx.submit_failed') {
+        // Reached the network and got a real verdict — even a rejected
+        // transaction means we're online and this account's state might
+        // have changed since the cached snapshot was taken (e.g. another
+        // device's transaction landed in between).
+        await refreshSnapshot();
+      }
+      rethrow;
+    }
+  }
+}
+
+final chainSubmitProvider = Provider((ref) => ChainSubmitter(ref));
+
 /// The wallet's own cached balance + sequence number, refreshed whenever the
 /// app is online (`AppShell`) and consumed by `SendPage`'s offline fallback
 /// to build a payment without a network call. See `OfflineAccountSnapshot`.
 class AccountSnapshotNotifier extends AsyncNotifier<OfflineAccountSnapshot?> {
+  /// Set by [markStale] whenever something might have moved this account's
+  /// sequence on chain without this notifier's knowledge yet — cleared only
+  /// by a *successful* [refresh]. [ensureFresh] uses this so a background
+  /// refresh that silently failed (still offline) doesn't get mistaken for
+  /// "we checked and it's fine".
+  bool _stale = false;
+
   @override
-  Future<OfflineAccountSnapshot?> build() => ref.read(offlineAccountCacheProvider).read();
+  Future<OfflineAccountSnapshot?> build() {
+    ref.keepAlive();
+    return ref.read(offlineAccountCacheProvider).read();
+  }
+
+  /// Marks the cached snapshot as untrustworthy without touching the
+  /// network. Called right before/after anything that could have advanced
+  /// this wallet's own sequence — see `chainSubmitProvider`, the one funnel
+  /// every submit goes through.
+  void markStale() => _stale = true;
 
   /// Fetches the live balance/sequence from Horizon and caches it. Silently
   /// keeps the old snapshot on failure (typically: no connection right now,
-  /// which is exactly when the cached value matters most).
+  /// which is exactly when the cached value matters most) — [_stale] is
+  /// left set in that case, so a later [ensureFresh] knows to try again
+  /// instead of trusting a snapshot that was never actually confirmed.
   Future<void> refresh() async {
     final me = ref.read(walletProvider).publicKey;
     if (me == null) return;
+    // Let the initial build (the disk-cache read) settle first. Without
+    // this, a `refresh()` called before that finishes races it: the
+    // snapshot this method fetches and assigns to `state` below can get
+    // silently clobbered back to whatever the (slower-to-settle, usually —
+    // but not always, e.g. right after a fast fake in a test) `build()`
+    // future resolves to, once it finally does. `reserve()` below already
+    // guards against the same race the same way.
+    await future;
     try {
       final account = await ref.read(horizonReadServiceProvider).fetchAccount(me);
       if (account == null) return; // Unfunded, or the asset's trustline isn't set up — nothing to cache.
@@ -43,9 +137,33 @@ class AccountSnapshotNotifier extends AsyncNotifier<OfflineAccountSnapshot?> {
       if (snapshot == null) return;
       state = AsyncData(snapshot);
       await ref.read(offlineAccountCacheProvider).write(snapshot);
+      _stale = false;
     } catch (_) {
       // Offline / Horizon down — the cached snapshot is what we have.
     }
+  }
+
+  /// The cached snapshot, refreshed first only if it might be wrong: marked
+  /// [markStale] since its last successful refresh, or older than [maxAge].
+  /// Used right before signing an offline payment (`send_page.dart`) — a
+  /// bounded, best-effort attempt via [timeout], never a hard requirement.
+  /// A failed or slow refresh just falls back to whatever is cached, same
+  /// as [refresh] always has; this only adds a chance to catch a drift
+  /// [refresh]'s usual triggers (app resume, `chainSubmitProvider`) missed,
+  /// without costing a network round trip on the common already-fresh path.
+  Future<OfflineAccountSnapshot?> ensureFresh({required Duration maxAge, required Duration timeout}) async {
+    final current = await future;
+    final now = ref.read(clockProvider)();
+    final needsRefresh = _stale || current == null || now.difference(current.fetchedAt) > maxAge;
+    if (needsRefresh) {
+      try {
+        await refresh().timeout(timeout);
+      } catch (_) {
+        // Timed out, or refresh() itself threw (it shouldn't) — the cache
+        // below is still whatever we had, which is the correct fallback.
+      }
+    }
+    return future;
   }
 
   /// Consumes [amountRaw] and advances the sequence, so a second offline
@@ -160,11 +278,34 @@ class PendingOfflinePaymentsNotifier extends AsyncNotifier<List<PendingOfflinePa
           await _submit(p);
           changed = true; // Reached the network (or was already there) — drop it.
         } on ApiException catch (e) {
-          if (_terminalSubmitCodes.contains(e.code) || _isPermanentlyDead(e)) {
+          if (_terminalSubmitCodes.contains(e.code)) {
             changed = true; // Can never succeed — drop it.
-            lastError = _isPermanentlyDead(e)
-                ? _staleAccountMessage
-                : ErrorCopy.forException(e);
+            lastError = ErrorCopy.forException(e);
+          } else if (e.code == 'tx.submit_failed' && e.message == 'tx_too_late') {
+            // The network's own clock agrees (or caught an edge case
+            // _isExpired's local estimate missed on) — the fixed TimeBounds
+            // baked into the signature has passed. Never recoverable.
+            changed = true;
+            lastError = _expiredEnvelopeMessage(p);
+          } else if (e.code == 'tx.submit_failed' && e.message == 'tx_bad_seq') {
+            final outcome = await _recoverFromBadSeq(p);
+            switch (outcome) {
+              case _ResignedPayment(:final payment):
+                changed = true;
+                remaining.add(payment);
+                lastError = null;
+              case _BadSeqDead():
+                changed = true;
+                lastError = _expiredEnvelopeMessage(p);
+              case _BadSeqStillWaiting():
+                remaining.add(p);
+                // Surfaced even though this attempt keeps retrying: a
+                // silent "waiting" banner that never explains why looked
+                // like a permanent hang (SERVICE.md #23's report) even
+                // when it was still legitimately trying.
+                lastError =
+                    'Waiting for another pending payment on this account to reach the network before this one can be sent.';
+            }
           } else {
             remaining.add(p); // Still offline/unreachable — keep it.
             // Surfaced even though this attempt keeps retrying: a silent
@@ -192,25 +333,102 @@ class PendingOfflinePaymentsNotifier extends AsyncNotifier<List<PendingOfflinePa
   bool _isExpired(PendingOfflinePayment p) =>
       ref.read(clockProvider)().isAfter(p.receivedAt.add(OfflinePaymentBuilder.validity));
 
-  /// Whether [e] is a Horizon result code that can never become true for
-  /// THIS specific signed envelope, no matter how many times it's retried
-  /// (SERVICE.md #23): the sequence number and time bounds are baked into
-  /// the signature at build time. `tx_bad_seq` means some other transaction
-  /// from this account (on this device or another) has already advanced
-  /// the account past the sequence this payment was signed against —
-  /// nothing about resubmitting the same bytes can fix that. `tx_too_late`
-  /// is the network's own clock agreeing with (or catching an edge case
-  /// [_isExpired]'s local estimate missed on) the same fixed TimeBounds.
-  /// Every other `tx.submit_failed` reason (funding, auth, generic) can
-  /// plausibly clear up before the 24h window this queue tracks, so those
-  /// keep retrying.
-  bool _isPermanentlyDead(ApiException e) =>
-      e.code == 'tx.submit_failed' && _permanentlyDeadResultCodes.contains(e.message);
+  /// Maximum times a single item is re-signed against a fresh sequence
+  /// before giving up — guards against a resign/fail loop (e.g. this
+  /// device's own snapshot somehow never catching up with the chain).
+  static const _maxResignAttempts = 3;
+
+  /// Handles a `tx_bad_seq` rejection for [p]. The sequence number is baked
+  /// into the signature at build time, so *this exact envelope* is dead —
+  /// but that does NOT mean the payment itself is unrecoverable the way
+  /// `tx_too_late` is: see the three outcomes below.
+  ///
+  /// This is SERVICE.md #23's root-cause fix, not just its symptom: an
+  /// offline payment used to die here permanently the moment the cached
+  /// [AccountSnapshotNotifier] snapshot it was signed against went stale —
+  /// which routinely happened after an ordinary online transaction, since
+  /// nothing refreshed it mid-session before `chainSubmitProvider` existed.
+  Future<_BadSeqOutcome> _recoverFromBadSeq(PendingOfflinePayment p) async {
+    // Only the sender can re-sign — the receiver holds no private key for
+    // this account, so on their device this envelope really is the only
+    // copy and it really is dead.
+    // `walletProvider.publicKey` is null while locked, even for this
+    // device's own wallet — so it alone can't tell "this is a receiver's
+    // copy" (genuinely dead) apart from "this is ours, just not unlocked
+    // right now" (should keep waiting). `SecureWalletStore.readPublicKey`
+    // answers that without needing the private key: it's the address this
+    // device saved at wallet creation, present whether or not the wallet is
+    // currently unlocked (`secure_wallet_store.dart`).
+    final storedAddress = await ref.read(secureWalletStoreProvider).readPublicKey();
+    if (p.from != storedAddress) {
+      // Not this device's own wallet at all — a receiver's copy of someone
+      // else's payment. No key to re-sign with, ever.
+      return const _BadSeqDead();
+    }
+    final keyPair = ref.read(walletProvider).keyPair;
+    if (keyPair == null) {
+      // Ours, but the wallet isn't unlocked right now — nothing silent can
+      // be done; the person has to open the app (`PendingOfflinePaymentsBanner`'s
+      // "Resend" covers the case where that alone doesn't trigger a retry).
+      return const _BadSeqStillWaiting();
+    }
+    if (p.resignAttempts >= _maxResignAttempts) {
+      return const _BadSeqDead();
+    }
+
+    await ref.read(accountSnapshotProvider.notifier).refresh();
+    final snapshot = await ref.read(accountSnapshotProvider.future);
+    final envelope = OfflinePaymentVerifier.describe(p.signedXdr);
+    if (snapshot == null || envelope == null) {
+      // No fresh sequence to re-sign against right now (still offline), or
+      // this device's own envelope somehow doesn't parse — either way,
+      // nothing safe to do but wait for the next retry.
+      return const _BadSeqStillWaiting();
+    }
+
+    // Only a genuinely stale envelope (signed against a sequence the chain
+    // has already moved past) is safe to re-sign. One signed AHEAD of the
+    // chain — left by an earlier dropped item advancing this device's local
+    // sequence past what actually landed (`OfflineAccountSnapshot.reserve`)
+    // — is NOT dead: Stellar only requires `tx.seqNum == account.seqNum +
+    // 1`, and the chain's sequence only climbs, so it can still become
+    // valid once the transactions between it and the chain's current
+    // position land. Re-signing it now would leave two envelopes that could
+    // both eventually succeed — a real double-pay, not a hypothetical one.
+    if (envelope.sequence >= snapshot.sequence) {
+      return const _BadSeqStillWaiting();
+    }
+
+    final xdr = const OfflinePaymentBuilder().buildAndSign(
+      sender: keyPair,
+      snapshot: snapshot,
+      destination: envelope.destination,
+      amount: envelope.amount,
+      nonce: p.nonce,
+      asset: PayAsset.configured,
+      networkPassphrase: ref.read(networkPassphraseProvider),
+      // The ORIGINAL deadline, not a fresh 24h window — a resign must not
+      // silently outlive what the receiver was told this payment was valid
+      // until (`_isExpired` above still enforces it independently).
+      now: p.receivedAt,
+    );
+    await ref.read(accountSnapshotProvider.notifier).reserve(p.amountRaw);
+
+    return _ResignedPayment(PendingOfflinePayment(
+      signedXdr: xdr,
+      nonce: p.nonce,
+      from: p.from,
+      amountRaw: p.amountRaw,
+      decimals: p.decimals,
+      receivedAt: p.receivedAt,
+      resignAttempts: p.resignAttempts + 1,
+    ));
+  }
 
   Future<void> _submit(PendingOfflinePayment p) async {
     final networkPassphrase = ref.read(networkPassphraseProvider);
     final hash = AbstractTransaction.fromEnvelopeXdrString(p.signedXdr).hash(Network(networkPassphrase));
-    await ref.read(txApiProvider).submit(
+    await ref.read(chainSubmitProvider).submit(
           idempotencyKey: 'offline-${_hex(hash)}',
           purpose: 'offline_payment',
           kind: TxKind.classic,
@@ -232,19 +450,48 @@ const _terminalSubmitCodes = {
   'tx.bad_request',
 };
 
-/// See `_isPermanentlyDead`'s doc comment.
-const _permanentlyDeadResultCodes = {
-  'tx_bad_seq',
-  'tx_too_late',
-};
+/// The three things a `tx_bad_seq` rejection can mean for a queued payment
+/// — see `PendingOfflinePaymentsNotifier._recoverFromBadSeq`.
+sealed class _BadSeqOutcome {
+  const _BadSeqOutcome();
+}
 
-/// Deliberately not `ErrorCopy._submitResultMessages['tx_bad_seq']`
-/// ("Your account changed while signing. Please try again.") — that wording
-/// assumes the person is actively signing right now, which is wrong here:
-/// an offline payment can go stale hours later, from a completely
-/// unrelated transaction on this device or another one.
-const _staleAccountMessage =
-    'This offline payment could no longer be sent — your account changed on chain before it reached the network.';
+/// Re-signed against a fresh sequence and still queued, under a NEW
+/// idempotency key (the envelope's hash changed) — safe because the old
+/// envelope's sequence is now permanently behind the chain and can never
+/// itself become valid.
+class _ResignedPayment extends _BadSeqOutcome {
+  const _ResignedPayment(this.payment);
+  final PendingOfflinePayment payment;
+}
+
+/// Genuinely unrecoverable: a receiver's copy (no key to re-sign with), a
+/// sender past the resign-attempt cap, or an envelope this device can't
+/// even parse.
+class _BadSeqDead extends _BadSeqOutcome {
+  const _BadSeqDead();
+}
+
+/// Not dead, but not safe to re-sign yet either — kept queued unchanged so
+/// the next retry re-checks it against however far the chain has advanced.
+class _BadSeqStillWaiting extends _BadSeqOutcome {
+  const _BadSeqStillWaiting();
+}
+
+/// Message for an envelope that is genuinely gone (see `_BadSeqDead`,
+/// `tx_too_late`, and the resign-attempt cap): distinct wording depending on
+/// whether THIS device could have been the one to recover it, since a
+/// receiver-side reader who sees "your account changed" about a payment
+/// that isn't even theirs is misleading — the sender's own copy of the same
+/// payment may still reach the network. Deliberately not
+/// `ErrorCopy._submitResultMessages['tx_bad_seq']` ("Your account changed
+/// while signing. Please try again.") either way — that wording assumes the
+/// person is actively signing right now, which is wrong here: an offline
+/// payment can go stale hours later, from a completely unrelated
+/// transaction on this device or another one.
+String _expiredEnvelopeMessage(PendingOfflinePayment p) => p.resignAttempts > 0
+    ? 'This offline payment could no longer be sent after several attempts — your account kept changing on chain before it caught up.'
+    : "This offline payment's envelope could no longer be sent. If you sent it, reopening the app may recover it; if you received it, ask the sender to reopen theirs.";
 
 String _hex(List<int> bytes) => bytes.map((b) => b.toRadixString(16).padLeft(2, '0')).join();
 

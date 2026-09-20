@@ -125,6 +125,45 @@ func TestHandler_Submit_ReplayedKeyReturns200(t *testing.T) {
 	}
 }
 
+// TestHandler_Submit_RetryAfterGatewayErrorReturns200 is the HTTP-level
+// regression for SERVICE.md #23: a key released after a chain-gateway
+// failure must let a retry through as a fresh 200, never a 409
+// tx.duplicate_idempotency_key (the poisoned-key bug — see
+// TestSubmit_RetryAfterGatewayErrorSucceeds_SameKey for the service-level
+// version).
+func TestHandler_Submit_RetryAfterGatewayErrorReturns200(t *testing.T) {
+	calls := 0
+	svc := newServiceWithRepo(newFakeRepo(), &portstest.FakeChain{
+		SubmitClassicFunc: func(ctx context.Context, signedXDR string) (ports.SubmitResult, error) {
+			calls++
+			if calls == 1 {
+				return ports.SubmitResult{}, context.DeadlineExceeded
+			}
+			return ports.SubmitResult{Hash: "h", Successful: true}, nil
+		},
+	})
+	pubKey, tok := bearerToken(t, "GADDR")
+	mux := testMux(NewHandler(svc), pubKey)
+
+	body := `{"idempotencyKey":"retry-key","purpose":"cheque.lock","kind":"classic","xdr":"AAAA=="}`
+
+	req1 := httptest.NewRequest("POST", "/tx/submit", bytes.NewBufferString(body))
+	req1.Header.Set("Authorization", "Bearer "+tok)
+	rec1 := httptest.NewRecorder()
+	mux.ServeHTTP(rec1, req1)
+	if rec1.Code != http.StatusBadGateway {
+		t.Fatalf("first submit: got %d, want 502; body=%s", rec1.Code, rec1.Body.String())
+	}
+
+	req2 := httptest.NewRequest("POST", "/tx/submit", bytes.NewBufferString(body))
+	req2.Header.Set("Authorization", "Bearer "+tok)
+	rec2 := httptest.NewRecorder()
+	mux.ServeHTTP(rec2, req2)
+	if rec2.Code != http.StatusOK {
+		t.Fatalf("retry: got %d, want 200 (not 409 duplicate_idempotency_key); body=%s", rec2.Code, rec2.Body.String())
+	}
+}
+
 func TestHandler_Submit_InFlightKeyReturns409(t *testing.T) {
 	repo := newFakeRepo()
 	repo.keyStatus["in-flight-key"] = "pending"

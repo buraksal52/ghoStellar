@@ -9,7 +9,7 @@ import '../storage/secure_wallet_store.dart';
 /// bearer token, and retries exactly once on a 401 by refreshing the token
 /// pair — never loops.
 class ApiClient {
-  ApiClient({required SecureWalletStore walletStore, Dio? dio})
+  ApiClient({required SecureWalletStore walletStore, Dio? dio, this.onReachability})
       : _walletStore = walletStore,
         _dio = dio ??
             Dio(BaseOptions(
@@ -58,6 +58,13 @@ class ApiClient {
 
   final Dio _dio;
   final SecureWalletStore _walletStore;
+
+  /// Told `true` after any request actually reaches the gateway (whatever
+  /// it answers with — even a business error means the network is up) and
+  /// `false` whenever one comes back wrapped as `network.error`. Wired to
+  /// `offlineModeProvider` in `core_providers.dart`; `null` in tests that
+  /// construct `ApiClient` directly.
+  final void Function(bool online)? onReachability;
 
   bool _isRetry(RequestOptions options) => options.extra['retried'] == true;
 
@@ -134,9 +141,13 @@ class ApiClient {
         queryParameters: query,
         options: Options(extra: {if (noAuth) 'noAuth': true}, headers: headers),
       );
-      return _unwrap(response);
+      final result = _unwrap(response);
+      onReachability?.call(true);
+      return result;
     } on DioException catch (e) {
-      throw _fromDioException(e);
+      final ex = _fromDioException(e);
+      if (ex.code == 'network.error') onReachability?.call(false);
+      throw ex;
     }
   }
 
@@ -152,9 +163,13 @@ class ApiClient {
         data: body,
         options: Options(extra: {if (noAuth) 'noAuth': true}, headers: headers),
       );
-      return (_unwrap(response) as Map<String, dynamic>?) ?? const {};
+      final result = (_unwrap(response) as Map<String, dynamic>?) ?? const {};
+      onReachability?.call(true);
+      return result;
     } on DioException catch (e) {
-      throw _fromDioException(e);
+      final ex = _fromDioException(e);
+      if (ex.code == 'network.error') onReachability?.call(false);
+      throw ex;
     }
   }
 

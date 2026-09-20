@@ -11,6 +11,7 @@ import 'package:ghostellar_app/data/api/models/cheque_models.dart';
 import 'package:ghostellar_app/data/api/models/tx_models.dart';
 import 'package:ghostellar_app/data/stellar/horizon_read_service.dart';
 import 'package:ghostellar_app/data/stellar/stellar_signing_service.dart';
+import 'package:ghostellar_app/data/storage/secure_wallet_store.dart';
 import 'package:ghostellar_app/state/starter_funds.dart';
 import 'package:ghostellar_app/state/sync_providers.dart';
 import 'package:ghostellar_app/state/wallet_providers.dart';
@@ -127,6 +128,22 @@ class FakeSigning extends Fake implements StellarSigningService {
       'signed-$unsignedEntryXdrBase64';
 }
 
+/// A store with no plugin channel behind it, so anything reading it
+/// directly (e.g. `AuthNotifier.build()`, or
+/// `PendingOfflinePaymentsNotifier._recoverFromBadSeq`'s locked-wallet check)
+/// doesn't hit a `MissingPluginException` in a unit/widget test.
+class FakeSecureWalletStore extends Fake implements SecureWalletStore {
+  FakeSecureWalletStore({this.publicKey, this.accessToken});
+  String? publicKey;
+  String? accessToken;
+
+  @override
+  Future<String?> readPublicKey() async => publicKey;
+
+  @override
+  Future<String?> readAccessToken() async => accessToken;
+}
+
 class UnlockedWallet extends WalletNotifier {
   UnlockedWallet(this.keyPair);
   final KeyPair keyPair;
@@ -184,8 +201,13 @@ Cheque testCheque(
 /// Serves [responses] to successive `fetchBalances` calls (the last one
 /// repeats), so a test can model "Horizon doesn't see the account yet, then
 /// does" and count how often the app re-reads.
+///
+/// [fetchAccount] (used by `AccountSnapshotNotifier.refresh` to keep the
+/// offline-payment sequence cache current) is driven separately, by
+/// [accountSequence]: `null` means "unfunded" (Horizon 404 →
+/// `fetchAccount` returns null), matching the real service's contract.
 class FakeHorizonReadService extends Fake implements HorizonReadService {
-  FakeHorizonReadService([List<AccountBalances>? responses])
+  FakeHorizonReadService([List<AccountBalances>? responses, this.accountSequence])
       : responses = responses ?? [fundedBalances()];
 
   final List<AccountBalances> responses;
@@ -193,6 +215,25 @@ class FakeHorizonReadService extends Fake implements HorizonReadService {
 
   /// The first this-many reads throw (Horizon unreachable / lagging).
   int failFirstReads = 0;
+
+  /// Drives [fetchAccount]. `null` = unfunded account (mirrors a real 404).
+  BigInt? accountSequence;
+
+  /// Native balance [fetchAccount] reports — irrelevant to most tests, but
+  /// `OfflineAccountSnapshot.fromAccount` needs a plausible one to build a
+  /// snapshot at all.
+  String accountNativeBalance = '1000.0000000';
+
+  int fetchAccountCalls = 0;
+
+  /// The first this-many [fetchAccount] calls throw (Horizon unreachable) —
+  /// independent of [failFirstReads], which only gates [fetchBalances].
+  int failFirstAccountReads = 0;
+
+  /// Delays [fetchAccount] by this long — lets a test exercise
+  /// `AccountSnapshotNotifier.ensureFresh`'s `timeout` falling back to the
+  /// cache instead of hanging on a slow/unreachable Horizon.
+  Duration? fetchAccountDelay;
 
   static AccountBalances fundedBalances({String native = '10000.0000000', Map<String, String> other = const {}}) =>
       AccountBalances(native: native, other: other);
@@ -207,6 +248,69 @@ class FakeHorizonReadService extends Fake implements HorizonReadService {
     fetchCalls++;
     return responses[i];
   }
+
+  @override
+  Future<AccountResponse?> fetchAccount(String accountId) async {
+    fetchAccountCalls++;
+    final delay = fetchAccountDelay;
+    if (delay != null) await Future<void>.delayed(delay);
+    if (failFirstAccountReads > 0) {
+      failFirstAccountReads--;
+      throw Exception('horizon down');
+    }
+    final seq = accountSequence;
+    if (seq == null) return null;
+    return fakeAccountResponse(accountId, seq, nativeBalance: accountNativeBalance);
+  }
+}
+
+/// A minimal but structurally real `AccountResponse` — everything
+/// `OfflineAccountSnapshot.fromAccount` reads (`accountId`, `sequenceNumber`,
+/// `balances`) is real; the rest is filler no test currently inspects.
+AccountResponse fakeAccountResponse(
+  String accountId,
+  BigInt sequence, {
+  String nativeBalance = '1000.0000000',
+}) {
+  final link = Link('x', false);
+  return AccountResponse(
+    accountId,
+    sequence,
+    'paging-token',
+    0,
+    null,
+    null,
+    0,
+    null,
+    Thresholds(0, 0, 0),
+    Flags(false, false, false, false),
+    [
+      Balance(
+        Asset.TYPE_NATIVE,
+        null,
+        null,
+        nativeBalance,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+      ),
+    ],
+    [],
+    AccountResponseData({}),
+    AccountResponseLinks(link, link, link, link, link, link, link, link),
+    null,
+    0,
+    0,
+    null,
+    null,
+  );
 }
 
 class FakeAuthApi extends Fake implements AuthApi {

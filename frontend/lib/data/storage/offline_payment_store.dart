@@ -15,6 +15,7 @@ class PendingOfflinePayment {
     required this.amountRaw,
     required this.decimals,
     required this.receivedAt,
+    this.resignAttempts = 0,
   });
 
   final String signedXdr;
@@ -24,6 +25,14 @@ class PendingOfflinePayment {
   final int decimals;
   final DateTime receivedAt;
 
+  /// How many times `PendingOfflinePaymentsNotifier._recoverFromBadSeq` has
+  /// already re-signed this item against a fresher sequence after a
+  /// `tx_bad_seq` rejection — capped there so a device whose snapshot never
+  /// catches up with the chain doesn't resign forever. `0` for a payment
+  /// that has never needed it, including every one persisted before this
+  /// field existed (see [fromJson]'s default).
+  final int resignAttempts;
+
   Map<String, dynamic> toJson() => {
         'signedXdr': signedXdr,
         'nonce': nonce,
@@ -31,6 +40,7 @@ class PendingOfflinePayment {
         'amountRaw': amountRaw,
         'decimals': decimals,
         'receivedAt': receivedAt.toIso8601String(),
+        'resignAttempts': resignAttempts,
       };
 
   factory PendingOfflinePayment.fromJson(Map<String, dynamic> json) => PendingOfflinePayment(
@@ -40,6 +50,7 @@ class PendingOfflinePayment {
         amountRaw: json['amountRaw'] as String,
         decimals: json['decimals'] as int,
         receivedAt: DateTime.parse(json['receivedAt'] as String),
+        resignAttempts: json['resignAttempts'] as int? ?? 0,
       );
 }
 

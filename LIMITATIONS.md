@@ -561,3 +561,74 @@ parçası). Bu, kullanıcı işlemden hemen sonra Home dışında bir ekranda ka
 geçtiği) senaryoyu çözmüyor — o durumda kullanıcı Home'a döndüğünde zaten
 taze bir okuma tetikleniyor, yalnızca o okumanın kendisi zincir gecikmesiyle
 yarışabiliyordu; bu maddenin kapattığı tam olarak bu yarış.
+
+## 29. [Kapatıldı] Çevrimdışı ödeme, internet gelince hâlâ kalıcı olarak düşüyordu — madde 23'ün bitmemiş kısmı
+
+Madde 23, `tx_bad_seq`'i kuyruktan güvenle düşürülebilir kalıcı bir ret
+sayıyordu — ama bunun neden bu kadar sık gerçekleştiğini ele almıyordu.
+Kök neden: `frontend/lib/state/offline_providers.dart`'taki
+`AccountSnapshotNotifier.refresh()`, yalnızca `app_shell.dart`'ın
+`_comeOnline()`'ından (açılış + `AppLifecycleState.resumed`) çağrılıyordu.
+Kullanıcının kendi hesabından zincire giden her ONLINE işlem (çek gönderme,
+havuz, claim, trustline, anchor withdraw) sequence'i ilerletiyordu ama
+snapshot'ı hiç tazelemiyordu — uygulama ön planda kaldığı sürece snapshot
+tüm oturum boyunca bayat kalabiliyordu. Sonraki bir çevrimdışı ödeme bu bayat
+sequence'e imzalanıyor, internet gelince `tx_bad_seq` alıyor ve madde 23'ün
+mantığıyla kalıcı olarak düşürülüyordu — para hiç gitmiyordu ama alıcı
+ödemeyi zaten offline kabul etmişti. `OfflineAccountSnapshot.reserve()`
+(`data/stellar/offline_account_cache.dart`) her offline ödemede yerel
+sequence'i +1 yaptığından, düşen bir kalem yerel sayaçta kalıcı bir boşluk
+bırakıyor, aynı çevrimdışı aralıktaki sonraki her ödeme de aynı şekilde
+düşüyordu — kullanıcının bildirdiği "internet geldikten sonra düzelmiyor"
+tam olarak buydu.
+
+Ayrı, bağımsız bir ikinci hata aynı semptomu üretiyordu:
+`backend/services/tx/repository.go`'daki `BeginSubmission`, iki ayrı
+transaction'sız `Exec` kullanıyordu. `pay.submissions.idempotency_key`
+PRIMARY KEY olduğundan, `ReleaseSubmission` (chain-gateway'e ulaşılamadığında
+çalışır — madde 26'da anlatılan D3 serbest bırakma) yalnızca
+`pay.idempotency_keys` satırını silip `pay.submissions` satırını `'failed'`
+olarak bırakınca, aynı anahtarla gelen bir retry ikinci INSERT'te PRIMARY
+KEY'e çarpıyor, ham hata `ErrKeyInFlight`e sarılıp HTTP 500 dönüyor, ve
+`idempotency_keys` satırı sonsuza dek `'pending'` kalıyordu. Sonraki her
+retry ilk INSERT'te aynı çakışmaya düşüp bu sefer 409
+`tx.duplicate_idempotency_key` alıyordu — kalem 24 saatlik reaper'a
+(`ReapExpiredPendingKeys`) kadar asla ilerlemiyordu.
+
+Kapatıldı, üç parça:
+
+- **Bayatlamayı önleme:** `offline_providers.dart`'a `POST /tx/submit`'in
+  tek boğaz noktası olan `chainSubmitProvider` (`ChainSubmitter`) eklendi —
+  `TxApi.submit`'i saran ince bir dekoratör, başarılı her submit'te (ve
+  ağa ulaşılıp gerçek bir ret alınan `tx.submit_failed`'de) arka planda
+  `accountSnapshotProvider`'ı tazeliyor. Sequence'i ilerletebilen her çağrı
+  yeri (`send_page.dart`, `pool_page.dart`, `claim_core.dart`,
+  `trustline_setup.dart`, `anchor_deposit_withdraw_page.dart`, ve kuyruğun
+  kendi `_submit`'i) artık doğrudan `TxApi` yerine bunu kullanıyor —
+  8 ayrı `invalidate(balancesProvider)` noktasının yanına birer `refresh()`
+  eklemek yerine tek, unutulamaz bir nokta.
+- **Kurtarma:** `retryAll`, `tx_bad_seq`'i artık koşulsuz düşürmüyor.
+  Gönderen cihaz + açık cüzdan + zarfın sequence'i tazelenmiş zincir
+  sequence'inin GERİSİNDEYSE (`envelope.sequence < snapshot.sequence`,
+  `_recoverFromBadSeq`) kalıcı ölü kabul edilip taze sequence'le yeniden
+  imzalanıyor (yeni idempotency key, orijinal `receivedAt`/TimeBounds
+  korunarak, `~3` denemeyle sınırlı). Zarf zincirin İLERİSİNDE imzalanmışsa
+  (bir önceki düşen kalemin `reserve()` boşluğu) yeniden imzalanMIYOR —
+  Stellar `tx.seqNum == account.seqNum + 1` şartını arar ve zincirin
+  sequence'i yalnız arttığından, bu zarf başka işlemler indikçe yeniden
+  geçerli hale gelebilir; şimdi yeniden imzalamak gerçek bir çift ödeme
+  olurdu. Alıcı cihazda (özel anahtar yok) ve deneme sınırı aşıldığında
+  davranış aynı kalıyor: düşür + açıklayıcı mesaj.
+- **Backend:** `BeginSubmission` artık tek bir `pgx.Tx` içinde çalışıyor ve
+  ikinci INSERT `ON CONFLICT (idempotency_key) DO UPDATE` oldu — denetim
+  izmi (`pay.submissions`) silinmeden, released bir anahtarla retry artık
+  gerçekten yeniden dener. İlk INSERT hatası da artık Postgres `23505`
+  (unique violation) koduna göre ayrıştırılıyor; başka bir DB hatası
+  `ErrKeyInFlight` diye yanlış etiketlenmiyor.
+
+Kalan sınır: alıcı cihaz kendi kopyasını asla yeniden imzalayamaz (özel
+anahtar yok) — gönderenin kurtardığı ödeme zincire ulaşsa bile, alıcının
+kuyruk kaleminde ölü kalır. Bu kabul edilebilir: gönderenin kuyruğu ödemeyi
+zaten zincire taşıyor, alıcı bakiyesini `/sync`/Horizon'dan normal şekilde
+görüyor; alıcı tarafındaki mesaj artık bunu ima ediyor ("if you received it,
+ask the sender to reopen theirs").

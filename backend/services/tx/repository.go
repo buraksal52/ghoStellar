@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -28,20 +29,54 @@ var ErrKeyInFlight = errors.New("tx: idempotency key already in flight")
 // BeginSubmission atomically claims idempotencyKey: it succeeds once per
 // key. A second concurrent call with the same key gets ErrKeyInFlight
 // instead of double-submitting (B2: safe re-query, never a duplicate send).
+//
+// Both statements run in one transaction, and the second is an upsert
+// (ON CONFLICT DO UPDATE), not a plain INSERT. Without that, a key released
+// by ReleaseSubmission (idempotency_keys row deleted, pay.submissions row
+// kept as history — see its doc comment) would make a retry's second INSERT
+// here hit pay.submissions' PRIMARY KEY and fail. Only the true gate,
+// idempotency_keys, decides single-flight; pay.submissions' key is a
+// history/read row that a legitimate retry must be able to overwrite in
+// place (SERVICE.md #23's "queue never moves after reconnect").
 func (r *Repository) BeginSubmission(ctx context.Context, s Submission) error {
-	_, err := r.pool.Exec(ctx, `
+	tx, err := r.pool.Begin(ctx)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback(ctx) //nolint:errcheck // no-op once Commit succeeds
+
+	_, err = tx.Exec(ctx, `
 		INSERT INTO pay.idempotency_keys (key, stellar_address, request_hash, status)
 		VALUES ($1, $2, $3, 'pending')
 	`, s.IdempotencyKey, s.StellarAddress, s.Purpose)
 	if err != nil {
-		return ErrKeyInFlight
+		var pgErr *pgconn.PgError
+		if errors.As(err, &pgErr) && pgErr.Code == pgUniqueViolation {
+			return ErrKeyInFlight
+		}
+		return err
 	}
-	_, err = r.pool.Exec(ctx, `
+
+	_, err = tx.Exec(ctx, `
 		INSERT INTO pay.submissions (idempotency_key, stellar_address, purpose, state)
 		VALUES ($1, $2, $3, 'pending')
+		ON CONFLICT (idempotency_key)
+		DO UPDATE SET state = 'pending', result_code = NULL, updated_at = now()
 	`, s.IdempotencyKey, s.StellarAddress, s.Purpose)
-	return err
+	if err != nil {
+		return err
+	}
+
+	return tx.Commit(ctx)
 }
+
+// pgUniqueViolation is Postgres error code 23505 — a real unique-constraint
+// hit, as opposed to any other failure BeginSubmission's first INSERT could
+// hit (a dropped connection, a constraint typo). Only this one means "this
+// key is already claimed"; every other error must surface as itself instead
+// of being misreported as ErrKeyInFlight (SERVICE.md #23's opaque failure
+// mode).
+const pgUniqueViolation = "23505"
 
 func (r *Repository) CompleteSubmission(ctx context.Context, key, txHash, state, resultCode string, responseJSON []byte) error {
 	_, err := r.pool.Exec(ctx, `

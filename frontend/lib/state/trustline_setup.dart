@@ -6,6 +6,7 @@ import '../data/api/models/tx_models.dart';
 import 'anchor_providers.dart';
 import 'core_providers.dart';
 import 'home_providers.dart';
+import 'offline_providers.dart';
 import 'signing_overlay_provider.dart';
 import 'sync_providers.dart';
 import 'wallet_providers.dart';
@@ -41,7 +42,7 @@ class TrustlineSetup {
       throw ApiException(code: 'auth.invalid_token', message: 'wallet is locked');
     }
     final anchorApi = _ref.read(anchorApiProvider);
-    final txApi = _ref.read(txApiProvider);
+    final chainSubmit = _ref.read(chainSubmitProvider);
     final signing = _ref.read(stellarSigningServiceProvider);
 
     final xdr = await anchorApi.trustlineXdr(anchor.id);
@@ -49,7 +50,7 @@ class TrustlineSetup {
     final signed = signing.signTransactionXdr(xdr, keyPair);
     report?.call(SigningStep.submitting);
     // Throws if the network rejected the transaction (see TxApi.submit).
-    await txApi.submit(
+    await chainSubmit.submit(
       idempotencyKey: const Uuid().v4(),
       purpose: 'trustline',
       kind: TxKind.classic,

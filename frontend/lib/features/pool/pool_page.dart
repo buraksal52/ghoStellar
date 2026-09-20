@@ -14,6 +14,7 @@ import '../../data/storage/local_activity_log.dart';
 import '../../state/activity_providers.dart';
 import '../../state/core_providers.dart';
 import '../../state/home_providers.dart';
+import '../../state/offline_providers.dart';
 import '../../state/signing_overlay_provider.dart';
 import '../../state/sync_providers.dart';
 import '../../state/wallet_providers.dart';
@@ -67,7 +68,7 @@ class _PoolPageState extends ConsumerState<PoolPage> {
     if (keyPair == null) return;
 
     final poolApi = ref.read(poolApiProvider);
-    final txApi = ref.read(txApiProvider);
+    final chainSubmit = ref.read(chainSubmitProvider);
     final signing = ref.read(stellarSigningServiceProvider);
     final overlay = ref.read(signingOverlayProvider.notifier);
     final log = ref.read(localActivityLogProvider);
@@ -78,7 +79,7 @@ class _PoolPageState extends ConsumerState<PoolPage> {
       report(SigningStep.signing);
       final signed = signing.signTransactionXdr(xdr, keyPair);
       report(SigningStep.submitting);
-      final result = await txApi.submit(
+      final result = await chainSubmit.submit(
         idempotencyKey: const Uuid().v4(),
         purpose: _isDeposit ? 'pool_deposit' : 'pool_withdraw',
         kind: TxKind.soroban,

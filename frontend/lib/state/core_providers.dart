@@ -12,6 +12,7 @@ import '../data/stellar/horizon_read_service.dart';
 import '../data/stellar/mnemonic_service.dart';
 import '../data/stellar/stellar_signing_service.dart';
 import '../data/storage/secure_wallet_store.dart';
+import 'connectivity_providers.dart';
 import 'sync_providers.dart';
 
 /// Every provider here is a stateless/singleton service wrapper — the
@@ -26,7 +27,13 @@ final secureWalletStoreProvider = Provider((ref) => SecureWalletStore());
 final clockProvider = Provider<DateTime Function()>((ref) => DateTime.now);
 
 final apiClientProvider = Provider((ref) {
-  return ApiClient(walletStore: ref.watch(secureWalletStoreProvider));
+  return ApiClient(
+    walletStore: ref.watch(secureWalletStoreProvider),
+    onReachability: (online) {
+      final notifier = ref.read(offlineModeProvider.notifier);
+      online ? notifier.markOnline() : notifier.markOffline();
+    },
+  );
 });
 
 final authApiProvider = Provider((ref) => AuthApi(ref.watch(apiClientProvider)));

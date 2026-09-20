@@ -7,9 +7,17 @@ import '../../../core/theme/app_colors.dart';
 /// a payment they sent while offline is still waiting to reach the network,
 /// or that one of them was dropped after repeated failures.
 class PendingOfflinePaymentsBanner extends StatelessWidget {
-  const PendingOfflinePaymentsBanner({required this.count, this.lastError, super.key});
+  const PendingOfflinePaymentsBanner({required this.count, this.lastError, this.onResend, super.key});
   final int count;
   final String? lastError;
+
+  /// Calls `pendingOfflinePaymentsProvider.notifier.retryAll()`. Shown only
+  /// while `count > 0`: the automatic 15s retry already covers the ordinary
+  /// case, but a `tx_bad_seq` re-sign needs the wallet unlocked
+  /// (`offline_providers.dart`'s `_recoverFromBadSeq`) — if it was locked
+  /// when that happened, nothing retries it again on its own until this is
+  /// tapped or the app is relaunched.
+  final VoidCallback? onResend;
 
   @override
   Widget build(BuildContext context) {
@@ -33,6 +41,11 @@ class PendingOfflinePaymentsBanner extends StatelessWidget {
                 ),
                 const SizedBox(width: 10),
                 Expanded(child: Text(label, style: TextStyle(fontSize: 13, color: c.textSecondary))),
+                if (onResend != null)
+                  GestureDetector(
+                    onTap: onResend,
+                    child: Text('Resend', style: TextStyle(fontSize: 13, color: c.info, fontWeight: FontWeight.w600)),
+                  ),
               ],
             ),
           if (lastError != null) ...[

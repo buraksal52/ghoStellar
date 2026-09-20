@@ -100,7 +100,13 @@ class HomePage extends ConsumerWidget {
           ],
           if (pendingOfflinePayments.isNotEmpty || offlineQueueError != null) ...[
             const SizedBox(height: 22),
-            PendingOfflinePaymentsBanner(count: pendingOfflinePayments.length, lastError: offlineQueueError),
+            PendingOfflinePaymentsBanner(
+              count: pendingOfflinePayments.length,
+              lastError: offlineQueueError,
+              onResend: pendingOfflinePayments.isEmpty
+                  ? null
+                  : () => ref.read(pendingOfflinePaymentsProvider.notifier).retryAll(),
+            ),
           ],
           const SizedBox(height: 22),
           Row(

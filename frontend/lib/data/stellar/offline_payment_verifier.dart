@@ -39,6 +39,30 @@ class OfflineVerifyResult {
   bool get isValid => failure == null;
 }
 
+/// The fields `OfflinePaymentVerifier.describe` pulls out of a signed
+/// envelope — everything a re-sign (`PendingOfflinePaymentsNotifier._resign`
+/// in `state/offline_providers.dart`) needs, since `PendingOfflinePayment`
+/// itself doesn't carry `destination` or the decimal `amount`.
+class OfflinePaymentEnvelope {
+  const OfflinePaymentEnvelope({
+    required this.sourceAccount,
+    required this.destination,
+    required this.amount,
+    required this.sequence,
+  });
+
+  final String sourceAccount;
+  final String destination;
+
+  /// Decimal string, straight from the SDK — never a double (CLAUDE.md).
+  final String amount;
+
+  /// The sequence number this envelope was signed against (i.e. the
+  /// account's sequence *before* this transaction, since Stellar signs
+  /// `tx.seqNum = account.seqNum + 1`).
+  final BigInt sequence;
+}
+
 /// Checks a signed offline payment the *hard* way: everything is
 /// reconstructed from [OfflinePayment.signedXdr] itself — nothing from the
 /// URI's own `from`/`amount` fields is trusted (those are display hints a
@@ -75,22 +99,9 @@ class OfflinePaymentVerifier {
     required String networkPassphrase,
     DateTime? now,
   }) {
-    final Transaction tx;
-    try {
-      final parsed = AbstractTransaction.fromEnvelopeXdrString(signedXdr);
-      if (parsed is! Transaction) return const OfflineVerifyResult.rejected(OfflineVerifyFailure.malformedXdr);
-      tx = parsed;
-    } catch (_) {
-      return const OfflineVerifyResult.rejected(OfflineVerifyFailure.malformedXdr);
-    }
-
-    if (tx.operations.length != 1) {
-      return const OfflineVerifyResult.rejected(OfflineVerifyFailure.notASingleClassicPayment);
-    }
-    final op = tx.operations.single;
-    if (op is! PaymentOperation) {
-      return const OfflineVerifyResult.rejected(OfflineVerifyFailure.notASingleClassicPayment);
-    }
+    final parsed = _parse(signedXdr);
+    if (parsed == null) return const OfflineVerifyResult.rejected(OfflineVerifyFailure.malformedXdr);
+    final (tx, op) = parsed;
 
     if (op.destination.accountId != expectedDestination) {
       return const OfflineVerifyResult.rejected(OfflineVerifyFailure.wrongDestination);
@@ -138,6 +149,41 @@ class OfflinePaymentVerifier {
     }
 
     return OfflineVerifyResult.ok(from: sourceAccount, amount: amountRaw, decimals: decimals);
+  }
+
+  /// Pulls `sourceAccount`/`destination`/`amount`/`sequence` out of a signed
+  /// envelope without re-verifying signatures or time bounds — used by the
+  /// pending-offline-payments queue to re-sign a payment whose cached
+  /// sequence went stale (`state/offline_providers.dart`), where the queue
+  /// already trusts the envelope (it built and signed it itself, or already
+  /// ran it through [verify] once when it was received). Returns null for
+  /// anything [verify] would also reject as [OfflineVerifyFailure.malformedXdr]
+  /// or [OfflineVerifyFailure.notASingleClassicPayment].
+  static OfflinePaymentEnvelope? describe(String signedXdr) {
+    final parsed = _parse(signedXdr);
+    if (parsed == null) return null;
+    final (tx, op) = parsed;
+    return OfflinePaymentEnvelope(
+      sourceAccount: tx.sourceAccount.accountId,
+      destination: op.destination.accountId,
+      amount: op.amount,
+      sequence: tx.sequenceNumber - BigInt.one,
+    );
+  }
+
+  static (Transaction, PaymentOperation)? _parse(String signedXdr) {
+    final Transaction tx;
+    try {
+      final parsed = AbstractTransaction.fromEnvelopeXdrString(signedXdr);
+      if (parsed is! Transaction) return null;
+      tx = parsed;
+    } catch (_) {
+      return null;
+    }
+    if (tx.operations.length != 1) return null;
+    final op = tx.operations.single;
+    if (op is! PaymentOperation) return null;
+    return (tx, op);
   }
 
   bool _verifiedBy(Transaction tx, String accountId, String networkPassphrase) {

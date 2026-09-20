@@ -16,6 +16,7 @@ import 'package:stellar_flutter_sdk/stellar_flutter_sdk.dart' show KeyPair;
 
 import '../../data/storage/offline_payment_store.dart';
 import '../../data/stellar/offline_payment_builder.dart';
+import '../../state/connectivity_providers.dart';
 import '../../state/core_providers.dart';
 import '../../state/home_providers.dart';
 import '../../state/offline_providers.dart';
@@ -129,13 +130,31 @@ class _SendPageState extends ConsumerState<SendPage> {
     if (keyPair == null) return;
 
     final chequeApi = ref.read(chequeApiProvider);
-    final txApi = ref.read(txApiProvider);
+    final chainSubmit = ref.read(chainSubmitProvider);
     final signing = ref.read(stellarSigningServiceProvider);
     final overlay = ref.read(signingOverlayProvider.notifier);
 
     _Handoff? handoff;
     final ok = await overlay.run<bool>((report) async {
       final nonce = request.nonce;
+      // Already known to be offline (AuthGate entered the shell this way, or
+      // a previous attempt in this session already hit a network error):
+      // skip the online attempt entirely rather than making the user sit
+      // through another ~10s connect timeout (`ApiClient`'s `connectTimeout`)
+      // before finding out the same thing the hard way.
+      if (ref.read(offlineModeProvider)) {
+        if (nonce == null) {
+          // A manually pasted address, not a scanned/tapped request — there
+          // is no nonce for the receiver's offline verifier to check a memo
+          // against, so this can never be answered offline. Say so plainly
+          // instead of a generic "no connection".
+          throw Exception(
+            "Can't pay this while offline — only a scanned or tapped payment request can be paid without a connection.",
+          );
+        }
+        handoff = _OfflineHandoffToDeliver(await _buildOfflinePayment(keyPair, request, amount, nonce));
+        return true;
+      }
       try {
         // The request id is what makes the server refuse a second cheque
         // for the same request (`cheque.request_used`).
@@ -149,7 +168,7 @@ class _SendPageState extends ConsumerState<SendPage> {
         final signedLockXdr = signing.signTransactionXdr(created.lockXdr, keyPair);
 
         report(SigningStep.submitting);
-        final submitResult = await txApi.submit(
+        final submitResult = await chainSubmit.submit(
           idempotencyKey: const Uuid().v4(),
           purpose: 'cheque_lock',
           kind: TxKind.soroban,
@@ -175,11 +194,14 @@ class _SendPageState extends ConsumerState<SendPage> {
           nonce: nonce,
         ));
         return true;
-      } on ApiException catch (e) {
+      } catch (e) {
         // Only a request that came with a nonce (scanned/tapped, not a
         // manually pasted address) can be answered offline — the receiver's
-        // memo check has nothing to verify a bare address against.
-        if (e.code != 'network.error' || nonce == null) rethrow;
+        // memo check has nothing to verify a bare address against. Any
+        // failure that isn't specifically "never reached the network" (a
+        // real refusal like `cheque.request_used`, or something that isn't
+        // even an ApiException) rethrows unchanged.
+        if (!isNetworkFailure(e) || nonce == null) rethrow;
         handoff = _OfflineHandoffToDeliver(await _buildOfflinePayment(keyPair, request, amount, nonce));
         return true;
       }
@@ -194,23 +216,44 @@ class _SendPageState extends ConsumerState<SendPage> {
     if (h != null) await _offerHandoff(h);
   }
 
+  /// How old the cached snapshot [_buildOfflinePayment] is willing to sign
+  /// against without at least trying a fresh look, and how long that one
+  /// attempt is allowed to take before falling back to the cache anyway —
+  /// see [AccountSnapshotNotifier.ensureFresh]. A truly offline device pays
+  /// neither cost: `ensureFresh` skips the network call entirely unless the
+  /// snapshot is stale or older than [_snapshotMaxAge].
+  static const _snapshotMaxAge = Duration(minutes: 2);
+  static const _snapshotRefreshTimeout = Duration(seconds: 2);
+
+  /// Past this age, a failed refresh attempt is refused rather than signed
+  /// against anyway — old enough that "probably still right" isn't a good
+  /// enough bet for an irrevocable, unsupervised payment (`_maxResignAttempts`
+  /// in `offline_providers.dart` is the backstop if this still goes stale).
+  static const _snapshotRefuseAge = Duration(hours: 12);
+
   /// Builds and signs a classic payment directly from the cached account
-  /// snapshot — no network call. Throws a plain [Exception] (shown by the
-  /// overlay like any other failure) when there is nothing cached to build
-  /// from, or the cached balance can't cover it; the caller is already
-  /// inside `overlay.run`.
+  /// snapshot — no network call in the common (genuinely offline) case.
+  /// Throws a plain [Exception] (shown by the overlay like any other
+  /// failure) when there is nothing cached to build from, the cache is too
+  /// old to trust, or the cached balance can't cover it; the caller is
+  /// already inside `overlay.run`.
   Future<OfflinePayment> _buildOfflinePayment(
     KeyPair keyPair,
     PaymentRequest request,
     String amount,
     String nonce,
   ) async {
-    // Awaited, not a plain `.value` read: the cache load from disk may not
-    // have finished yet (this can be the very first thing that touches it),
-    // and a spurious "no offline data" would be wrong, not just early.
-    final snapshot = await ref.read(accountSnapshotProvider.future);
+    final snapshotNotifier = ref.read(accountSnapshotProvider.notifier);
+    final snapshot = await snapshotNotifier.ensureFresh(
+      maxAge: _snapshotMaxAge,
+      timeout: _snapshotRefreshTimeout,
+    );
     if (snapshot == null) {
       throw Exception("No offline balance data yet — connect once, then you can pay while offline.");
+    }
+    final age = ref.read(clockProvider)().difference(snapshot.fetchedAt);
+    if (age > _snapshotRefuseAge) {
+      throw Exception('Your offline balance data is too old to pay from safely — connect once, then try again.');
     }
     final amountRaw = AmountFormatter.toRaw(amount, snapshot.decimals);
     if (amountRaw == null || BigInt.parse(amountRaw) > BigInt.parse(snapshot.availableRaw)) {

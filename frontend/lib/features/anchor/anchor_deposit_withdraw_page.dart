@@ -18,6 +18,7 @@ import '../../state/anchor_bookkeeping.dart';
 import '../../state/anchor_providers.dart';
 import '../../state/core_providers.dart';
 import '../../state/home_providers.dart';
+import '../../state/offline_providers.dart';
 import '../../state/signing_overlay_provider.dart';
 import '../../state/wallet_providers.dart';
 
@@ -199,7 +200,7 @@ class _AnchorDepositWithdrawPageState extends ConsumerState<AnchorDepositWithdra
     final keyPair = ref.read(walletProvider).keyPair;
     if (keyPair == null) throw StateError('Wallet must be unlocked.');
     final api = ref.read(anchorApiProvider);
-    final txApi = ref.read(txApiProvider);
+    final chainSubmit = ref.read(chainSubmitProvider);
     final signing = ref.read(stellarSigningServiceProvider);
     final w = active.withdraw!;
 
@@ -214,7 +215,7 @@ class _AnchorDepositWithdrawPageState extends ConsumerState<AnchorDepositWithdra
       report(SigningStep.signing);
       final signed = signing.signTransactionXdr(xdr, keyPair);
       report(SigningStep.submitting);
-      final res = await txApi.submit(
+      final res = await chainSubmit.submit(
         idempotencyKey: const Uuid().v4(),
         purpose: 'anchor_withdraw',
         kind: TxKind.classic,

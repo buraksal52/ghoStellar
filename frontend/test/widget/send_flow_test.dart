@@ -13,6 +13,7 @@ import 'package:ghostellar_app/data/stellar/offline_account_cache.dart';
 import 'package:ghostellar_app/data/stellar/offline_payment_verifier.dart';
 import 'package:ghostellar_app/features/send/send_page.dart';
 import 'package:ghostellar_app/features/shared/widgets/qr_card.dart';
+import 'package:ghostellar_app/state/connectivity_providers.dart';
 import 'package:ghostellar_app/state/core_providers.dart';
 import 'package:ghostellar_app/state/home_providers.dart';
 import 'package:ghostellar_app/state/offline_providers.dart';
@@ -703,6 +704,50 @@ void main() {
       expect(find.text('Payment sent'), findsNothing);
       expect(rig.nfc.presented, isEmpty);
     });
+
+    testWidgets(
+      'already known to be offline: skips the online attempt entirely, no wait',
+      (tester) async {
+        final rig = _Rig();
+        await seedSnapshot(rig.keyPair.accountId);
+        await tester.pumpWidget(rig.app());
+        _container(tester).read(offlineModeProvider.notifier).markOffline();
+        await _pasteRecipient(tester, _link(amount: '5', nonce: 'off-fast'));
+
+        await _send(tester);
+        await tester.pump();
+
+        expect(find.text('Payment sent'), findsOneWidget);
+        expect(
+          rig.chequeApi.created,
+          isEmpty,
+          reason: 'never even tried the online cheque path',
+        );
+        final payment = OfflinePayment.tryParse(rig.nfc.presented.single)!;
+        expect(payment.nonce, 'off-fast');
+      },
+    );
+
+    testWidgets(
+      'already known to be offline, a manually pasted address: refused immediately with a clear reason',
+      (tester) async {
+        final rig = _Rig();
+        await seedSnapshot(rig.keyPair.accountId);
+        await tester.pumpWidget(rig.app());
+        _container(tester).read(offlineModeProvider.notifier).markOffline();
+        await _pasteRecipient(tester, _receiver);
+        await tester.enterText(_amountField, '5');
+
+        await _send(tester);
+
+        expect(find.text('Payment sent'), findsNothing);
+        expect(rig.chequeApi.created, isEmpty);
+        expect(
+          _container(tester).read(signingOverlayProvider).errorMessage,
+          contains('scanned or tapped'),
+        );
+      },
+    );
 
     testWidgets('a non-network failure is shown normally, no offline fallback', (tester) async {
       final rig = _Rig();

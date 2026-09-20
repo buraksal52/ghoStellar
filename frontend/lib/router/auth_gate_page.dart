@@ -2,16 +2,25 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
+import '../core/errors/api_error.dart';
 import '../core/theme/app_colors.dart';
 import '../features/shared/widgets/startup_loading_screen.dart';
 import '../state/auth_providers.dart';
+import '../state/connectivity_providers.dart';
+import '../state/core_providers.dart';
 import '../state/home_providers.dart';
+import '../state/offline_providers.dart';
 import '../state/sync_providers.dart';
 
 /// SEP-10 login (if not already authenticated) followed by an
 /// unconditional forced `/sync`, per the architecture docs — nothing else
-/// renders until both succeed. Any failure (network, Horizon, invalid
-/// signature) shows a retry screen rather than crashing silently.
+/// renders until both succeed, UNLESS the failure is specifically "no
+/// connection" on a device that has been online before: that goes straight
+/// to the shell in offline mode instead (`_hasBeenOnlineBefore`), so the
+/// classic-payment offline path (`offline_providers.dart`) is actually
+/// reachable without a network round trip at cold start. Any other failure
+/// (Horizon down, invalid signature, a brand-new never-synced wallet with
+/// nothing cached) still shows the retry wall.
 class AuthGatePage extends ConsumerStatefulWidget {
   const AuthGatePage({super.key});
 
@@ -46,8 +55,26 @@ class _AuthGatePageState extends ConsumerState<AuthGatePage> {
       if (syncResult.hasError) throw syncResult.error!;
       if (mounted) context.go('/home');
     } catch (e) {
+      if (isNetworkFailure(e) && await _hasBeenOnlineBefore()) {
+        // No connection right now, but this device has a session or a
+        // cached account snapshot from a previous online run — enter the
+        // shell in offline mode instead of a dead-end wall, so the
+        // already-built offline NFC/QR payment path is actually reachable.
+        // A wallet that has never been online has nothing cached to build
+        // an offline payment from, so it still gets the wall below.
+        ref.read(offlineModeProvider.notifier).markOffline();
+        if (mounted) context.go('/home');
+        return;
+      }
       if (mounted) setState(() => _error = e.toString());
     }
+  }
+
+  Future<bool> _hasBeenOnlineBefore() async {
+    final token = await ref.read(secureWalletStoreProvider).readAccessToken();
+    if (token != null) return true;
+    final snapshot = await ref.read(offlineAccountCacheProvider).read();
+    return snapshot != null;
   }
 
   @override

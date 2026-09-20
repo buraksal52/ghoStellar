@@ -147,6 +147,97 @@ func TestSubmit_GatewayErrorReleasesKeyForRetry(t *testing.T) {
 	}
 }
 
+// TestSubmit_RetryAfterGatewayErrorSucceeds_SameKey extends
+// TestSubmit_GatewayErrorReleasesKeyForRetry: after ReleaseSubmission,
+// pay.submissions' row for this key still exists (kept as history), so the
+// retry's BeginSubmission must be able to write over it, not fail on its
+// PRIMARY KEY (SERVICE.md #23 — this used to 500 then 409-forever, which is
+// exactly "the offline queue never moves after reconnect").
+func TestSubmit_RetryAfterGatewayErrorSucceeds_SameKey(t *testing.T) {
+	repo := newFakeRepo()
+	calls := 0
+	chain := &portstest.FakeChain{
+		SubmitClassicFunc: func(ctx context.Context, signedXDR string) (ports.SubmitResult, error) {
+			calls++
+			if calls == 1 {
+				return ports.SubmitResult{}, errors.New("horizon: connection refused")
+			}
+			return ports.SubmitResult{Hash: "hash-1", Successful: true}, nil
+		},
+	}
+	svc := newServiceWithRepo(repo, chain)
+	req := SubmitRequest{IdempotencyKey: "key-1", Kind: KindClassic, SignedXDR: "AAAA=="}
+
+	if _, err := svc.Submit(context.Background(), req); err == nil {
+		t.Fatal("expected an error when the chain gateway itself fails")
+	}
+
+	resp, err := svc.Submit(context.Background(), req)
+	if err != nil {
+		t.Fatalf("retry with the same key must succeed, not 409/500: %v", err)
+	}
+	if resp.Replayed {
+		t.Fatal("the retry reached the chain for real and must not be marked Replayed")
+	}
+	if repo.submissions["key-1"].State != "success" {
+		t.Fatalf("submissions[key-1].State = %q, want %q", repo.submissions["key-1"].State, "success")
+	}
+}
+
+// TestSubmit_ThreeConsecutiveGatewayErrorsThenSuccess mirrors the offline
+// payment queue's 15s retry loop (frontend/lib/state/offline_providers.dart):
+// repeated transient failures with the SAME key must never brick it.
+func TestSubmit_ThreeConsecutiveGatewayErrorsThenSuccess(t *testing.T) {
+	repo := newFakeRepo()
+	calls := 0
+	chain := &portstest.FakeChain{
+		SubmitClassicFunc: func(ctx context.Context, signedXDR string) (ports.SubmitResult, error) {
+			calls++
+			if calls <= 3 {
+				return ports.SubmitResult{}, errors.New("horizon: connection refused")
+			}
+			return ports.SubmitResult{Hash: "hash-1", Successful: true}, nil
+		},
+	}
+	svc := newServiceWithRepo(repo, chain)
+	req := SubmitRequest{IdempotencyKey: "key-1", Kind: KindClassic, SignedXDR: "AAAA=="}
+
+	for i := 0; i < 3; i++ {
+		if _, err := svc.Submit(context.Background(), req); err == nil {
+			t.Fatalf("attempt %d: expected a gateway error", i+1)
+		}
+		if _, ok := repo.keyStatus["key-1"]; ok {
+			t.Fatalf("attempt %d: keyStatus must be released after a gateway error", i+1)
+		}
+	}
+
+	resp, err := svc.Submit(context.Background(), req)
+	if err != nil {
+		t.Fatalf("4th attempt: expected success, got %v", err)
+	}
+	if !resp.Successful || resp.Replayed {
+		t.Fatalf("got %+v, want a fresh successful submission", resp)
+	}
+	if calls != 4 {
+		t.Fatalf("chain was called %d times, want exactly 4", calls)
+	}
+}
+
+// TestSubmit_KeyInFlightStillRejectsConcurrentCall guards that tolerating a
+// retry AFTER release (above) did not loosen the single-flight gate for a
+// call that arrives WHILE the key is still genuinely pending.
+func TestSubmit_KeyInFlightStillRejectsConcurrentCall(t *testing.T) {
+	repo := newFakeRepo()
+	repo.keyStatus["key-1"] = "pending"
+	repo.submissions["key-1"] = Submission{IdempotencyKey: "key-1", State: "pending"}
+	svc := newServiceWithRepo(repo, &portstest.FakeChain{})
+
+	_, err := svc.Submit(context.Background(), SubmitRequest{IdempotencyKey: "key-1", Kind: KindClassic, SignedXDR: "AAAA=="})
+	if !errors.Is(err, errKeyInFlight) {
+		t.Fatalf("got %v, want errKeyInFlight", err)
+	}
+}
+
 // TestSubmit_ChainRejectionIsCachedAsTerminal is the counterpart: once the
 // chain itself has spoken (submitErr == nil, whether or not the transaction
 // was accepted), that IS the network's verdict — D3's idempotency cache

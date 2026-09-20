@@ -62,8 +62,19 @@ func (f *fakeRepo) BeginSubmission(ctx context.Context, s Submission) error {
 	}
 	f.keyStatus[s.IdempotencyKey] = "pending"
 	f.keyExpiresAt[s.IdempotencyKey] = time.Now().Add(24 * time.Hour)
+	// Mirrors the real repository's ON CONFLICT (idempotency_key) DO UPDATE:
+	// a key released by ReleaseSubmission leaves its pay.submissions row
+	// behind as history (PRIMARY KEY on idempotency_key), so a legitimate
+	// retry must overwrite that row in place, never fail on it — that PK
+	// collision on a plain INSERT was SERVICE.md #23's actual bug, invisible
+	// to this fake until it modeled the row's presence.
+	prev, hadPriorRow := f.submissions[s.IdempotencyKey]
 	s.State = "pending"
-	s.CreatedAt = time.Now()
+	if hadPriorRow {
+		s.CreatedAt = prev.CreatedAt
+	} else {
+		s.CreatedAt = time.Now()
+	}
 	s.UpdatedAt = time.Now()
 	f.submissions[s.IdempotencyKey] = s
 	return nil

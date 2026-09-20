@@ -7,6 +7,7 @@ import '../data/api/endpoints/cheque_api.dart';
 import '../data/api/models/tx_models.dart';
 import 'core_providers.dart';
 import 'home_providers.dart';
+import 'offline_providers.dart';
 import 'signing_overlay_provider.dart';
 import 'sync_providers.dart';
 
@@ -54,7 +55,7 @@ Future<void> performClaim(
   void Function(SigningStep)? onStep,
 }) async {
   final chequeApi = ref.read(chequeApiProvider);
-  final txApi = ref.read(txApiProvider);
+  final chainSubmit = ref.read(chainSubmitProvider);
   final signing = ref.read(stellarSigningServiceProvider);
 
   String claimXdr;
@@ -75,7 +76,7 @@ Future<void> performClaim(
   onStep?.call(SigningStep.signing);
   final signed = signing.signTransactionXdr(claimXdr, keyPair);
   onStep?.call(SigningStep.submitting);
-  final result = await txApi.submit(
+  final result = await chainSubmit.submit(
     idempotencyKey: const Uuid().v4(),
     purpose: 'cheque_claim',
     kind: TxKind.soroban,
