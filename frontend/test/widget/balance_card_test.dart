@@ -45,6 +45,39 @@ ProviderContainer _container(WidgetTester tester) =>
     ProviderScope.containerOf(tester.element(find.byType(BalanceCard)));
 
 void main() {
+  testWidgets('a stale post-send balance reconciles without manual refresh', (tester) async {
+    final horizon = FakeHorizonReadService([
+      FakeHorizonReadService.fundedBalances(native: '10000.0000000'),
+      FakeHorizonReadService.fundedBalances(native: '10000.0000000'),
+      FakeHorizonReadService.fundedBalances(native: '9949.9999900'),
+    ]);
+    await tester.pumpWidget(_app(horizon));
+    await _settle(tester);
+    _container(tester).invalidate(balancesProvider);
+    await _settle(tester);
+    expect(find.textContaining('10000 XLM', findRichText: true), findsOneWidget);
+
+    await tester.pump(const Duration(seconds: 5));
+    await _settle(tester);
+    expect(find.textContaining('9949.99999 XLM', findRichText: true), findsOneWidget);
+    expect(horizon.fetchCalls, 3);
+
+    await tester.pumpWidget(const SizedBox());
+    await tester.pump(const Duration(seconds: 10));
+    expect(horizon.fetchCalls, 3);
+  });
+
+  testWidgets('a failed balance read recovers automatically', (tester) async {
+    final horizon = FakeHorizonReadService()..failFirstReads = 1;
+    await tester.pumpWidget(_app(horizon));
+    await _settle(tester);
+    expect(find.text("Couldn't load your balance. Tap to retry."), findsOneWidget);
+    await tester.pump(const Duration(seconds: 5));
+    await _settle(tester);
+    expect(find.textContaining('10000 XLM', findRichText: true), findsOneWidget);
+    await tester.pumpWidget(const SizedBox());
+  });
+
   // The default deployment's one unit is native XLM: there is no trustline
   // and no separate fee balance to hide — the balance shown IS the fee
   // balance. See single_unit_test.dart for the asset-config contract itself.

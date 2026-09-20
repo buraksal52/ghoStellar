@@ -221,7 +221,17 @@ class _RecipientResolverSheetState
             if (_scanningQr)
               SizedBox(
                 height: 240,
-                child: MobileScanner(onDetect: _onQrDetected),
+                child: MobileScanner(
+                  onDetect: _onQrDetected,
+                  tapToFocus: true,
+                  fit: BoxFit.contain,
+                  onDetectError: (_, _) {
+                    if (mounted) {
+                      setState(() => _scanError =
+                          'Could not read the code. Move farther back and tap the preview to focus.');
+                    }
+                  },
+                ),
               ),
             const SizedBox(height: 10),
             SizedBox(

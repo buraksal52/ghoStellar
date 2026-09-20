@@ -155,6 +155,10 @@ class _SendPageState extends ConsumerState<SendPage> {
           xdr: signedLockXdr,
         );
 
+        // The on-chain debit has already happened. Refresh even if the
+        // subsequent backend confirmation or preauth upload fails.
+        ref.invalidate(balancesProvider);
+
         report(SigningStep.confirming);
         await chequeApi.confirmLock(created.chequeId, submitResult.hash);
 

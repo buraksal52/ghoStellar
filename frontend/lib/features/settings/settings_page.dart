@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
@@ -20,6 +21,21 @@ class SettingsPage extends ConsumerStatefulWidget {
 
 class _SettingsPageState extends ConsumerState<SettingsPage> {
   bool _funding = false;
+
+  Future<void> _copyAddress(String address) async {
+    try {
+      await Clipboard.setData(ClipboardData(text: address));
+      if (!mounted) return;
+      ScaffoldMessenger.of(context)
+        ..hideCurrentSnackBar()
+        ..showSnackBar(const SnackBar(content: Text('Wallet address copied')));
+    } on PlatformException {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Could not copy address. Please try again.')),
+      );
+    }
+  }
 
   Future<void> _revealRecoveryPhrase(BuildContext context, WidgetRef ref) async {
     final store = ref.read(secureWalletStoreProvider);
@@ -97,7 +113,7 @@ class _SettingsPageState extends ConsumerState<SettingsPage> {
     final networkLabel = Env.networkLabel(ref.watch(networkPassphraseProvider));
     final syncedWithLabel = networkLabel == 'Custom' ? 'a custom network' : 'Stellar $networkLabel';
 
-    Widget row(String label, String value, VoidCallback onTap) => InkWell(
+    Widget row(String label, String value, VoidCallback? onTap, {IconData icon = Icons.chevron_right}) => InkWell(
           onTap: onTap,
           child: Container(
             padding: const EdgeInsets.symmetric(vertical: 17, horizontal: 2),
@@ -107,7 +123,7 @@ class _SettingsPageState extends ConsumerState<SettingsPage> {
                 Expanded(child: Text(label, style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w500))),
                 Text(value, style: TextStyle(fontSize: 13, color: c.muted)),
                 const SizedBox(width: 6),
-                Icon(Icons.chevron_right, size: 16, color: c.muted),
+                Icon(icon, size: 16, color: c.muted),
               ],
             ),
           ),
@@ -116,7 +132,12 @@ class _SettingsPageState extends ConsumerState<SettingsPage> {
     return ListView(
       children: [
         row('Theme', isDark ? 'Dark' : 'Light', () => ref.read(themeModeProvider.notifier).toggle()),
-        row('Wallet address', publicKey.isEmpty ? '' : '${publicKey.substring(0, 4)}...${publicKey.substring(publicKey.length - 4)}', () {}),
+        row(
+          'Wallet address',
+          publicKey.isEmpty ? '' : '${publicKey.substring(0, 4)}...${publicKey.substring(publicKey.length - 4)}',
+          publicKey.isEmpty ? null : () => _copyAddress(publicKey),
+          icon: Icons.copy_rounded,
+        ),
         row('Recovery phrase', 'View', () => _revealRecoveryPhrase(context, ref)),
         row('Network', networkLabel, () {}),
         if (networkLabel == 'Testnet')

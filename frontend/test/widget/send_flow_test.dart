@@ -14,6 +14,7 @@ import 'package:ghostellar_app/data/stellar/offline_payment_verifier.dart';
 import 'package:ghostellar_app/features/send/send_page.dart';
 import 'package:ghostellar_app/features/shared/widgets/qr_card.dart';
 import 'package:ghostellar_app/state/core_providers.dart';
+import 'package:ghostellar_app/state/home_providers.dart';
 import 'package:ghostellar_app/state/offline_providers.dart';
 import 'package:ghostellar_app/state/signing_overlay_provider.dart';
 import 'package:ghostellar_app/state/sync_providers.dart';
@@ -28,20 +29,23 @@ const _receiver = 'GBBD47IF6LWK7P7MDEVSCWR7DPUWV3NY3DTQEVFL4NAT4AQH3ZLLFLA5';
 const _chequeId = '01J8F2K9ABCDEFGHJKMNPQRSTV';
 
 class _Rig {
-  _Rig({this.alreadySent});
+  _Rig({this.alreadySent, FakeChequeApi? chequeApi})
+      : chequeApi = chequeApi ?? FakeChequeApi();
 
   /// Cheques the server already lists for this wallet, built from its address.
   final List<Cheque> Function(String me)? alreadySent;
 
   final keyPair = KeyPair.random();
   final nfc = FakeNfc();
-  final chequeApi = FakeChequeApi();
+  final FakeChequeApi chequeApi;
+  final horizon = FakeHorizonReadService();
   DateTime now = DateTime.utc(2026, 9, 20, 12);
 
   List<Override> get overrides => [
     walletProvider.overrideWith(() => UnlockedWallet(keyPair)),
     nfcServiceProvider.overrideWithValue(nfc),
     chequeApiProvider.overrideWithValue(chequeApi),
+    horizonReadServiceProvider.overrideWithValue(horizon),
     txApiProvider.overrideWithValue(FakeTxApi()),
     stellarSigningServiceProvider.overrideWithValue(FakeSigning()),
     syncProvider.overrideWith(
@@ -102,7 +106,31 @@ Future<void> _send(WidgetTester tester) async {
   }
 }
 
+class _ConfirmFailure extends FakeChequeApi {
+  @override
+  Future<void> confirmLock(String chequeId, String txHash) async {
+    throw Exception('confirmation unavailable');
+  }
+}
+
 void main() {
+  testWidgets('the balance refreshes even when lock confirmation fails', (tester) async {
+    final rig = _Rig(chequeApi: _ConfirmFailure());
+    await tester.pumpWidget(rig.app());
+    final container = _container(tester);
+    final subscription = container.listen(balancesProvider, (_, _) {});
+    addTearDown(subscription.close);
+    await tester.pumpAndSettle();
+    expect(rig.horizon.fetchCalls, 1);
+    await _pasteRecipient(tester, _receiver);
+    await tester.enterText(_amountField, '50');
+    await _send(tester);
+    expect(rig.horizon.fetchCalls, 2);
+    expect(rig.chequeApi.preauths, isEmpty);
+    subscription.close();
+    await tester.pumpWidget(const SizedBox());
+  });
+
   setUp(() => SharedPreferences.setMockInitialValues({}));
 
   testWidgets('send options show and hide the wallet QR', (tester) async {
@@ -438,6 +466,8 @@ void main() {
       // The recipient is cleared so a stray tap can't double-send.
       expect(find.text('to GBBD...FLA5'), findsNothing);
 
+      await tester.ensureVisible(find.text('Done'));
+      await tester.pump();
       await tester.tap(find.text('Done'));
       await tester.pump();
     });
@@ -454,6 +484,8 @@ void main() {
 
       expect(find.text('Delivered'), findsOneWidget);
 
+      await tester.ensureVisible(find.text('Done'));
+      await tester.pump();
       await tester.tap(find.text('Done'));
       await tester.pump();
     });
@@ -467,6 +499,8 @@ void main() {
       await _send(tester);
       final stopsBefore = rig.nfc.stops;
 
+      await tester.ensureVisible(find.text('Done'));
+      await tester.pump();
       await tester.tap(find.text('Done'));
       await tester.pump();
 
@@ -496,6 +530,8 @@ void main() {
           reason: 'no automatic NFC session on an iPhone',
         );
 
+        await tester.ensureVisible(find.text("Tap receiver's phone"));
+        await tester.pump();
         await tester.tap(find.text("Tap receiver's phone"));
         await tester.pump();
 
@@ -511,6 +547,8 @@ void main() {
         expect(find.text('Delivered'), findsOneWidget);
         expect(find.text("Tap receiver's phone"), findsNothing);
 
+        await tester.ensureVisible(find.text('Done'));
+        await tester.pump();
         await tester.tap(find.text('Done'));
         await tester.pump();
       },
@@ -530,6 +568,8 @@ void main() {
       expect(rig.nfc.presented, isEmpty);
       expect(find.textContaining('scan this code'), findsOneWidget);
 
+      await tester.ensureVisible(find.text('Done'));
+      await tester.pump();
       await tester.tap(find.text('Done'));
       await tester.pump();
     });
@@ -618,6 +658,8 @@ void main() {
       expect(_container(tester).read(offlineSpentRequestIdsProvider), contains('off-1'));
       expect(await OfflinePaymentStore().spentRequestIds(), contains('off-1'));
 
+      await tester.ensureVisible(find.text('Done'));
+      await tester.pump();
       await tester.tap(find.text('Done'));
       await tester.pump();
     });
@@ -676,7 +718,7 @@ void main() {
       expect(rig.nfc.presented, isEmpty);
       expect(
         _container(tester).read(signingOverlayProvider).errorMessage,
-        "You don't have enough balance to send this cheque.",
+        "You don't have enough balance for this transaction.",
       );
     });
 
@@ -692,6 +734,8 @@ void main() {
       await _send(tester);
       await tester.pump();
       final first = OfflinePayment.tryParse(rig.nfc.presented.single)!;
+      await tester.ensureVisible(find.text('Done'));
+      await tester.pump();
       await tester.tap(find.text('Done'));
       await tester.pump();
       // The real app's full-screen "Completed" overlay (only mounted inside

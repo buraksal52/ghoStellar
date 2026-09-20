@@ -4,7 +4,7 @@ import 'package:qr_flutter/qr_flutter.dart';
 /// A QR code on a white card. Always white, independent of theme: a
 /// dark-mode QR is unreadable to most scanners.
 class QrCard extends StatelessWidget {
-  const QrCard({required this.data, this.size = 160, super.key});
+  const QrCard({required this.data, this.size = 240, super.key});
 
   final String data;
   final double size;

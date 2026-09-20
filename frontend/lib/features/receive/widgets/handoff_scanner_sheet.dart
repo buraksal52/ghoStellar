@@ -163,7 +163,17 @@ class _HandoffScannerSheetState extends ConsumerState<HandoffScannerSheet> {
               const SizedBox(height: 8),
               SizedBox(
                 height: 240,
-                child: MobileScanner(onDetect: _onDetected),
+                child: MobileScanner(
+                  onDetect: _onDetected,
+                  tapToFocus: true,
+                  fit: BoxFit.contain,
+                  onDetectError: (_, _) {
+                    if (mounted) {
+                      setState(() => _error =
+                          'Could not read the code. Move farther back and tap the preview to focus.');
+                    }
+                  },
+                ),
               ),
             ],
             const SizedBox(height: 10),
