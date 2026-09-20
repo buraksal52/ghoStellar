@@ -22,8 +22,8 @@ import '../../state/signing_overlay_provider.dart';
 import '../../state/sync_providers.dart';
 import '../../state/wallet_providers.dart';
 
-/// Fiat leg of the TR anchor. Deposits are wired in this currency; the
-/// on-chain leg is `AnchorInfo.assetCode` (USDC).
+/// Fiat leg of the local mock anchor. Deposits are wired in this currency;
+/// the on-chain leg is native XLM.
 const _fiatCode = 'TRY';
 
 /// Stellar assets carry 7 decimals; the backend ledger stores raw units.
