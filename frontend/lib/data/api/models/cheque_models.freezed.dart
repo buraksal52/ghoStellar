@@ -590,7 +590,11 @@ as String,
 /// @nodoc
 mixin _$SyncResponse {
 
- List<Cheque> get cheques; PoolDeposit get pool; bool get trustlineReady; int get ledgerSeq; int get serverTimeUnix;
+ List<Cheque> get cheques; PoolDeposit get pool; bool get trustlineReady; int get ledgerSeq; int get serverTimeUnix;// The network this backend actually signs and submits against
+// (SERVICE.md #20). @Default keeps old test fixtures (built before this
+// field existed) compiling; an empty value falls back to
+// Env.networkPassphrase — see networkPassphraseProvider.
+ String get networkPassphrase;
 /// Create a copy of SyncResponse
 /// with the given fields replaced by the non-null parameter values.
 @JsonKey(includeFromJson: false, includeToJson: false)
@@ -603,16 +607,16 @@ $SyncResponseCopyWith<SyncResponse> get copyWith => _$SyncResponseCopyWithImpl<S
 
 @override
 bool operator ==(Object other) {
-  return identical(this, other) || (other.runtimeType == runtimeType&&other is SyncResponse&&const DeepCollectionEquality().equals(other.cheques, cheques)&&(identical(other.pool, pool) || other.pool == pool)&&(identical(other.trustlineReady, trustlineReady) || other.trustlineReady == trustlineReady)&&(identical(other.ledgerSeq, ledgerSeq) || other.ledgerSeq == ledgerSeq)&&(identical(other.serverTimeUnix, serverTimeUnix) || other.serverTimeUnix == serverTimeUnix));
+  return identical(this, other) || (other.runtimeType == runtimeType&&other is SyncResponse&&const DeepCollectionEquality().equals(other.cheques, cheques)&&(identical(other.pool, pool) || other.pool == pool)&&(identical(other.trustlineReady, trustlineReady) || other.trustlineReady == trustlineReady)&&(identical(other.ledgerSeq, ledgerSeq) || other.ledgerSeq == ledgerSeq)&&(identical(other.serverTimeUnix, serverTimeUnix) || other.serverTimeUnix == serverTimeUnix)&&(identical(other.networkPassphrase, networkPassphrase) || other.networkPassphrase == networkPassphrase));
 }
 
 @JsonKey(includeFromJson: false, includeToJson: false)
 @override
-int get hashCode => Object.hash(runtimeType,const DeepCollectionEquality().hash(cheques),pool,trustlineReady,ledgerSeq,serverTimeUnix);
+int get hashCode => Object.hash(runtimeType,const DeepCollectionEquality().hash(cheques),pool,trustlineReady,ledgerSeq,serverTimeUnix,networkPassphrase);
 
 @override
 String toString() {
-  return 'SyncResponse(cheques: $cheques, pool: $pool, trustlineReady: $trustlineReady, ledgerSeq: $ledgerSeq, serverTimeUnix: $serverTimeUnix)';
+  return 'SyncResponse(cheques: $cheques, pool: $pool, trustlineReady: $trustlineReady, ledgerSeq: $ledgerSeq, serverTimeUnix: $serverTimeUnix, networkPassphrase: $networkPassphrase)';
 }
 
 
@@ -623,7 +627,7 @@ abstract mixin class $SyncResponseCopyWith<$Res>  {
   factory $SyncResponseCopyWith(SyncResponse value, $Res Function(SyncResponse) _then) = _$SyncResponseCopyWithImpl;
 @useResult
 $Res call({
- List<Cheque> cheques, PoolDeposit pool, bool trustlineReady, int ledgerSeq, int serverTimeUnix
+ List<Cheque> cheques, PoolDeposit pool, bool trustlineReady, int ledgerSeq, int serverTimeUnix, String networkPassphrase
 });
 
 
@@ -640,14 +644,15 @@ class _$SyncResponseCopyWithImpl<$Res>
 
 /// Create a copy of SyncResponse
 /// with the given fields replaced by the non-null parameter values.
-@pragma('vm:prefer-inline') @override $Res call({Object? cheques = null,Object? pool = null,Object? trustlineReady = null,Object? ledgerSeq = null,Object? serverTimeUnix = null,}) {
+@pragma('vm:prefer-inline') @override $Res call({Object? cheques = null,Object? pool = null,Object? trustlineReady = null,Object? ledgerSeq = null,Object? serverTimeUnix = null,Object? networkPassphrase = null,}) {
   return _then(_self.copyWith(
 cheques: null == cheques ? _self.cheques : cheques // ignore: cast_nullable_to_non_nullable
 as List<Cheque>,pool: null == pool ? _self.pool : pool // ignore: cast_nullable_to_non_nullable
 as PoolDeposit,trustlineReady: null == trustlineReady ? _self.trustlineReady : trustlineReady // ignore: cast_nullable_to_non_nullable
 as bool,ledgerSeq: null == ledgerSeq ? _self.ledgerSeq : ledgerSeq // ignore: cast_nullable_to_non_nullable
 as int,serverTimeUnix: null == serverTimeUnix ? _self.serverTimeUnix : serverTimeUnix // ignore: cast_nullable_to_non_nullable
-as int,
+as int,networkPassphrase: null == networkPassphrase ? _self.networkPassphrase : networkPassphrase // ignore: cast_nullable_to_non_nullable
+as String,
   ));
 }
 /// Create a copy of SyncResponse
@@ -741,10 +746,10 @@ return $default(_that);case _:
 /// }
 /// ```
 
-@optionalTypeArgs TResult maybeWhen<TResult extends Object?>(TResult Function( List<Cheque> cheques,  PoolDeposit pool,  bool trustlineReady,  int ledgerSeq,  int serverTimeUnix)?  $default,{required TResult orElse(),}) {final _that = this;
+@optionalTypeArgs TResult maybeWhen<TResult extends Object?>(TResult Function( List<Cheque> cheques,  PoolDeposit pool,  bool trustlineReady,  int ledgerSeq,  int serverTimeUnix,  String networkPassphrase)?  $default,{required TResult orElse(),}) {final _that = this;
 switch (_that) {
 case _SyncResponse() when $default != null:
-return $default(_that.cheques,_that.pool,_that.trustlineReady,_that.ledgerSeq,_that.serverTimeUnix);case _:
+return $default(_that.cheques,_that.pool,_that.trustlineReady,_that.ledgerSeq,_that.serverTimeUnix,_that.networkPassphrase);case _:
   return orElse();
 
 }
@@ -762,10 +767,10 @@ return $default(_that.cheques,_that.pool,_that.trustlineReady,_that.ledgerSeq,_t
 /// }
 /// ```
 
-@optionalTypeArgs TResult when<TResult extends Object?>(TResult Function( List<Cheque> cheques,  PoolDeposit pool,  bool trustlineReady,  int ledgerSeq,  int serverTimeUnix)  $default,) {final _that = this;
+@optionalTypeArgs TResult when<TResult extends Object?>(TResult Function( List<Cheque> cheques,  PoolDeposit pool,  bool trustlineReady,  int ledgerSeq,  int serverTimeUnix,  String networkPassphrase)  $default,) {final _that = this;
 switch (_that) {
 case _SyncResponse():
-return $default(_that.cheques,_that.pool,_that.trustlineReady,_that.ledgerSeq,_that.serverTimeUnix);case _:
+return $default(_that.cheques,_that.pool,_that.trustlineReady,_that.ledgerSeq,_that.serverTimeUnix,_that.networkPassphrase);case _:
   throw StateError('Unexpected subclass');
 
 }
@@ -782,10 +787,10 @@ return $default(_that.cheques,_that.pool,_that.trustlineReady,_that.ledgerSeq,_t
 /// }
 /// ```
 
-@optionalTypeArgs TResult? whenOrNull<TResult extends Object?>(TResult? Function( List<Cheque> cheques,  PoolDeposit pool,  bool trustlineReady,  int ledgerSeq,  int serverTimeUnix)?  $default,) {final _that = this;
+@optionalTypeArgs TResult? whenOrNull<TResult extends Object?>(TResult? Function( List<Cheque> cheques,  PoolDeposit pool,  bool trustlineReady,  int ledgerSeq,  int serverTimeUnix,  String networkPassphrase)?  $default,) {final _that = this;
 switch (_that) {
 case _SyncResponse() when $default != null:
-return $default(_that.cheques,_that.pool,_that.trustlineReady,_that.ledgerSeq,_that.serverTimeUnix);case _:
+return $default(_that.cheques,_that.pool,_that.trustlineReady,_that.ledgerSeq,_that.serverTimeUnix,_that.networkPassphrase);case _:
   return null;
 
 }
@@ -797,7 +802,7 @@ return $default(_that.cheques,_that.pool,_that.trustlineReady,_that.ledgerSeq,_t
 @JsonSerializable()
 
 class _SyncResponse implements SyncResponse {
-  const _SyncResponse({required final  List<Cheque> cheques, required this.pool, required this.trustlineReady, required this.ledgerSeq, required this.serverTimeUnix}): _cheques = cheques;
+  const _SyncResponse({required final  List<Cheque> cheques, required this.pool, required this.trustlineReady, required this.ledgerSeq, required this.serverTimeUnix, this.networkPassphrase = ''}): _cheques = cheques;
   factory _SyncResponse.fromJson(Map<String, dynamic> json) => _$SyncResponseFromJson(json);
 
  final  List<Cheque> _cheques;
@@ -811,6 +816,11 @@ class _SyncResponse implements SyncResponse {
 @override final  bool trustlineReady;
 @override final  int ledgerSeq;
 @override final  int serverTimeUnix;
+// The network this backend actually signs and submits against
+// (SERVICE.md #20). @Default keeps old test fixtures (built before this
+// field existed) compiling; an empty value falls back to
+// Env.networkPassphrase — see networkPassphraseProvider.
+@override@JsonKey() final  String networkPassphrase;
 
 /// Create a copy of SyncResponse
 /// with the given fields replaced by the non-null parameter values.
@@ -825,16 +835,16 @@ Map<String, dynamic> toJson() {
 
 @override
 bool operator ==(Object other) {
-  return identical(this, other) || (other.runtimeType == runtimeType&&other is _SyncResponse&&const DeepCollectionEquality().equals(other._cheques, _cheques)&&(identical(other.pool, pool) || other.pool == pool)&&(identical(other.trustlineReady, trustlineReady) || other.trustlineReady == trustlineReady)&&(identical(other.ledgerSeq, ledgerSeq) || other.ledgerSeq == ledgerSeq)&&(identical(other.serverTimeUnix, serverTimeUnix) || other.serverTimeUnix == serverTimeUnix));
+  return identical(this, other) || (other.runtimeType == runtimeType&&other is _SyncResponse&&const DeepCollectionEquality().equals(other._cheques, _cheques)&&(identical(other.pool, pool) || other.pool == pool)&&(identical(other.trustlineReady, trustlineReady) || other.trustlineReady == trustlineReady)&&(identical(other.ledgerSeq, ledgerSeq) || other.ledgerSeq == ledgerSeq)&&(identical(other.serverTimeUnix, serverTimeUnix) || other.serverTimeUnix == serverTimeUnix)&&(identical(other.networkPassphrase, networkPassphrase) || other.networkPassphrase == networkPassphrase));
 }
 
 @JsonKey(includeFromJson: false, includeToJson: false)
 @override
-int get hashCode => Object.hash(runtimeType,const DeepCollectionEquality().hash(_cheques),pool,trustlineReady,ledgerSeq,serverTimeUnix);
+int get hashCode => Object.hash(runtimeType,const DeepCollectionEquality().hash(_cheques),pool,trustlineReady,ledgerSeq,serverTimeUnix,networkPassphrase);
 
 @override
 String toString() {
-  return 'SyncResponse(cheques: $cheques, pool: $pool, trustlineReady: $trustlineReady, ledgerSeq: $ledgerSeq, serverTimeUnix: $serverTimeUnix)';
+  return 'SyncResponse(cheques: $cheques, pool: $pool, trustlineReady: $trustlineReady, ledgerSeq: $ledgerSeq, serverTimeUnix: $serverTimeUnix, networkPassphrase: $networkPassphrase)';
 }
 
 
@@ -845,7 +855,7 @@ abstract mixin class _$SyncResponseCopyWith<$Res> implements $SyncResponseCopyWi
   factory _$SyncResponseCopyWith(_SyncResponse value, $Res Function(_SyncResponse) _then) = __$SyncResponseCopyWithImpl;
 @override @useResult
 $Res call({
- List<Cheque> cheques, PoolDeposit pool, bool trustlineReady, int ledgerSeq, int serverTimeUnix
+ List<Cheque> cheques, PoolDeposit pool, bool trustlineReady, int ledgerSeq, int serverTimeUnix, String networkPassphrase
 });
 
 
@@ -862,14 +872,15 @@ class __$SyncResponseCopyWithImpl<$Res>
 
 /// Create a copy of SyncResponse
 /// with the given fields replaced by the non-null parameter values.
-@override @pragma('vm:prefer-inline') $Res call({Object? cheques = null,Object? pool = null,Object? trustlineReady = null,Object? ledgerSeq = null,Object? serverTimeUnix = null,}) {
+@override @pragma('vm:prefer-inline') $Res call({Object? cheques = null,Object? pool = null,Object? trustlineReady = null,Object? ledgerSeq = null,Object? serverTimeUnix = null,Object? networkPassphrase = null,}) {
   return _then(_SyncResponse(
 cheques: null == cheques ? _self._cheques : cheques // ignore: cast_nullable_to_non_nullable
 as List<Cheque>,pool: null == pool ? _self.pool : pool // ignore: cast_nullable_to_non_nullable
 as PoolDeposit,trustlineReady: null == trustlineReady ? _self.trustlineReady : trustlineReady // ignore: cast_nullable_to_non_nullable
 as bool,ledgerSeq: null == ledgerSeq ? _self.ledgerSeq : ledgerSeq // ignore: cast_nullable_to_non_nullable
 as int,serverTimeUnix: null == serverTimeUnix ? _self.serverTimeUnix : serverTimeUnix // ignore: cast_nullable_to_non_nullable
-as int,
+as int,networkPassphrase: null == networkPassphrase ? _self.networkPassphrase : networkPassphrase // ignore: cast_nullable_to_non_nullable
+as String,
   ));
 }
 

@@ -93,4 +93,9 @@ type SyncView struct {
 	TrustlineReady bool        `json:"trustlineReady"`
 	Ledger         int64       `json:"ledgerSeq"`
 	ServerTimeUnix int64       `json:"serverTimeUnix"`
+	// NetworkPassphrase is the network this backend actually signs and
+	// submits against (SERVICE.md #20). /sync runs before anything the
+	// client signs, so the client uses this instead of guessing its own
+	// build-time default — the two must never diverge.
+	NetworkPassphrase string `json:"networkPassphrase"`
 }

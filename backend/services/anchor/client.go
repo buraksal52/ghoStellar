@@ -75,26 +75,29 @@ func (c *Client) FetchQuoteServer(domain string) (string, error) {
 // SEP10Challenge relays the anchor's own SEP-10 challenge back to the
 // caller verbatim — this is the anchor's challenge, not ours (see
 // docs/reference/platform/anchor-entegrasyonu.md's "İki ayrı SEP-10
-// bağlamı").
-func (c *Client) SEP10Challenge(ctx context.Context, webAuthEndpoint, account string) (string, error) {
+// bağlamı"). SEP-10 makes network_passphrase optional on the challenge
+// response; when the anchor omits it, networkPassphrase comes back empty
+// and the caller falls back to its own network.
+func (c *Client) SEP10Challenge(ctx context.Context, webAuthEndpoint, account string) (transaction, networkPassphrase string, err error) {
 	u, err := url.Parse(webAuthEndpoint)
 	if err != nil {
-		return "", fmt.Errorf("%s: bad WEB_AUTH_ENDPOINT: %w", ErrUpstreamFailed, err)
+		return "", "", fmt.Errorf("%s: bad WEB_AUTH_ENDPOINT: %w", ErrUpstreamFailed, err)
 	}
 	if err := requireHTTPS(u); err != nil {
-		return "", err
+		return "", "", err
 	}
 	q := u.Query()
 	q.Set("account", account)
 	u.RawQuery = q.Encode()
 
 	var body struct {
-		Transaction string `json:"transaction"`
+		Transaction       string `json:"transaction"`
+		NetworkPassphrase string `json:"network_passphrase"`
 	}
 	if err := c.getJSON(ctx, u.String(), &body); err != nil {
-		return "", err
+		return "", "", err
 	}
-	return body.Transaction, nil
+	return body.Transaction, body.NetworkPassphrase, nil
 }
 
 // SEP10Token exchanges a client-signed challenge for the anchor's own JWT.

@@ -561,6 +561,12 @@ func TestSync_ReturnsActiveChequesAndPool(t *testing.T) {
 	if !view.TrustlineReady {
 		t.Error("TrustlineReady = false, want true")
 	}
+	// SERVICE.md #20 regression: the client learns the network to sign
+	// against from /sync, so this must be the backend's real config value,
+	// never empty or a client-guessed default.
+	if view.NetworkPassphrase != testPassphrase {
+		t.Errorf("NetworkPassphrase = %q, want %q", view.NetworkPassphrase, testPassphrase)
+	}
 }
 
 func TestExpiredFundedCheques_And_MarkRefunded(t *testing.T) {

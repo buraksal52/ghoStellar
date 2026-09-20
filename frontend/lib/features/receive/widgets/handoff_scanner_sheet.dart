@@ -7,7 +7,10 @@ import '../../../core/theme/app_colors.dart';
 import '../../../state/tap_providers.dart';
 import '../../shared/widgets/qr_card.dart';
 
-/// Receive counterpart of the recipient resolver: show, scan, or paste a code.
+/// Receive counterpart of the recipient resolver: show, scan, or paste a
+/// code. What comes back is either a [ChequeHandoff] (the sender was online)
+/// or an [OfflinePayment] (they weren't) — both pop the same way, decided by
+/// which one the code actually parses as.
 class HandoffScannerSheet extends ConsumerStatefulWidget {
   const HandoffScannerSheet({super.key});
 
@@ -31,10 +34,17 @@ class _HandoffScannerSheetState extends ConsumerState<HandoffScannerSheet> {
 
   void _accept(String code) {
     if (_accepted) return;
-    final handoff = ChequeHandoff.tryParse(code.trim());
+    final trimmed = code.trim();
+    final handoff = ChequeHandoff.tryParse(trimmed);
     if (handoff != null) {
       _accepted = true;
       Navigator.of(context).pop(handoff);
+      return;
+    }
+    final offline = OfflinePayment.tryParse(trimmed);
+    if (offline != null) {
+      _accepted = true;
+      Navigator.of(context).pop(offline);
       return;
     }
     const message = 'Enter a valid payment code from the sender.';

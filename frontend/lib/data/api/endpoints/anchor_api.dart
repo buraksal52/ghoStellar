@@ -11,9 +11,15 @@ class AnchorApi {
     return (data as List).map((e) => AnchorInfo.fromJson(e as Map<String, dynamic>)).toList();
   }
 
-  Future<String> challenge(String anchorId) async {
+  /// SEP-10 makes `networkPassphrase` optional; an anchor that omits it
+  /// comes back with an empty string and the caller falls back to its own
+  /// network (see `AnchorSessionNotifier.login`).
+  Future<({String transaction, String networkPassphrase})> challenge(String anchorId) async {
     final data = await _client.get('/anchors/$anchorId/auth/challenge');
-    return data['transaction'] as String;
+    return (
+      transaction: data['transaction'] as String,
+      networkPassphrase: data['networkPassphrase'] as String? ?? '',
+    );
   }
 
   Future<String> token(String anchorId, String signedTransactionXdr) async {

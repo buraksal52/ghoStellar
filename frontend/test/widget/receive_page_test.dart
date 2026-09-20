@@ -12,6 +12,7 @@ import 'package:ghostellar_app/state/core_providers.dart';
 import 'package:ghostellar_app/state/sync_providers.dart';
 import 'package:ghostellar_app/state/tap_providers.dart';
 import 'package:ghostellar_app/state/wallet_providers.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import 'package:stellar_flutter_sdk/stellar_flutter_sdk.dart';
 
 import '../support/fakes.dart';
@@ -82,6 +83,8 @@ Future<void> _leave(WidgetTester tester, _Rig rig) async {
 }
 
 void main() {
+  setUp(() => SharedPreferences.setMockInitialValues({}));
+
   testWidgets('opens a session on entry: NFC ready, request broadcast', (
     tester,
   ) async {

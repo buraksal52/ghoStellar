@@ -8,13 +8,18 @@ import 'package:ghostellar_app/core/errors/api_error.dart';
 import 'package:ghostellar_app/core/theme/app_colors.dart';
 import 'package:ghostellar_app/data/api/models/cheque_models.dart';
 import 'package:ghostellar_app/data/nfc/nfc_service.dart';
+import 'package:ghostellar_app/data/storage/offline_payment_store.dart';
+import 'package:ghostellar_app/data/stellar/offline_account_cache.dart';
+import 'package:ghostellar_app/data/stellar/offline_payment_verifier.dart';
 import 'package:ghostellar_app/features/send/send_page.dart';
 import 'package:ghostellar_app/features/shared/widgets/qr_card.dart';
 import 'package:ghostellar_app/state/core_providers.dart';
+import 'package:ghostellar_app/state/offline_providers.dart';
 import 'package:ghostellar_app/state/signing_overlay_provider.dart';
 import 'package:ghostellar_app/state/sync_providers.dart';
 import 'package:ghostellar_app/state/tap_providers.dart';
 import 'package:ghostellar_app/state/wallet_providers.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import 'package:stellar_flutter_sdk/stellar_flutter_sdk.dart';
 
 import '../support/fakes.dart';
@@ -92,12 +97,14 @@ String _link({String? amount, String? nonce, int? exp}) {
 /// Taps the send arrow and lets the four fake API calls (all microtasks) run.
 Future<void> _send(WidgetTester tester) async {
   await tester.tap(find.byIcon(Icons.north_rounded).last);
-  for (var i = 0; i < 4; i++) {
+  for (var i = 0; i < 8; i++) {
     await tester.pump();
   }
 }
 
 void main() {
+  setUp(() => SharedPreferences.setMockInitialValues({}));
+
   testWidgets('send options show and hide the wallet QR', (tester) async {
     final rig = _Rig();
     rig.nfc.canRead = false;
@@ -564,5 +571,143 @@ void main() {
         );
       },
     );
+  });
+
+  group('sending while offline', () {
+    Future<void> seedSnapshot(String accountId, {String availableRaw = '1000000000'}) =>
+        OfflineAccountCache().write(
+          OfflineAccountSnapshot(
+            accountId: accountId,
+            sequence: BigInt.from(41),
+            availableRaw: availableRaw,
+            decimals: 7,
+            fetchedAt: DateTime.utc(2026, 9, 20),
+          ),
+        );
+
+    testWidgets('no connection, a cached balance: hands over a signed offline payment', (tester) async {
+      final rig = _Rig();
+      await seedSnapshot(rig.keyPair.accountId);
+      rig.chequeApi.createError = ApiException(code: 'network.error', message: 'offline', httpStatus: null);
+      await tester.pumpWidget(rig.app());
+      await _pasteRecipient(tester, _link(amount: '5', nonce: 'off-1'));
+
+      await _send(tester);
+      await tester.pump();
+
+      expect(find.text('Payment sent'), findsOneWidget);
+      expect(find.textContaining('Sent while offline'), findsOneWidget);
+      expect(rig.chequeApi.created, isEmpty, reason: 'never reached the backend');
+
+      final payment = OfflinePayment.tryParse(rig.nfc.presented.single)!;
+      expect(payment.nonce, 'off-1');
+      const verifier = OfflinePaymentVerifier();
+      final result = verifier.verify(
+        signedXdr: payment.signedXdr,
+        expectedDestination: _receiver,
+        requestNonce: 'off-1',
+        asset: PayAsset.configured,
+        decimals: 7,
+        networkPassphrase: _container(tester).read(networkPassphraseProvider),
+      );
+      expect(result.isValid, isTrue);
+      expect(result.from, rig.keyPair.accountId);
+      expect(result.amount, '50000000');
+
+      // Spent locally, so the same request can't be paid twice.
+      expect(_container(tester).read(offlineSpentRequestIdsProvider), contains('off-1'));
+      expect(await OfflinePaymentStore().spentRequestIds(), contains('off-1'));
+
+      await tester.tap(find.text('Done'));
+      await tester.pump();
+    });
+
+    testWidgets('no connection, no cached balance: a plain error, no handoff', (tester) async {
+      final rig = _Rig(); // no snapshot seeded
+      rig.chequeApi.createError = ApiException(code: 'network.error', message: 'offline', httpStatus: null);
+      await tester.pumpWidget(rig.app());
+      await _pasteRecipient(tester, _link(amount: '5', nonce: 'off-2'));
+
+      await _send(tester);
+
+      expect(find.text('Payment sent'), findsNothing);
+      expect(rig.nfc.presented, isEmpty);
+      expect(_container(tester).read(signingOverlayProvider).errorMessage, contains('connect once'));
+    });
+
+    testWidgets('no connection, balance too low: refused rather than overspending', (tester) async {
+      final rig = _Rig();
+      await seedSnapshot(rig.keyPair.accountId, availableRaw: '10000000'); // 1.0
+      rig.chequeApi.createError = ApiException(code: 'network.error', message: 'offline', httpStatus: null);
+      await tester.pumpWidget(rig.app());
+      await _pasteRecipient(tester, _link(amount: '5', nonce: 'off-3'));
+
+      await _send(tester);
+
+      expect(find.text('Payment sent'), findsNothing);
+      expect(_container(tester).read(signingOverlayProvider).errorMessage, contains('Not enough balance'));
+    });
+
+    testWidgets('a manually pasted address has no request nonce, so offline is never offered', (tester) async {
+      final rig = _Rig();
+      await seedSnapshot(rig.keyPair.accountId);
+      rig.chequeApi.createError = ApiException(code: 'network.error', message: 'offline', httpStatus: null);
+      await tester.pumpWidget(rig.app());
+      await _pasteRecipient(tester, _receiver);
+      await tester.enterText(_amountField, '5');
+
+      await _send(tester);
+
+      expect(find.text('Payment sent'), findsNothing);
+      expect(rig.nfc.presented, isEmpty);
+    });
+
+    testWidgets('a non-network failure is shown normally, no offline fallback', (tester) async {
+      final rig = _Rig();
+      await seedSnapshot(rig.keyPair.accountId);
+      rig.chequeApi.createError =
+          ApiException(code: 'cheque.insufficient_balance', message: 'nope', httpStatus: 422);
+      await tester.pumpWidget(rig.app());
+      await _pasteRecipient(tester, _link(amount: '5', nonce: 'off-4'));
+
+      await _send(tester);
+
+      expect(find.text('Payment sent'), findsNothing);
+      expect(rig.nfc.presented, isEmpty);
+      expect(
+        _container(tester).read(signingOverlayProvider).errorMessage,
+        "You don't have enough balance to send this cheque.",
+      );
+    });
+
+    testWidgets('two offline payments in a row do not reuse the same sequence number', (tester) async {
+      await tester.binding.setSurfaceSize(const Size(800, 1400));
+      addTearDown(() => tester.binding.setSurfaceSize(null));
+      final rig = _Rig();
+      await seedSnapshot(rig.keyPair.accountId);
+      rig.chequeApi.createError = ApiException(code: 'network.error', message: 'offline', httpStatus: null);
+      await tester.pumpWidget(rig.app());
+
+      await _pasteRecipient(tester, _link(amount: '5', nonce: 'off-5'));
+      await _send(tester);
+      await tester.pump();
+      final first = OfflinePayment.tryParse(rig.nfc.presented.single)!;
+      await tester.tap(find.text('Done'));
+      await tester.pump();
+      // The real app's full-screen "Completed" overlay (only mounted inside
+      // AppShell, not this bare-SendPage harness) is what the user taps to
+      // clear the signing step back to idle; simulate that tap directly.
+      _container(tester).read(signingOverlayProvider.notifier).dismiss();
+      await tester.pump();
+
+      await _pasteRecipient(tester, _link(amount: '5', nonce: 'off-6'));
+      await _send(tester);
+      await tester.pump();
+      final second = OfflinePayment.tryParse(rig.nfc.presented.last)!;
+
+      final firstTx = AbstractTransaction.fromEnvelopeXdrString(first.signedXdr) as Transaction;
+      final secondTx = AbstractTransaction.fromEnvelopeXdrString(second.signedXdr) as Transaction;
+      expect(secondTx.sequenceNumber, firstTx.sequenceNumber + BigInt.one);
+    });
   });
 }

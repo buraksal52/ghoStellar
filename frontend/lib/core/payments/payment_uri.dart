@@ -162,3 +162,64 @@ class ChequeHandoff {
     ).toString();
   }
 }
+
+/// A fully signed, ready-to-submit classic Stellar payment, handed to the
+/// receiver directly — no backend involved. This is the sender-is-offline
+/// path (`offline_payment_builder.dart`): there is no escrow, no cheque, no
+/// 7-day recall — just a signed transaction the receiver (or the sender,
+/// whichever gets online first) submits with `POST /tx/submit`.
+///
+/// [from] and [amount] here are **display-only** — a receiver must never act
+/// on them without independently decoding [signedXdr] and checking it says
+/// the same thing (`offline_payment_verifier.dart`); nothing here is safe to
+/// trust just because it parsed.
+class OfflinePayment {
+  const OfflinePayment({
+    required this.signedXdr,
+    required this.nonce,
+    this.from,
+    this.amount,
+  });
+
+  static const scheme = 'ghostellar';
+
+  final String signedXdr;
+
+  /// The `x_req` of the request this answers — how the receiver recognizes
+  /// its own request and derives the memo hash to check against.
+  final String nonce;
+
+  final String? from;
+  final String? amount;
+
+  static OfflinePayment? tryParse(String? raw) {
+    if (raw == null) return null;
+    final uri = Uri.tryParse(raw.trim());
+    if (uri == null || uri.scheme.toLowerCase() != scheme || uri.host != 'offline') return null;
+
+    final q = uri.queryParameters;
+    final xdr = q['tx'];
+    final nonce = q['req'];
+    if (xdr == null || xdr.isEmpty || nonce == null || nonce.isEmpty) return null;
+
+    final from = q['from'];
+    if (from != null && !StellarAddress.isValid(from)) return null;
+    final amount = q['amount'];
+    if (amount != null && !AmountFormatter.isValidPositiveDecimal(amount)) return null;
+
+    return OfflinePayment(signedXdr: xdr, nonce: nonce, from: from, amount: amount);
+  }
+
+  String toUri() {
+    return Uri(
+      scheme: scheme,
+      host: 'offline',
+      queryParameters: {
+        'tx': signedXdr,
+        'req': nonce,
+        if (from != null) 'from': from!,
+        if (amount != null) 'amount': amount!,
+      },
+    ).toString();
+  }
+}

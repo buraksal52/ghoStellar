@@ -3,12 +3,20 @@ import 'dart:async';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:uuid/uuid.dart';
 
+import '../core/config/pay_asset.dart';
+import '../core/errors/api_error.dart';
+import '../core/errors/error_copy.dart';
 import '../core/payments/payment_uri.dart';
 import '../core/utils/amount_formatter.dart';
 import '../data/api/models/cheque_models.dart';
-import '../data/api/models/tx_models.dart';
 import '../data/nfc/nfc_service.dart';
+import '../data/storage/handoff_inbox.dart';
+import '../data/storage/offline_payment_store.dart';
+import '../data/stellar/offline_payment_verifier.dart';
+import 'claim_core.dart';
 import 'core_providers.dart';
+import 'inbox_providers.dart';
+import 'offline_providers.dart';
 import 'signing_overlay_provider.dart';
 import 'sync_providers.dart';
 import 'wallet_providers.dart';
@@ -57,11 +65,17 @@ class ReceiveSessionState {
     this.phase = ReceivePhase.idle,
     this.request,
     this.claimedChequeId,
+    this.offlineSettlementPending = false,
   });
 
   final ReceivePhase phase;
   final PaymentRequest? request;
   final String? claimedChequeId;
+
+  /// True when [phase] is `done` because a *classic offline payment* was
+  /// accepted (verified locally, queued for submission) rather than a
+  /// cheque actually claimed on chain — the balance isn't real yet.
+  final bool offlineSettlementPending;
 
   static const idle = ReceiveSessionState();
 }
@@ -181,32 +195,57 @@ class ReceiveSessionNotifier extends Notifier<ReceiveSessionState> {
     return true;
   }
 
-  /// Claims [chequeId]: claim-xdr → sign → submit → confirm → ack → refresh.
-  /// Used by the session's auto path and by the manual "Claim" button.
-  /// Returns false when something failed (the signing overlay has shown why).
+  /// A signed classic payment handed over by a sender who couldn't reach
+  /// the backend (NFC or scanned QR) — the sender-is-offline path. Verified
+  /// entirely from the signed XDR itself ([OfflinePaymentVerifier]); nothing
+  /// from [payment]'s own fields is trusted. Returns whether it was accepted.
+  Future<bool> acceptOfflinePayment(OfflinePayment payment) async {
+    final request = state.request;
+    final me = ref.read(walletProvider).publicKey;
+    final requestNonce = request?.nonce;
+    if (request == null || me == null || requestNonce == null) return false;
+    if (payment.nonce != requestNonce) return false;
+    if (state.phase != ReceivePhase.offering && state.phase != ReceivePhase.awaitingCheque) {
+      return false;
+    }
+
+    final requestedAmount = request.amount;
+    final minAmountRaw =
+        requestedAmount == null ? null : AmountFormatter.toRaw(requestedAmount, classicStellarDecimals);
+    final result = const OfflinePaymentVerifier().verify(
+      signedXdr: payment.signedXdr,
+      expectedDestination: me,
+      requestNonce: requestNonce,
+      asset: PayAsset.configured,
+      decimals: classicStellarDecimals,
+      minAmountRaw: minAmountRaw,
+      networkPassphrase: ref.read(networkPassphraseProvider),
+    );
+    if (!result.isValid) return false;
+
+    _cancelTimers();
+    await _safeStopNfc();
+    await ref.read(pendingOfflinePaymentsProvider.notifier).add(PendingOfflinePayment(
+          signedXdr: payment.signedXdr,
+          nonce: payment.nonce,
+          from: result.from!,
+          amountRaw: result.amount!,
+          decimals: result.decimals!,
+          receivedAt: ref.read(clockProvider)(),
+        ));
+    state = ReceiveSessionState(phase: ReceivePhase.done, request: request, offlineSettlementPending: true);
+    return true;
+  }
+
+  /// Claims [chequeId] with the signing overlay showing progress and any
+  /// error — used by the session's happy path and the manual "Claim" button,
+  /// where a person is watching. Returns false on failure.
   Future<bool> claim(String chequeId) async {
     final keyPair = ref.read(walletProvider).keyPair;
     if (keyPair == null) return false;
-    final chequeApi = ref.read(chequeApiProvider);
-    final txApi = ref.read(txApiProvider);
-    final signing = ref.read(stellarSigningServiceProvider);
     final overlay = ref.read(signingOverlayProvider.notifier);
-
     final ok = await overlay.run<bool>((report) async {
-      final claimXdr = await chequeApi.claimXdr(chequeId);
-      report(SigningStep.signing);
-      final signed = signing.signTransactionXdr(claimXdr, keyPair);
-      report(SigningStep.submitting);
-      final result = await txApi.submit(
-        idempotencyKey: const Uuid().v4(),
-        purpose: 'cheque_claim',
-        kind: TxKind.soroban,
-        xdr: signed,
-      );
-      report(SigningStep.confirming);
-      await chequeApi.confirmClaim(chequeId, result.hash);
-      await chequeApi.ack(chequeId);
-      await ref.read(syncProvider.notifier).refresh();
+      await performClaim(ref, keyPair, chequeId, onStep: report);
       return true;
     });
     return ok ?? false;
@@ -270,7 +309,12 @@ class ReceiveSessionNotifier extends Notifier<ReceiveSessionState> {
   void _onPeerPayload(int epoch, String payload) {
     if (epoch != _epoch) return;
     final handoff = ChequeHandoff.tryParse(payload);
-    if (handoff != null) unawaited(acceptHandoff(handoff));
+    if (handoff != null) {
+      unawaited(acceptHandoff(handoff));
+      return;
+    }
+    final offline = OfflinePayment.tryParse(payload);
+    if (offline != null) unawaited(acceptOfflinePayment(offline));
   }
 
   Future<void> _pollOnce(int epoch) async {
@@ -309,10 +353,39 @@ class ReceiveSessionNotifier extends Notifier<ReceiveSessionState> {
     _nfcStarted = false;
     await _safeStopNfc();
 
-    final ok = await claim(chequeId);
+    // Not through claim(): a real failure (e.g. "already expired") should
+    // still tell the user why, but a transient one (typically offline)
+    // should be saved rather than just shown and forgotten.
+    final keyPair = ref.read(walletProvider).keyPair;
+    var success = false;
+    if (keyPair != null) {
+      final overlay = ref.read(signingOverlayProvider.notifier);
+      overlay.setStep(SigningStep.preparing);
+      try {
+        await performClaim(ref, keyPair, chequeId, onStep: overlay.setStep);
+        overlay.setStep(SigningStep.done);
+        success = true;
+      } catch (e) {
+        if (classifyClaimFailure(e) == ClaimOutcome.gone) {
+          overlay.state = SigningOverlayState(
+            step: SigningStep.error,
+            errorMessage: e is ApiException ? ErrorCopy.forException(e) : e.toString(),
+          );
+        } else {
+          await ref.read(pendingHandoffsProvider.notifier).add(PendingHandoff(
+                chequeId: chequeId,
+                from: request?.destination ?? '',
+                amount: request?.amount,
+                nonce: request?.nonce,
+                receivedAt: ref.read(clockProvider)(),
+              ));
+          overlay.dismiss();
+        }
+      }
+    }
     if (epoch != _epoch) return;
 
-    if (ok) {
+    if (success) {
       _cancelTimers();
       state = ReceiveSessionState(
         phase: ReceivePhase.done,
@@ -321,8 +394,9 @@ class ReceiveSessionNotifier extends Notifier<ReceiveSessionState> {
       );
       return;
     }
-    // Failed (the overlay explained why). Leave it to the manual button and
-    // resume offering so the session isn't stuck.
+    // Failed or saved for later. Resume offering so the session isn't stuck;
+    // the inbox and the manual "Claim" button now own getting this cheque
+    // the rest of the way.
     final me = ref.read(walletProvider).publicKey;
     if (me != null) await _offer(epoch, me);
   }

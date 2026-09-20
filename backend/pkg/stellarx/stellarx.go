@@ -22,6 +22,11 @@ func sha256Hash(b []byte) [32]byte {
 	return sha256.Sum256(b)
 }
 
+// TestNetworkPassphrase is the default every service falls back to when
+// NETWORK_PASSPHRASE is unset. Kept in one place so the six cmd/*/main.go
+// call sites can't drift from each other.
+const TestNetworkPassphrase = "Test SDF Network ; September 2015"
+
 // IsValidAccountAddress reports whether s is a well-formed "G..." account
 // strkey. Used to validate cheque receiver addresses (A4) before ever
 // touching the chain.

@@ -13,6 +13,7 @@ import (
 	"github.com/local-payment/backend/pkg/envx"
 	"github.com/local-payment/backend/pkg/httpx"
 	"github.com/local-payment/backend/pkg/obs"
+	"github.com/local-payment/backend/pkg/stellarx"
 	"github.com/local-payment/backend/ports/httpadapter"
 	"github.com/local-payment/backend/services/scheduler"
 )
@@ -35,7 +36,7 @@ func main() {
 
 	svc, err := scheduler.NewService(scheduler.Config{
 		EscrowContractID:  envx.MustGet("PAY_ESCROW_CONTRACT_ID"),
-		NetworkPassphrase: envx.Get("NETWORK_PASSPHRASE", "Test SDF Network ; September 2015"),
+		NetworkPassphrase: envx.Get("NETWORK_PASSPHRASE", stellarx.TestNetworkPassphrase),
 		KeeperSeed:        envx.MustGet("KEEPER_SECRET_SEED"),
 	}, chainGW, chequeClient, logger)
 	if err != nil {

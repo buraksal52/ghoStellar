@@ -1,4 +1,4 @@
-/// Testnet-only network + gateway constants for this build phase.
+/// Build-time network + gateway constants.
 ///
 /// Mirrors `deploy/example.env` in the backend so the app never guesses at
 /// values the backend already fixes. USDC asset code/issuer and the anchor
@@ -7,9 +7,25 @@
 class Env {
   Env._();
 
-  static const String networkPassphrase = 'Test SDF Network ; September 2015';
-  static const String horizonUrl = 'https://horizon-testnet.stellar.org';
-  static const String sorobanRpcUrl = 'https://soroban-testnet.stellar.org';
+  /// Fallback network passphrase, used only until the first `/sync` reply
+  /// (`SyncResponse.networkPassphrase`) tells the app what the backend
+  /// actually signs against — see `networkPassphraseProvider`. The backend's
+  /// value always wins, so this only needs to be right for the brief window
+  /// before login/sync completes; a stale or mismatched build-time default
+  /// here can no longer make the app sign with the wrong network id.
+  /// Override with `--dart-define=NETWORK_PASSPHRASE=...` when pointing a
+  /// build at a non-default deployment.
+  static const String networkPassphrase = String.fromEnvironment(
+    'NETWORK_PASSPHRASE',
+    defaultValue: 'Test SDF Network ; September 2015',
+  );
+
+  /// Override with `--dart-define=HORIZON_URL=...` to match a non-default
+  /// deployment's `NETWORK_PASSPHRASE`.
+  static const String horizonUrl = String.fromEnvironment(
+    'HORIZON_URL',
+    defaultValue: 'https://horizon-testnet.stellar.org',
+  );
 
   /// The asset cheques are written in. Must match the backend's
   /// `ASSET_CODE` / `ASSET_ISSUER` (`backend/cmd/chequesvc/main.go`; default
@@ -35,4 +51,16 @@ class Env {
     'GATEWAY_BASE_URL',
     defaultValue: 'https://ghostellar-production.up.railway.app',
   );
+
+  static const String _testnetPassphrase = 'Test SDF Network ; September 2015';
+  static const String _publicPassphrase = 'Public Global Stellar Network ; September 2015';
+
+  /// A short label for whichever network [passphrase] identifies — the one
+  /// place a build pointed at the wrong network (SERVICE.md #20) would be
+  /// visible to the user (see the Settings page).
+  static String networkLabel(String passphrase) => switch (passphrase) {
+        _testnetPassphrase => 'Testnet',
+        _publicPassphrase => 'Public',
+        _ => 'Custom',
+      };
 }

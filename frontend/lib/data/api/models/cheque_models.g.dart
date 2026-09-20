@@ -77,6 +77,7 @@ _SyncResponse _$SyncResponseFromJson(Map<String, dynamic> json) =>
       trustlineReady: json['trustlineReady'] as bool,
       ledgerSeq: (json['ledgerSeq'] as num).toInt(),
       serverTimeUnix: (json['serverTimeUnix'] as num).toInt(),
+      networkPassphrase: json['networkPassphrase'] as String? ?? '',
     );
 
 Map<String, dynamic> _$SyncResponseToJson(_SyncResponse instance) =>
@@ -86,6 +87,7 @@ Map<String, dynamic> _$SyncResponseToJson(_SyncResponse instance) =>
       'trustlineReady': instance.trustlineReady,
       'ledgerSeq': instance.ledgerSeq,
       'serverTimeUnix': instance.serverTimeUnix,
+      'networkPassphrase': instance.networkPassphrase,
     };
 
 _CreateChequeResult _$CreateChequeResultFromJson(Map<String, dynamic> json) =>

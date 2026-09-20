@@ -31,10 +31,21 @@ class FakeChequeApi extends Fake implements ChequeApi {
   final acked = <String>[];
   int claimAttempts = 0;
 
+  /// When set, [claimError] only applies to other cheque ids — this one
+  /// always succeeds. Lets a test make one of several pending claims
+  /// resolve while the rest keep failing.
+  String? claimOnlyFor;
+
+  /// Delays [claimXdr] by this long, to test overlapping calls.
+  Duration? claimDelay;
+
   @override
   Future<String> claimXdr(String chequeId) async {
     claimAttempts++;
-    if (claimError != null) throw claimError!;
+    final delay = claimDelay;
+    if (delay != null) await Future<void>.delayed(delay);
+    final only = claimOnlyFor;
+    if (claimError != null && (only == null || chequeId != only)) throw claimError!;
     claimed.add(chequeId);
     return 'unsigned-$chequeId';
   }
@@ -75,23 +86,38 @@ class FakeChequeApi extends Fake implements ChequeApi {
 }
 
 class FakeTxApi extends Fake implements TxApi {
+  Object? submitError;
+  final submitted = <({String idempotencyKey, String purpose, TxKind kind, String xdr})>[];
+
   @override
   Future<SubmitResponse> submit({
     required String idempotencyKey,
     required String purpose,
     required TxKind kind,
     required String xdr,
-  }) async =>
-      const SubmitResponse(hash: 'hash', successful: true, replayed: false);
+  }) async {
+    submitted.add((idempotencyKey: idempotencyKey, purpose: purpose, kind: kind, xdr: xdr));
+    if (submitError != null) throw submitError!;
+    return const SubmitResponse(hash: 'hash', successful: true, replayed: false);
+  }
 }
 
 class FakeSigning extends Fake implements StellarSigningService {
-  @override
-  String signTransactionXdr(String unsignedXdrBase64, KeyPair signer, {String? networkPassphrase}) =>
-      'signed-$unsignedXdrBase64';
+  /// The `networkPassphrase` passed to the most recent `signTransactionXdr`
+  /// call (`null` if the caller took the default), so a test can assert a
+  /// flow forwarded the right network — e.g. the anchor's own SEP-10
+  /// passphrase (SERVICE.md #20).
+  String? lastNetworkPassphrase;
 
   @override
-  String signAuthEntryXdr(String unsignedEntryXdrBase64, KeyPair signer) => 'signed-$unsignedEntryXdrBase64';
+  String signTransactionXdr(String unsignedXdrBase64, KeyPair signer, {String? networkPassphrase}) {
+    lastNetworkPassphrase = networkPassphrase;
+    return 'signed-$unsignedXdrBase64';
+  }
+
+  @override
+  String signAuthEntryXdr(String unsignedEntryXdrBase64, KeyPair signer, {String? networkPassphrase}) =>
+      'signed-$unsignedEntryXdrBase64';
 }
 
 class UnlockedWallet extends WalletNotifier {

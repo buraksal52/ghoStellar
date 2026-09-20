@@ -13,6 +13,7 @@ import (
 	"github.com/local-payment/backend/pkg/dbx"
 	"github.com/local-payment/backend/pkg/envx"
 	"github.com/local-payment/backend/pkg/httpx"
+	"github.com/local-payment/backend/pkg/stellarx"
 	"github.com/local-payment/backend/pkg/obs"
 	"github.com/local-payment/backend/services/auth"
 )
@@ -49,7 +50,7 @@ func main() {
 		ServerSigningSeed: envx.MustGet("SEP10_SIGNING_SEED"),
 		HomeDomain:        envx.Get("HOME_DOMAIN", "localhost"),
 		WebAuthDomain:     envx.Get("WEB_AUTH_DOMAIN", "localhost"),
-		NetworkPassphrase: envx.Get("NETWORK_PASSPHRASE", "Test SDF Network ; September 2015"),
+		NetworkPassphrase: envx.Get("NETWORK_PASSPHRASE", stellarx.TestNetworkPassphrase),
 		JWTPrivateKey:     privKey,
 		JWTPublicKey:      pubKey,
 	}, pool)

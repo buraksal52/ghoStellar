@@ -46,4 +46,16 @@ class HorizonReadService {
       rethrow;
     }
   }
+
+  /// The full account record — sequence number included — for building an
+  /// offline payment locally (`offline_payment_builder.dart`). `null` for an
+  /// unfunded account (nothing to build a snapshot from yet).
+  Future<AccountResponse?> fetchAccount(String accountId) async {
+    try {
+      return await _sdk.accounts.account(accountId);
+    } on ErrorResponse catch (e) {
+      if (e.code == 404) return null;
+      rethrow;
+    }
+  }
 }

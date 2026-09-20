@@ -1,14 +1,17 @@
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_riverpod/misc.dart' show Override;
 import 'package:flutter_test/flutter_test.dart';
+import 'package:ghostellar_app/core/errors/api_error.dart';
 import 'package:ghostellar_app/core/payments/payment_uri.dart';
 import 'package:ghostellar_app/data/api/models/cheque_models.dart';
 import 'package:ghostellar_app/data/nfc/nfc_service.dart';
 import 'package:ghostellar_app/state/core_providers.dart';
+import 'package:ghostellar_app/state/inbox_providers.dart';
 import 'package:ghostellar_app/state/signing_overlay_provider.dart';
 import 'package:ghostellar_app/state/sync_providers.dart';
 import 'package:ghostellar_app/state/tap_providers.dart';
 import 'package:ghostellar_app/state/wallet_providers.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import 'package:stellar_flutter_sdk/stellar_flutter_sdk.dart';
 
 import '../support/fakes.dart';
@@ -51,6 +54,8 @@ class _Rig {
 }
 
 void main() {
+  setUp(() => SharedPreferences.setMockInitialValues({}));
+
   testWidgets('offers a SEP-7 request with the amount, over NFC and for the QR', (tester) async {
     final rig = _Rig();
     addTearDown(rig.container.dispose);
@@ -385,10 +390,10 @@ void main() {
     rig.session.stop();
   });
 
-  testWidgets('a failing claim is attempted once, not retried every tick', (tester) async {
+  testWidgets('a claim that keeps failing is saved to the offline inbox, not retried by the poll itself',
+      (tester) async {
     final rig = _Rig();
-    rig.chequeApi.claimError = StateError('boom');
-    addTearDown(rig.container.dispose);
+    rig.chequeApi.claimError = StateError('boom'); // not an ApiException: treated as retryable/offline
     await rig.ready(tester);
     await rig.session.start();
     final nonce = rig.state.request!.nonce!;
@@ -399,9 +404,38 @@ void main() {
       await tester.pump();
     }
 
-    expect(rig.chequeApi.claimAttempts, 1);
+    // 1 from the session's own auto-claim + 1 immediate retry when the
+    // inbox first saves it; its 15s timer hasn't fired in these 12s.
+    expect(rig.chequeApi.claimAttempts, 2);
     expect(rig.state.phase, ReceivePhase.offering, reason: 'the session resumes offering');
+    expect(rig.container.read(signingOverlayProvider).step, SigningStep.idle,
+        reason: 'saved silently — not shown as a scary error');
+    expect(await rig.container.read(pendingHandoffsProvider.notifier).future, hasLength(1));
+
+    rig.session.stop();
+    // The item is still pending (the fake keeps failing), so the inbox's own
+    // retry timer is still running by design — disposing the container here
+    // (rather than via addTearDown, which would run after this test's own
+    // pending-timer check) is what actually cancels it.
+    rig.container.dispose();
+  });
+
+  testWidgets('a claim that fails because the cheque itself is gone is shown as an error, not saved', (tester) async {
+    final rig = _Rig();
+    rig.chequeApi.claimError = ApiException(code: 'cheque.expired', message: 'expired', httpStatus: 409);
+    addTearDown(rig.container.dispose);
+    await rig.ready(tester);
+    await rig.session.start();
+    final nonce = rig.state.request!.nonce!;
+    rig.syncApi.cheques = [testCheque(_chequeId, rig.me, requestId: nonce)];
+
+    await tester.pump(const Duration(seconds: 3));
+    await tester.pump();
+
+    expect(rig.chequeApi.claimAttempts, 1);
+    expect(rig.state.phase, ReceivePhase.offering);
     expect(rig.container.read(signingOverlayProvider).step, SigningStep.error);
+    expect(await rig.container.read(pendingHandoffsProvider.notifier).future, isEmpty);
     rig.session.stop();
   });
 

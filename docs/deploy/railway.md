@@ -33,3 +33,9 @@ service's Networking settings. The health endpoint is `/health`.
 This deployment targets the existing testnet configuration. Set
 `NETWORK_PASSPHRASE`, `HORIZON_URL`, `SOROBAN_RPC_URL`, contract IDs, and
 Anchor settings explicitly when targeting another network or Anchor.
+
+The Flutter client learns `NETWORK_PASSPHRASE` from `/sync` at runtime
+(SERVICE.md #20) — no client rebuild needed for this variable alone. It
+still needs a matching build for anything build-time: `GATEWAY_BASE_URL`
+(this service's public domain) and, if the asset differs from the default,
+`PAY_ASSET_CODE`/`PAY_ASSET_ISSUER`.

@@ -426,6 +426,69 @@ func TestConfirmTrustline_ChainErrorLeavesRowUntouched(t *testing.T) {
 	}
 }
 
+// TestChallenge_PassesThroughAnchorNetworkPassphrase is the regression test
+// for SERVICE.md #20: the anchor's own network_passphrase must reach the
+// client, not be silently dropped (the client would otherwise sign the
+// anchor's challenge with its own network id — a structurally valid but
+// cryptographically wrong signature).
+func TestChallenge_PassesThroughAnchorNetworkPassphrase(t *testing.T) {
+	srv := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/.well-known/stellar.toml":
+			w.Write([]byte(`WEB_AUTH_ENDPOINT="https://anchor.example/auth"` + "\n" + `SIGNING_KEY="GSIGNINGKEY"`))
+		case "/auth":
+			w.Header().Set("Content-Type", "application/json")
+			w.Write([]byte(`{"transaction":"unsigned-xdr","network_passphrase":"Public Global Stellar Network ; September 2015"}`))
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	t.Cleanup(srv.Close)
+	client := NewClient(dialingClient(srv))
+	cfg := testConfig(testAnchorDomain, testIssuer(t))
+	svc := newServiceWithRepo(cfg, newFakeRepo(), client, &portstest.FakeChain{}, discardLogger())
+
+	txn, netPassphrase, err := svc.Challenge(context.Background(), testAnchorID, "GACCOUNT")
+	if err != nil {
+		t.Fatalf("Challenge: %v", err)
+	}
+	if txn != "unsigned-xdr" {
+		t.Errorf("transaction = %q, want unsigned-xdr", txn)
+	}
+	if netPassphrase != "Public Global Stellar Network ; September 2015" {
+		t.Errorf("networkPassphrase = %q, want the anchor's own", netPassphrase)
+	}
+}
+
+// TestChallenge_NoAnchorPassphraseComesBackEmpty pins the fallback contract:
+// SEP-10 makes network_passphrase optional, so an anchor that omits it must
+// not fail the call — the caller falls back to its own network.
+func TestChallenge_NoAnchorPassphraseComesBackEmpty(t *testing.T) {
+	srv := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/.well-known/stellar.toml":
+			w.Write([]byte(`WEB_AUTH_ENDPOINT="https://anchor.example/auth"` + "\n" + `SIGNING_KEY="GSIGNINGKEY"`))
+		case "/auth":
+			w.Header().Set("Content-Type", "application/json")
+			w.Write([]byte(`{"transaction":"unsigned-xdr"}`))
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	t.Cleanup(srv.Close)
+	client := NewClient(dialingClient(srv))
+	cfg := testConfig(testAnchorDomain, testIssuer(t))
+	svc := newServiceWithRepo(cfg, newFakeRepo(), client, &portstest.FakeChain{}, discardLogger())
+
+	_, netPassphrase, err := svc.Challenge(context.Background(), testAnchorID, "GACCOUNT")
+	if err != nil {
+		t.Fatalf("Challenge: %v", err)
+	}
+	if netPassphrase != "" {
+		t.Errorf("networkPassphrase = %q, want empty when the anchor omits it", netPassphrase)
+	}
+}
+
 func TestReportTransaction_UnknownAnchorRejected(t *testing.T) {
 	svc := newServiceWithRepo(testConfig(testAnchorDomain, testIssuer(t)), newFakeRepo(), NewClient(http.DefaultClient), &portstest.FakeChain{}, discardLogger())
 	err := svc.ReportTransaction(context.Background(), "not-the-configured-anchor", "GADDR", Transaction{ID: "tx1"})

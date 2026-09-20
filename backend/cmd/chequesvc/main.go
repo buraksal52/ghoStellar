@@ -13,6 +13,7 @@ import (
 	"github.com/local-payment/backend/pkg/envx"
 	"github.com/local-payment/backend/pkg/httpx"
 	"github.com/local-payment/backend/pkg/obs"
+	"github.com/local-payment/backend/pkg/stellarx"
 	"github.com/local-payment/backend/ports/httpadapter"
 	"github.com/local-payment/backend/services/cheque"
 )
@@ -47,7 +48,7 @@ func main() {
 		AssetCode:         envx.Get("ASSET_CODE", "USDC"),
 		AssetIssuer:       envx.Get("ASSET_ISSUER", "GBBD47IF6LWK7P7MDEVSCWR7DPUWV3NY3DTQEVFL4NAT4AQH3ZLLFLA5"),
 		Decimals:          uint8(envx.GetInt("ASSET_DECIMALS", 7)),
-		NetworkPassphrase: envx.Get("NETWORK_PASSPHRASE", "Test SDF Network ; September 2015"),
+		NetworkPassphrase: envx.Get("NETWORK_PASSPHRASE", stellarx.TestNetworkPassphrase),
 	}, pool, chainGW)
 	handler := cheque.NewHandler(svc)
 

@@ -529,11 +529,12 @@ func (s *Service) Sync(ctx context.Context, address string) (SyncView, error) {
 	}
 
 	return SyncView{
-		Cheques:        cheques,
-		Pool:           pool,
-		TrustlineReady: trustline.Exists,
-		Ledger:         ledger.Sequence,
-		ServerTimeUnix: time.Now().Unix(),
+		Cheques:           cheques,
+		Pool:              pool,
+		TrustlineReady:    trustline.Exists,
+		Ledger:            ledger.Sequence,
+		ServerTimeUnix:    time.Now().Unix(),
+		NetworkPassphrase: s.cfg.NetworkPassphrase,
 	}, nil
 }
 

@@ -12,6 +12,7 @@ import '../data/stellar/horizon_read_service.dart';
 import '../data/stellar/mnemonic_service.dart';
 import '../data/stellar/stellar_signing_service.dart';
 import '../data/storage/secure_wallet_store.dart';
+import 'sync_providers.dart';
 
 /// Every provider here is a stateless/singleton service wrapper — the
 /// stateful, request-driven providers (auth session, sync data, signing
@@ -29,8 +30,11 @@ final poolApiProvider = Provider((ref) => PoolApi(ref.watch(apiClientProvider)))
 final txApiProvider = Provider((ref) => TxApi(ref.watch(apiClientProvider)));
 final anchorApiProvider = Provider((ref) => AnchorApi(ref.watch(apiClientProvider)));
 
-final stellarSigningServiceProvider =
-    Provider((ref) => const StellarSigningService());
+/// The network passphrase is learned from `/sync` — see
+/// `networkPassphraseProvider`'s doc comment in sync_providers.dart.
+final stellarSigningServiceProvider = Provider(
+  (ref) => StellarSigningService(networkPassphrase: ref.watch(networkPassphraseProvider)),
+);
 final mnemonicServiceProvider = Provider((ref) => const MnemonicService());
 final horizonReadServiceProvider = Provider((ref) => HorizonReadService());
 final nfcServiceProvider = Provider((ref) => NfcService());

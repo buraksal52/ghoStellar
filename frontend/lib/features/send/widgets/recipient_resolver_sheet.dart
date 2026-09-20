@@ -8,6 +8,7 @@ import '../../../core/payments/payment_uri.dart';
 import '../../../core/theme/app_colors.dart';
 import '../../../data/nfc/nfc_service.dart';
 import '../../../state/core_providers.dart';
+import '../../../state/offline_providers.dart';
 import '../../../state/tap_providers.dart';
 import '../../../state/wallet_providers.dart';
 import '../../shared/widgets/qr_card.dart';
@@ -81,7 +82,9 @@ class _RecipientResolverSheetState
       return 'This request has expired — ask them to show a new one.';
     }
     final nonce = request.nonce;
-    if (nonce != null && ref.read(paidRequestIdsProvider).contains(nonce)) {
+    if (nonce != null &&
+        (ref.read(paidRequestIdsProvider).contains(nonce) ||
+            ref.read(offlineSpentRequestIdsProvider).contains(nonce))) {
       return 'You already paid this request.';
     }
     Navigator.of(context).pop(request);

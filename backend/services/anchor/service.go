@@ -179,13 +179,13 @@ func (s *Service) ProxySep38(ctx context.Context, id, method, path, rawQuery, to
 	return s.client.ProxyJSON(ctx, method, info.QuoteServer, path, rawQuery, token, contentType, body)
 }
 
-func (s *Service) Challenge(ctx context.Context, id, account string) (string, error) {
+func (s *Service) Challenge(ctx context.Context, id, account string) (transaction, networkPassphrase string, err error) {
 	info, err := s.Info(ctx, id)
 	if err != nil {
-		return "", err
+		return "", "", err
 	}
 	if info.WebAuthEndpoint == "" {
-		return "", fmt.Errorf("%s: anchor does not publish WEB_AUTH_ENDPOINT", ErrUpstreamFailed)
+		return "", "", fmt.Errorf("%s: anchor does not publish WEB_AUTH_ENDPOINT", ErrUpstreamFailed)
 	}
 	return s.client.SEP10Challenge(ctx, info.WebAuthEndpoint, account)
 }

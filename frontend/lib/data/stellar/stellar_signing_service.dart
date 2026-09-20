@@ -6,9 +6,16 @@ import '../../core/config/env.dart';
 /// Every money-moving flow in the app funnels through this service: the
 /// backend never receives anything but the outputs of these methods.
 class StellarSigningService {
-  const StellarSigningService();
+  /// [networkPassphrase] should be the live value from
+  /// `networkPassphraseProvider` (learned from `/sync`), not a hardcoded
+  /// default — see that provider's doc comment. Defaults to
+  /// `Env.networkPassphrase` only so the constructor stays usable
+  /// unconfigured (e.g. in tests, or before the first sync).
+  const StellarSigningService({this.networkPassphrase = Env.networkPassphrase});
 
-  Network get _network => Network(Env.networkPassphrase);
+  final String networkPassphrase;
+
+  Network get _network => Network(networkPassphrase);
 
   /// Restores a keypair from a raw Stellar secret seed (`S...`).
   KeyPair keypairFromSecretSeed(String secretSeed) =>
@@ -34,11 +41,15 @@ class StellarSigningService {
   /// pre-authorization). The SDK reconstructs the exact CAP-46-11 preimage
   /// from the entry's own root invocation + credentials + network id, so no
   /// separately-supplied payload hash is needed on the client side.
-  String signAuthEntryXdr(String unsignedEntryXdrBase64, KeyPair signer) {
+  String signAuthEntryXdr(
+    String unsignedEntryXdrBase64,
+    KeyPair signer, {
+    String? networkPassphrase,
+  }) {
     final entry = SorobanAuthorizationEntry.fromBase64EncodedXdr(
       unsignedEntryXdrBase64,
     );
-    entry.sign(signer, _network);
+    entry.sign(signer, networkPassphrase == null ? _network : Network(networkPassphrase));
     return entry.toBase64EncodedXdrString();
   }
 }

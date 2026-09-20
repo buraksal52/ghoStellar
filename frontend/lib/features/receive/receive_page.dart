@@ -8,6 +8,7 @@ import '../../core/payments/payment_uri.dart';
 import '../../core/theme/app_colors.dart';
 import '../../core/utils/amount_formatter.dart';
 import '../../state/core_providers.dart';
+import '../../state/inbox_providers.dart';
 import '../../state/sync_providers.dart';
 import '../../state/tap_providers.dart';
 import '../../state/wallet_providers.dart';
@@ -67,13 +68,19 @@ class _ReceivePageState extends ConsumerState<ReceivePage> {
   }
 
   Future<void> _openReceiveOptions() async {
-    final handoff = await showModalBottomSheet<ChequeHandoff>(
+    // Either a ChequeHandoff (the sender was online) or an OfflinePayment
+    // (they weren't) — HandoffScannerSheet decides which by what parses.
+    final result = await showModalBottomSheet<Object>(
       context: context,
       isScrollControlled: true,
       builder: (_) => const HandoffScannerSheet(),
     );
-    if (handoff == null || !mounted) return;
-    final accepted = await _session.acceptHandoff(handoff);
+    if (result == null || !mounted) return;
+    final accepted = switch (result) {
+      ChequeHandoff h => await _session.acceptHandoff(h),
+      OfflinePayment p => await _session.acceptOfflinePayment(p),
+      _ => false,
+    };
     if (!accepted && mounted) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text("That code isn't for this request.")),
@@ -152,7 +159,14 @@ class _ReceivePageState extends ConsumerState<ReceivePage> {
       case ReceivePhase.done:
         return [
           _nfcRing(c, Icons.check_rounded),
-          _title(context, 'Payment received', 'It is in your balance now.', c),
+          _title(
+            context,
+            'Payment received',
+            session.offlineSettlementPending
+                ? "Saved — it'll settle once either of you is back online."
+                : 'It is in your balance now.',
+            c,
+          ),
           const SizedBox(height: 10),
           TextButton(
             onPressed: () =>
@@ -248,6 +262,7 @@ class _ReceivePageState extends ConsumerState<ReceivePage> {
     final pending = ref.watch(pendingClaimsProvider);
     final session = ref.watch(receiveSessionProvider);
     final live = session.phase == ReceivePhase.offering;
+    final pendingOffline = ref.watch(pendingHandoffsProvider).value ?? const [];
 
     return ListView(
       children: [
@@ -329,6 +344,29 @@ class _ReceivePageState extends ConsumerState<ReceivePage> {
           ),
         ),
         const SizedBox(height: 16),
+        if (pendingOffline.isNotEmpty)
+          Container(
+            padding: const EdgeInsets.all(14),
+            margin: const EdgeInsets.only(bottom: 12),
+            decoration: BoxDecoration(
+              color: c.infoCard,
+              borderRadius: BorderRadius.circular(12),
+            ),
+            child: Row(
+              children: [
+                Icon(Icons.cloud_off_rounded, size: 18, color: c.textSecondary),
+                const SizedBox(width: 10),
+                Expanded(
+                  child: Text(
+                    pendingOffline.length == 1
+                        ? "Saved — will be claimed automatically once you're back online."
+                        : "${pendingOffline.length} payments saved — will be claimed once you're back online.",
+                    style: TextStyle(fontSize: 13, color: c.textSecondary),
+                  ),
+                ),
+              ],
+            ),
+          ),
         if (pending.isNotEmpty)
           for (final cheque in pending)
             Container(

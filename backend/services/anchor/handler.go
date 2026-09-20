@@ -151,12 +151,15 @@ func (h *Handler) Challenge(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, http.StatusUnauthorized, "auth.invalid_token", "missing bearer claims", nil)
 		return
 	}
-	xdrStr, err := h.svc.Challenge(r.Context(), id, account)
+	xdrStr, networkPassphrase, err := h.svc.Challenge(r.Context(), id, account)
 	if err != nil {
 		writeAnchorError(w, err)
 		return
 	}
-	httpx.WriteData(w, http.StatusOK, map[string]string{"transaction": xdrStr})
+	httpx.WriteData(w, http.StatusOK, map[string]string{
+		"transaction":       xdrStr,
+		"networkPassphrase": networkPassphrase,
+	})
 }
 
 type tokenRequest struct {

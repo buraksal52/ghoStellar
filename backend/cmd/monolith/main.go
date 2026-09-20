@@ -29,6 +29,7 @@ import (
 	"github.com/local-payment/backend/pkg/httpx"
 	"github.com/local-payment/backend/pkg/nethost"
 	"github.com/local-payment/backend/pkg/obs"
+	"github.com/local-payment/backend/pkg/stellarx"
 	"github.com/local-payment/backend/ports/directadapter"
 	"github.com/local-payment/backend/services/anchor"
 	"github.com/local-payment/backend/services/auth"
@@ -84,7 +85,7 @@ func main() {
 		ServerSigningSeed: envx.MustGet("SEP10_SIGNING_SEED"),
 		HomeDomain:        envx.Get("HOME_DOMAIN", "localhost"),
 		WebAuthDomain:     webAuthDomain,
-		NetworkPassphrase: envx.Get("NETWORK_PASSPHRASE", "Test SDF Network ; September 2015"),
+		NetworkPassphrase: envx.Get("NETWORK_PASSPHRASE", stellarx.TestNetworkPassphrase),
 		JWTPrivateKey:     privKey,
 		JWTPublicKey:      pubKey,
 	}, pool)
@@ -97,7 +98,7 @@ func main() {
 		AssetCode:         envx.Get("ASSET_CODE", "USDC"),
 		AssetIssuer:       envx.Get("ASSET_ISSUER", "GBBD47IF6LWK7P7MDEVSCWR7DPUWV3NY3DTQEVFL4NAT4AQH3ZLLFLA5"),
 		Decimals:          uint8(envx.GetInt("ASSET_DECIMALS", 7)),
-		NetworkPassphrase: envx.Get("NETWORK_PASSPHRASE", "Test SDF Network ; September 2015"),
+		NetworkPassphrase: envx.Get("NETWORK_PASSPHRASE", stellarx.TestNetworkPassphrase),
 	}, pool, chainGW)
 	chequeHandler := cheque.NewHandler(chequeSvc)
 
@@ -120,7 +121,7 @@ func main() {
 	// ---- scheduler (background jobs only, no HTTP routes) -----------------
 	schedulerSvc, err := scheduler.NewService(scheduler.Config{
 		EscrowContractID:  envx.MustGet("PAY_ESCROW_CONTRACT_ID"),
-		NetworkPassphrase: envx.Get("NETWORK_PASSPHRASE", "Test SDF Network ; September 2015"),
+		NetworkPassphrase: envx.Get("NETWORK_PASSPHRASE", stellarx.TestNetworkPassphrase),
 		KeeperSeed:        envx.MustGet("KEEPER_SECRET_SEED"),
 	}, chainGW, directadapter.NewSchedulerChequeGateway(chequeSvc), logger)
 	if err != nil {

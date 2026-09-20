@@ -152,7 +152,7 @@ func TestClient_SEP10ChallengeAndToken(t *testing.T) {
 				t.Errorf("account query = %q, want GACCOUNT", got)
 			}
 			w.Header().Set("Content-Type", "application/json")
-			w.Write([]byte(`{"transaction":"unsigned-xdr"}`))
+			w.Write([]byte(`{"transaction":"unsigned-xdr","network_passphrase":"Test SDF Network ; September 2015"}`))
 		case r.Method == http.MethodPost && r.URL.Path == "/auth":
 			body, _ := io.ReadAll(r.Body)
 			var req struct {
@@ -170,12 +170,15 @@ func TestClient_SEP10ChallengeAndToken(t *testing.T) {
 	})
 
 	c := NewClient(hc)
-	txn, err := c.SEP10Challenge(t.Context(), srv.URL+"/auth", "GACCOUNT")
+	txn, netPassphrase, err := c.SEP10Challenge(t.Context(), srv.URL+"/auth", "GACCOUNT")
 	if err != nil {
 		t.Fatalf("SEP10Challenge: %v", err)
 	}
 	if txn != "unsigned-xdr" {
 		t.Errorf("challenge = %q, want unsigned-xdr", txn)
+	}
+	if netPassphrase != "Test SDF Network ; September 2015" {
+		t.Errorf("network_passphrase = %q, want the upstream's own", netPassphrase)
 	}
 
 	tok, err := c.SEP10Token(t.Context(), srv.URL+"/auth", "signed-xdr")

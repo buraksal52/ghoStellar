@@ -97,6 +97,53 @@ func TestSepProxy_MissingAnchorTokenRejected(t *testing.T) {
 	}
 }
 
+func TestChallenge_ResponseCarriesNetworkPassphrase(t *testing.T) {
+	srv := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/.well-known/stellar.toml":
+			w.Write([]byte(`WEB_AUTH_ENDPOINT="https://anchor.example/auth"` + "\n" + `SIGNING_KEY="GSIGNINGKEY"`))
+		case "/auth":
+			w.Header().Set("Content-Type", "application/json")
+			w.Write([]byte(`{"transaction":"unsigned-xdr","network_passphrase":"Public Global Stellar Network ; September 2015"}`))
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	t.Cleanup(srv.Close)
+	client := NewClient(dialingClient(srv))
+	cfg := testConfig(testAnchorDomain, testIssuer(t))
+	svc := newServiceWithRepo(cfg, newFakeRepo(), client, nil, discardLogger())
+	h := NewHandler(svc, discardLogger())
+
+	mux := http.NewServeMux()
+	RegisterRoutes(mux, h)
+	wrapped, tok := bearerHandler(t, "GCALLERADDRESS000000000000000000000000000000000000000", mux)
+
+	req := httptest.NewRequest("GET", "/anchors/"+testAnchorID+"/auth/challenge", nil)
+	req.Header.Set("Authorization", "Bearer "+tok)
+	rec := httptest.NewRecorder()
+	wrapped.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("got status %d, want 200; body=%s", rec.Code, rec.Body.String())
+	}
+	var env struct {
+		Data struct {
+			Transaction       string `json:"transaction"`
+			NetworkPassphrase string `json:"networkPassphrase"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &env); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if env.Data.Transaction != "unsigned-xdr" {
+		t.Errorf("transaction = %q, want unsigned-xdr", env.Data.Transaction)
+	}
+	if env.Data.NetworkPassphrase != "Public Global Stellar Network ; September 2015" {
+		t.Errorf("networkPassphrase = %q, want the anchor's own", env.Data.NetworkPassphrase)
+	}
+}
+
 func TestSepProxy_MalformedJSONBodyRejected(t *testing.T) {
 	client := tomlServer(t, `KYC_SERVER="https://kyc.anchor.example/sep12"`)
 	cfg := testConfig(testAnchorDomain, testIssuer(t))

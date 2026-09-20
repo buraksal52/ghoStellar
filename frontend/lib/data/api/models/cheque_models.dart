@@ -77,6 +77,11 @@ abstract class SyncResponse with _$SyncResponse {
     required bool trustlineReady,
     required int ledgerSeq,
     required int serverTimeUnix,
+    // The network this backend actually signs and submits against
+    // (SERVICE.md #20). @Default keeps old test fixtures (built before this
+    // field existed) compiling; an empty value falls back to
+    // Env.networkPassphrase — see networkPassphraseProvider.
+    @Default('') String networkPassphrase,
   }) = _SyncResponse;
 
   factory SyncResponse.fromJson(Map<String, dynamic> json) =>

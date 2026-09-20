@@ -29,7 +29,12 @@ class AnchorSessionNotifier extends Notifier<String?> {
     if (keyPair == null) throw StateError('Wallet must be unlocked.');
 
     final challenge = await anchorApi.challenge(anchorId);
-    final signed = signing.signTransactionXdr(challenge, keyPair);
+    final signed = signing.signTransactionXdr(
+      challenge.transaction,
+      keyPair,
+      // The anchor may be on a different network than the platform.
+      networkPassphrase: challenge.networkPassphrase.isEmpty ? null : challenge.networkPassphrase,
+    );
     final token = await anchorApi.token(anchorId, signed);
     state = token;
   }

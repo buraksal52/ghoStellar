@@ -1,9 +1,13 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
 import '../../../core/theme/app_colors.dart';
 import '../../../core/theme/theme_provider.dart';
+import '../../../state/inbox_providers.dart';
+import '../../../state/offline_providers.dart';
 import 'app_drawer.dart';
 import 'signing_overlay.dart';
 
@@ -23,9 +27,9 @@ const _barSwitchDuration = Duration(milliseconds: 280);
 /// Same fade-through as the page transitions (see `router/soft_transition.dart`):
 /// the old title/icon is gone before the new one appears, so they never overlap.
 Widget _barSwitchTransition(Widget child, Animation<double> animation) => FadeTransition(
-      opacity: animation.drive(CurveTween(curve: const Interval(0.5, 1.0, curve: Curves.easeInOutCubic))),
-      child: child,
-    );
+  opacity: animation.drive(CurveTween(curve: const Interval(0.5, 1.0, curve: Curves.easeInOutCubic))),
+  child: child,
+);
 
 const _navRoutes = ['/home', '/send', '/receive', '/pool', '/settings'];
 const _navIcons = [
@@ -41,13 +45,62 @@ const _navLabels = ['Home', 'Send', 'Receive', 'Pool', 'More'];
 /// authenticated screen, plus the signing-lifecycle overlay stacked above
 /// whatever the current screen renders — matches the design's single
 /// scaffold with swapped content regions.
-class AppShell extends ConsumerWidget {
+///
+/// Also where a pending offline cheque handoff gets its retries kicked:
+/// once on first build (equivalent to "app opened, wallet unlocked" — this
+/// widget only exists inside the authenticated shell) and again every time
+/// the app comes back to the foreground, on top of `PendingHandoffsNotifier`'s
+/// own periodic timer.
+class AppShell extends ConsumerStatefulWidget {
   const AppShell({required this.child, super.key});
 
   final Widget child;
 
   @override
-  Widget build(BuildContext context, WidgetRef ref) {
+  ConsumerState<AppShell> createState() => _AppShellState();
+}
+
+class _AppShellState extends ConsumerState<AppShell> with WidgetsBindingObserver {
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addObserver(this);
+    _comeOnline();
+  }
+
+  @override
+  void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    super.dispose();
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.resumed) _comeOnline();
+  }
+
+  /// Everything that needs "we might be online now": retry both offline
+  /// queues, refresh the account snapshot an offline payment would be built
+  /// from next, and (once, at startup) load which requests were already
+  /// answered offline in a previous session.
+  void _comeOnline() {
+    ref.read(pendingHandoffsProvider.notifier).retryAll();
+    ref.read(pendingOfflinePaymentsProvider.notifier).retryAll();
+    ref.read(accountSnapshotProvider.notifier).refresh();
+    unawaited(_hydrateOfflineSpentIdsOnce());
+  }
+
+  bool _hydratedOfflineSpentIds = false;
+
+  Future<void> _hydrateOfflineSpentIdsOnce() async {
+    if (_hydratedOfflineSpentIds) return;
+    _hydratedOfflineSpentIds = true;
+    final ids = await ref.read(offlinePaymentStoreProvider).spentRequestIds();
+    if (mounted) ref.read(offlineSpentRequestIdsProvider.notifier).hydrate(ids);
+  }
+
+  @override
+  Widget build(BuildContext context) {
     final c = context.colors;
     final location = GoRouterState.of(context).uri.path;
     final title = _titles[location] ?? 'ghoStellar';
@@ -70,10 +123,8 @@ class AppShell extends ConsumerWidget {
                 )
               : Builder(
                   key: const ValueKey('menu'),
-                  builder: (ctx) => IconButton(
-                    icon: const Icon(Icons.menu),
-                    onPressed: () => Scaffold.of(ctx).openDrawer(),
-                  ),
+                  builder: (ctx) =>
+                      IconButton(icon: const Icon(Icons.menu), onPressed: () => Scaffold.of(ctx).openDrawer()),
                 ),
         ),
         title: AnimatedSwitcher(
@@ -81,18 +132,14 @@ class AppShell extends ConsumerWidget {
           transitionBuilder: _barSwitchTransition,
           // Default layout centers the children, so titles of different
           // widths would slide sideways while switching; keep them start-aligned.
-          layoutBuilder: (current, previous) => Stack(
-            alignment: Alignment.centerLeft,
-            children: [...previous, ?current],
-          ),
+          layoutBuilder: (current, previous) =>
+              Stack(alignment: Alignment.centerLeft, children: [...previous, ?current]),
           child: Text(title, key: ValueKey(title)),
         ),
         actions: [
           IconButton(
             icon: Icon(
-              ref.watch(themeModeProvider) == ThemeMode.dark
-                  ? Icons.dark_mode_outlined
-                  : Icons.light_mode_outlined,
+              ref.watch(themeModeProvider) == ThemeMode.dark ? Icons.dark_mode_outlined : Icons.light_mode_outlined,
             ),
             onPressed: () => ref.read(themeModeProvider.notifier).toggle(),
           ),
@@ -100,10 +147,7 @@ class AppShell extends ConsumerWidget {
       ),
       body: Stack(
         children: [
-          Padding(
-            padding: const EdgeInsets.fromLTRB(20, 0, 20, 0),
-            child: child,
-          ),
+          Padding(padding: const EdgeInsets.fromLTRB(20, 0, 20, 0), child: widget.child),
           const SigningOverlay(),
         ],
       ),

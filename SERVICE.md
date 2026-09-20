@@ -237,20 +237,36 @@ eklendi.
 olarak bağlanır. Anahtar tamamen kendi imzamız olduğu için istismar yüzeyi
 dar, ama spec uyumu eksik.
 
-## 20. İstemci ağ parolası sabit testnet; anchor SEP-10 challenge'ı kendi parolasını yok sayıyor
+## 20. [Kapatıldı] İstemci ağ parolası artık `/sync`'ten geliyor; anchor challenge'ı kendi parolasını taşıyor
 
-`frontend/lib/core/config/env.dart`'taki `networkPassphrase` sabit testnet
-değeri (`const`), oysa `gatewayBaseUrl` `--dart-define` ile başka bir
-backend'e yönlendirilebiliyor. Backend pubnet XDR üretirse istemci yine
-testnet ağ kimliğiyle imzalar: imza yapısal olarak geçerli ama kriptografik
-olarak yanlıştır, hiçbir hata fırlamaz — Horizon yalnızca `tx_bad_auth`
-döner (`/tx/submit` bunu artık `tx.submit_failed` olarak görünür kılıyor).
-Ayrıca `anchor_api.dart` anchor SEP-10 challenge yanıtındaki
-`network_passphrase` alanını atıyor ve `anchor_providers.dart` challenge'ı
-`Env` parolasıyla imzalıyor; platform girişi (`auth_providers.dart`)
-sunucunun parolasını doğru kullanıyor. Kapatma yolu: parolayı
-`--dart-define` ile yapılandırılabilir yapmak ve anchor challenge'ında yanıttaki
-parolayı kullanmak.
+Eskiden `frontend/lib/core/config/env.dart`'taki `networkPassphrase` sabit
+testnet değeriydi (`const`), oysa `gatewayBaseUrl` `--dart-define` ile başka
+bir backend'e yönlendirilebiliyordu. Backend pubnet XDR üretirse istemci yine
+testnet ağ kimliğiyle imzalıyordu: imza yapısal olarak geçerli ama
+kriptografik olarak yanlış oluyordu, hiçbir hata fırlamıyordu — yalnızca
+Horizon'un `tx_bad_auth`'u olarak görünüyordu. Ayrıca `anchor_api.dart`
+anchor SEP-10 challenge yanıtındaki `network_passphrase` alanını atıyor,
+`anchor_providers.dart` challenge'ı `Env` parolasıyla imzalıyordu.
+
+Kapatıldı:
+- `backend/services/cheque` `Sync`'in döndürdüğü `/sync` yanıtına
+  `networkPassphrase` eklendi (`SyncView.NetworkPassphrase`). `/sync` her
+  soğuk açılışta imzalanan hiçbir şeyden önce koşulsuz çalıştığı için
+  istemci artık backend'in gerçekte imzaladığı ağı öğreniyor
+  (`networkPassphraseProvider`, `frontend/lib/state/sync_providers.dart`).
+  `Env.networkPassphrase` (artık `--dart-define=NETWORK_PASSPHRASE`
+  ile de yapılandırılabilir) yalnızca ilk sync'e kadarki fallback.
+- Anchor SEP-10 zinciri (`anchor/client.go`'daki `SEP10Challenge` →
+  `service.go`'daki `Challenge` → `handler.go` → `anchor_api.dart` →
+  `anchor_providers.dart`) artık upstream'in `network_passphrase`'ini
+  ucundan ucuna taşıyor; anchor alanı yayınlamıyorsa istemci kendi
+  parolasına düşüyor (SEP-10'da alan opsiyonel).
+- Altı `cmd/*/main.go`'daki tekrarlanan testnet literali
+  `stellarx.TestNetworkPassphrase` tek sabitine indirildi.
+- Settings ekranındaki sabit "Testnet" etiketi gerçek ağdan türetilen
+  `Env.networkLabel`'a bağlandı (`Testnet`/`Public`/`Custom`).
+- `docker-compose.yml`'de `pay-anchor-service`'e enjekte edilen ama hiç
+  okunmayan `NETWORK_PASSPHRASE` kaldırıldı.
 
 ## 21. `tx_failed` işlem düzeyinde kodun ötesine geçmiyor
 
@@ -261,3 +277,38 @@ kod (`op_low_reserve`, `op_no_issuer`, …) düşürülüyor. Bu yüzden istemci
 bir XLM ipucu gösterir. Kapatma yolu: `codes.OperationCodes`'u `ResultCode`'a
 eklemek (ör. `tx_failed:op_low_reserve`) ve `ErrorCopy`'yi buna göre
 genişletmek.
+
+## 22. `cheque.request_used` kaybolan yanıtta kalıcı bir 409'a dönüşebilir
+
+`services/cheque/repository.go`'daki `CreateReservedCheque`,
+`uq_cheques_receiver_request` (migration `000003`) ihlalini
+`ErrRequestUsedInRepo`'ya çevirir. Ama istemci `POST /cheques`'in
+**yanıtını** kaybedip (ağ kopması) aynı `requestId` ile yeniden denerse,
+kayıt zaten `IMZALI_REZERVE`'de duruyor olduğundan ikinci istek
+`cheque.request_used` alır — çek kendisi geçerli olsa bile istemci bunu
+göremez (`chequeId`'yi hiç almadı). Backend'in idempotency anahtarı yok;
+tek çıkış yolu istemcinin `/sync`'i (aynı `requestId`'yi taşıyan bir
+`IMZALI_REZERVE`/`FONLANIYOR` çek varsa) bu durumu ayırt etmesidir —
+şu an `frontend`'de bu ayrım yapılmıyor, kullanıcıya "zaten ödendi"
+gösterilir ve alıcı yeni bir talep üretmek zorunda kalır. Kapatma yolu:
+`POST /cheques`'e de `Idempotency-Key` desteği eklemek (mevcut
+`pay.idempotency_keys` mekanizması `/tx/submit`'e özel, cheque yaratmaya
+genişletilmedi).
+
+## 23. Çevrimdışı ödeme sequence çakışmasını yalnızca Horizon yakalar
+
+`frontend/lib/data/stellar/offline_account_cache.dart`'taki
+`OfflineAccountSnapshot`, son online anın fotoğrafıdır. Aynı hesaptan
+snapshot alındıktan sonra (başka bir cihaz, ya da online moddaki normal
+bir çek/havuz işlemiyle) sequence numarası ilerlerse, o snapshot üzerine
+inşa edilmiş bir çevrimdışı ödeme `POST /tx/submit`'e ulaştığında
+`tx_bad_seq` ile reddedilir — istemci bunu yalnızca ağa çıktığında öğrenir,
+offline'ken önceden kestiremez (D6 gereği zaten böyle olması beklenir:
+nihai doğruluk zincirde). `pay-tx-service` bu senaryo için özel bir hata
+kodu ayırmıyor, genel `tx.submit_failed` + Horizon `resultCode`'u
+(`ErrorCopy._submitResultMessages['tx_bad_seq']`) kullanıcıya "hesabınız
+imzalama sırasında değişti, tekrar deneyin" olarak gösteriliyor — bu
+mesaj çevrimdışı ödeme bağlamında biraz yanıltıcı (kullanıcı hiçbir şeyi
+kendisi imzalamamış olabilir, ikinci bir cihaz/oturum sequence'ı
+ilerletmiş olabilir). Kapatma yolu: `offline_payment` amaçlı
+gönderimlerde bu koda özel bir metin.

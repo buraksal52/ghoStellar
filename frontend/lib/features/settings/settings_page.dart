@@ -2,10 +2,12 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
+import '../../core/config/env.dart';
 import '../../core/theme/app_colors.dart';
 import '../../core/theme/theme_provider.dart';
 import '../../state/auth_providers.dart';
 import '../../state/core_providers.dart';
+import '../../state/sync_providers.dart';
 import '../../state/wallet_providers.dart';
 
 class SettingsPage extends ConsumerWidget {
@@ -68,6 +70,8 @@ class SettingsPage extends ConsumerWidget {
     final c = context.colors;
     final isDark = ref.watch(themeModeProvider) == ThemeMode.dark;
     final publicKey = ref.watch(walletProvider).publicKey ?? '';
+    final networkLabel = Env.networkLabel(ref.watch(networkPassphraseProvider));
+    final syncedWithLabel = networkLabel == 'Custom' ? 'a custom network' : 'Stellar $networkLabel';
 
     Widget row(String label, String value, VoidCallback onTap) => InkWell(
           onTap: onTap,
@@ -90,14 +94,14 @@ class SettingsPage extends ConsumerWidget {
         row('Theme', isDark ? 'Dark' : 'Light', () => ref.read(themeModeProvider.notifier).toggle()),
         row('Wallet address', publicKey.isEmpty ? '' : '${publicKey.substring(0, 4)}...${publicKey.substring(publicKey.length - 4)}', () {}),
         row('Recovery phrase', 'View', () => _revealRecoveryPhrase(context, ref)),
-        row('Network', 'Testnet', () {}),
+        row('Network', networkLabel, () {}),
         row('Reset wallet', '', () => _logout(context, ref)),
         const SizedBox(height: 20),
         Row(
           children: [
             Container(width: 7, height: 7, decoration: BoxDecoration(color: c.positive, shape: BoxShape.circle)),
             const SizedBox(width: 8),
-            Text('Synced with Stellar testnet', style: TextStyle(fontSize: 12, color: c.textSecondary)),
+            Text('Synced with $syncedWithLabel', style: TextStyle(fontSize: 12, color: c.textSecondary)),
           ],
         ),
       ],
