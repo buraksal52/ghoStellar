@@ -52,6 +52,13 @@ class TrustlineSetup {
     // The backend checks the trustline on-chain and answers
     // `anchor.trustline_missing` if it isn't there.
     await anchorApi.trustlineConfirm(anchor.id);
+    // Let a /sync that is still loading settle first, or its (older) answer
+    // could land after the refresh below and hide the new trustline.
+    try {
+      await _ref.read(syncProvider.future);
+    } catch (_) {
+      // A failed first load is exactly what the refresh below retries.
+    }
     await _ref.read(syncProvider.notifier).refresh();
     // A new trustline adds a USDC entry to the account's balances.
     _ref.invalidate(balancesProvider);

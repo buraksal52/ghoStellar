@@ -110,6 +110,13 @@ class SigningOverlay extends ConsumerWidget {
                         .titleMedium
                         ?.copyWith(fontFamily: null),
                   ),
+                  if (overlay.dismissible) ...[
+                    const SizedBox(height: 14),
+                    TextButton(
+                      onPressed: () => ref.read(signingOverlayProvider.notifier).dismiss(),
+                      child: const Text('Continue in background'),
+                    ),
+                  ],
                 ],
               ],
             ),

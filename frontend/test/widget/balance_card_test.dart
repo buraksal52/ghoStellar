@@ -2,14 +2,11 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_riverpod/misc.dart' show Override;
 import 'package:flutter_test/flutter_test.dart';
-import 'package:ghostellar_app/core/errors/error_copy.dart';
 import 'package:ghostellar_app/core/theme/app_colors.dart';
 import 'package:ghostellar_app/data/stellar/horizon_read_service.dart';
 import 'package:ghostellar_app/features/home/widgets/balance_card.dart';
 import 'package:ghostellar_app/state/core_providers.dart';
 import 'package:ghostellar_app/state/home_providers.dart';
-import 'package:ghostellar_app/state/signing_overlay_provider.dart';
-import 'package:ghostellar_app/state/starter_funds.dart';
 import 'package:ghostellar_app/state/sync_providers.dart';
 import 'package:ghostellar_app/state/wallet_providers.dart';
 import 'package:stellar_flutter_sdk/stellar_flutter_sdk.dart';
@@ -23,7 +20,6 @@ Widget _app(
   FakeHorizonReadService horizon, {
   bool trustlineReady = true,
   String passphrase = _testnet,
-  FakeStarterFunds? funds,
 }) {
   return ProviderScope(
     overrides: <Override>[
@@ -31,7 +27,6 @@ Widget _app(
       horizonReadServiceProvider.overrideWithValue(horizon),
       syncProvider.overrideWith(() => FakeSyncNotifier(const [], trustlineReady: trustlineReady)),
       networkPassphraseProvider.overrideWithValue(passphrase),
-      starterFundsProvider.overrideWithValue(funds ?? FakeStarterFunds()),
     ],
     child: MaterialApp(
       theme: ThemeData(extensions: [AppColors.light]),
@@ -61,82 +56,61 @@ void main() {
     expect(find.textContaining('XLM', findRichText: true), findsNothing);
     expect(find.textContaining('9999'), findsNothing);
     expect(find.text('Network fee balance'), findsNothing);
-    expect(find.text('Get test funds'), findsNothing, reason: 'a wallet that holds USDC needs no starter funds');
+    expect(find.text('Get test funds'), findsNothing);
   });
 
   group('testnet wallet with no USDC', () {
-    testWidgets('a funded wallet without USDC is offered "Get test funds" — and never shows the faucet XLM',
-        (tester) async {
+    // Getting test funds lives in Settings (and runs once by itself for a new
+    // wallet) — the Home card only ever shows the balance and hints.
+    testWidgets('never offers a button of its own, and never shows the faucet XLM', (tester) async {
       await tester.pumpWidget(_app(FakeHorizonReadService(), trustlineReady: false));
       await _settle(tester);
 
       expect(find.textContaining('0 USDC', findRichText: true), findsOneWidget);
-      expect(find.text('Get test funds'), findsOneWidget);
-      // One clear action instead of two hints to work out.
-      expect(find.text('Set up USDC to receive funds →'), findsNothing);
+      expect(find.text('Get test funds'), findsNothing);
+      expect(find.byType(OutlinedButton), findsNothing);
       expect(find.textContaining('10000', findRichText: true), findsNothing);
       expect(find.textContaining('XLM', findRichText: true), findsNothing);
     });
 
-    testWidgets('an unfunded wallet gets the same single button', (tester) async {
+    testWidgets('an unfunded wallet is pointed at Settings', (tester) async {
       await tester.pumpWidget(_app(FakeHorizonReadService([AccountBalances.notFunded])));
       await _settle(tester);
 
-      expect(find.text('Get test funds'), findsOneWidget);
-      expect(find.textContaining("isn't funded yet"), findsNothing);
+      expect(find.text('Your wallet isn\'t funded yet — get test funds from Settings →'), findsOneWidget);
+      expect(find.text('Get test funds'), findsNothing);
     });
 
-    testWidgets('tapping it runs the flow and announces what arrived', (tester) async {
-      final funds = FakeStarterFunds()..usdcAdded = '24.1000000';
-      await tester.pumpWidget(_app(FakeHorizonReadService(), funds: funds));
+    testWidgets('a wallet without a trustline is pointed at the USDC setup', (tester) async {
+      await tester.pumpWidget(_app(FakeHorizonReadService(), trustlineReady: false));
       await _settle(tester);
 
-      await tester.tap(find.text('Get test funds'));
-      await _settle(tester);
-
-      expect(funds.runs, 1);
-      final overlay = _container(tester).read(signingOverlayProvider);
-      expect(overlay.step, SigningStep.done);
-      expect(overlay.label, 'Added 24.1 USDC to your wallet');
+      expect(find.text('Set up USDC to receive funds →'), findsOneWidget);
     });
 
-    testWidgets('a failure is explained, and the button is still there to try again', (tester) async {
-      final funds = FakeStarterFunds()..error = apiError('anchor.deposit_failed');
-      await tester.pumpWidget(_app(FakeHorizonReadService(), funds: funds));
-      await _settle(tester);
-
-      await tester.tap(find.text('Get test funds'));
-      await _settle(tester);
-
-      expect(_container(tester).read(signingOverlayProvider).errorMessage, ErrorCopy.forCode('anchor.deposit_failed'));
-      expect(find.text('Get test funds'), findsOneWidget);
-    });
-
-    testWidgets('once USDC arrives the button goes away', (tester) async {
+    testWidgets('once USDC arrives the balance follows', (tester) async {
       final horizon = FakeHorizonReadService([
         FakeHorizonReadService.fundedBalances(),
         FakeHorizonReadService.fundedBalances(other: {'USDC': '7.0000000'}),
       ]);
       await tester.pumpWidget(_app(horizon));
       await _settle(tester);
-      expect(find.text('Get test funds'), findsOneWidget);
+      expect(find.textContaining('0 USDC', findRichText: true), findsOneWidget);
 
       _container(tester).invalidate(balancesProvider);
       await _settle(tester);
 
-      expect(find.text('Get test funds'), findsNothing);
       expect(find.textContaining('7 USDC', findRichText: true), findsOneWidget);
       expect(horizon.fetchCalls, 2);
     });
   });
 
-  group('outside testnet there is no faucet, only hints', () {
+  group('outside testnet the same hints apply', () {
     testWidgets('an unfunded wallet says so', (tester) async {
       await tester.pumpWidget(_app(FakeHorizonReadService([AccountBalances.notFunded]), passphrase: _public));
       await _settle(tester);
 
       expect(find.textContaining("isn't funded yet"), findsOneWidget);
-      expect(find.text('Get test funds'), findsNothing);
       expect(find.textContaining('XLM', findRichText: true), findsNothing);
     });
 
@@ -145,7 +119,6 @@ void main() {
       await _settle(tester);
 
       expect(find.text('Set up USDC to receive funds →'), findsOneWidget);
-      expect(find.text('Get test funds'), findsNothing);
     });
   });
 

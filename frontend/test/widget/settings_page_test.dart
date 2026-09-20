@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_riverpod/misc.dart' show Override;
@@ -133,5 +135,50 @@ void main() {
     await _tapFund(tester);
 
     expect(funds.runs, 2);
+  });
+
+  group('the wait for the bank can be left', () {
+    testWidgets('the overlay offers "Continue in background" only once the flow is waiting on the bank',
+        (tester) async {
+      final funds = FakeStarterFunds()
+        ..delay = const Duration(milliseconds: 100)
+        ..bankWait = Completer<void>();
+      await tester.pumpWidget(_app(funds));
+
+      await tester.tap(find.text('Get test funds'));
+      await tester.pump();
+      expect(_overlay(tester).dismissible, isFalse, reason: 'wallet setup is short: no way out offered');
+
+      await tester.pump(const Duration(milliseconds: 150));
+      expect(_overlay(tester).label, 'Waiting for the bank…');
+      expect(_overlay(tester).dismissible, isTrue);
+
+      funds.bankWait!.complete();
+      await tester.pump();
+      await tester.pump();
+    });
+
+    testWidgets('dismissing it lets the flow finish quietly and announces the result when it arrives',
+        (tester) async {
+      final funds = FakeStarterFunds()..bankWait = Completer<void>();
+      await tester.pumpWidget(_app(funds));
+
+      await tester.tap(find.text('Get test funds'));
+      await tester.pump();
+      await tester.pump();
+      ProviderScope.containerOf(tester.element(find.byType(SettingsPage)))
+          .read(signingOverlayProvider.notifier)
+          .dismiss();
+      expect(_overlay(tester).step, SigningStep.idle);
+
+      funds.bankWait!.complete();
+      await tester.pump();
+      await tester.pump();
+
+      // The "Sending on Stellar" label of the flow did not pop the overlay
+      // back up; only the outcome did.
+      expect(_overlay(tester).step, SigningStep.done);
+      expect(_overlay(tester).label, 'Added 24.1 USDC to your wallet');
+    });
   });
 }

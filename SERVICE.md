@@ -357,20 +357,31 @@ Tasarım kararları:
   düşüyordu.)
 - **"Get test funds" (yalnızca testnet) USDC getirir** — friendbot USDC veremez
   (ihraççı bizim değil), bu yüzden istemcide `StarterFunds`
-  (`frontend/lib/state/starter_funds.dart`) tek akışta: (1) `POST /auth/fund`
-  ile ağ ücreti (hesap Horizon'da görünene kadar bakiye yeniden okunur),
-  (2) `trustlineReady` değilse USDC trustline'ı, (3) TR Mock Anchor'dan
-  1.000 TRY'lik SEP-6 deposit + sandbox `simulate-bank-transfer`, anchor final
-  duruma gelene kadar poll, `reportTransaction`. Her adım tekrarlanabilir;
-  kısmi başarıdan sonra yeniden basmak kaldığı yerden devam eder. Settings
-  satırı, Home kartındaki buton (testnet + USDC yok) ve yeni cüzdanın Home'a
-  ilk varışında **cüzdan başına bir kez** otomatik çalışma (bayrak
-  `ghoStellarStarterFundsOffered_<publicKey>`; başarısızlık kendi kendine
-  tekrar denenmez, kullanıcı butonla dener) aynı akışı kullanır. Giriş
-  sırasındaki sunucu tarafı `fundIfNeeded` XLM koymaya devam eder — fakat XLM
-  arayüzde görünmediğinden "hiçbir şey olmuyor" hissi vardı; asıl görünür
-  sonuç artık USDC. Mock anchor kapalıyken (1) ve (2) yine de yapılmış olur,
-  net bir hata gösterilir (`anchor.deposit_failed` / `anchor.deposit_pending`).
+  (`frontend/lib/state/starter_funds.dart`) tek akışta: (1) ağ ücreti — hesap
+  zaten var ve ücret bakiyesi yeterliyse friendbot hiç çağrılmaz, aksi hâlde
+  `POST /auth/fund` ve hesap Horizon'da görünene kadar bakiye yeniden okunur,
+  (2) USDC trustline'ı — Horizon bakiyesinde (sıfır bakiyeli satır dahil)
+  yoksa kurulur, `/sync` turu gerekmez, (3) TR Mock Anchor'dan 1.000 TRY'lik
+  SEP-6 deposit + sandbox `simulate-bank-transfer`, anchor final duruma gelene
+  kadar 1 sn aralıkla poll (en çok 60 tur), `reportTransaction`. Anchor'ın
+  SEP-10 girişi (1) ve (2) ile **paralel** başlar. Anchor `pending_trust`
+  derse (trustline'ı bekliyor) trustline bir kez kurulup poll'a dönülür;
+  ard arda 3 poll hatası anchor'a ulaşılamıyor sayılır ve hemen raporlanır.
+  Her adım tekrarlanabilir; kısmi başarıdan sonra yeniden basmak kaldığı
+  yerden devam eder.
+  Tetikleyiciler: yalnızca Settings satırı (Home kartında buton **yok**) ve
+  yeni cüzdanın Home'a ilk varışında **cüzdan başına bir kez** otomatik çalışma
+  (bayrak `ghoStellarStarterFundsOffered_<publicKey>`; başarısızlık kendi
+  kendine tekrar denenmez, kullanıcı Settings'ten dener). Banka bekleme adımı
+  overlay'de "Continue in background" sunar: kapatılırsa akış sessizce sürer,
+  sonuç (veya hata) bittiğinde yine gösterilir. `ApiClient` artık zaman aşımı
+  taşır (bağlanma 10 sn, gönderme/alma 30 sn; Dio'nun varsayılanı sonsuzdu) ve
+  `balancesProvider` Riverpod 3'ün otomatik yeniden denemesini kullanmaz
+  (başarısız okuma dakikalarca "yükleniyor" kalıyordu). Giriş sırasındaki
+  sunucu tarafı `fundIfNeeded` XLM koymaya devam eder — fakat XLM arayüzde
+  görünmediğinden "hiçbir şey olmuyor" hissi vardı; asıl görünür sonuç artık
+  USDC. Mock anchor kapalıyken (1) ve (2) yine de yapılmış olur, net bir hata
+  gösterilir (`anchor.deposit_failed` / `anchor.deposit_pending`).
   Banka işlemlerinin geçmişi backend anchor ledger'ındadır; yerel aktivite
   loguna yazılmaz.
 - **Simülasyon hataları artık kendi kodunu taşır:** `cheque.simulation_failed`

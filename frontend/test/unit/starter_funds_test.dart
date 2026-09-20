@@ -19,10 +19,19 @@ class _Harness {
     List<AccountBalances>? balances,
     bool trustlineAlreadyReady = false,
     int maxPolls = 5,
+    int maxPollFailures = 3,
   })  : anchor = FakeStarterAnchorApi(),
         auth = FakeAuthApi(),
-        tx = FakeTxApi(),
-        horizon = FakeHorizonReadService(balances ?? [FakeHorizonReadService.fundedBalances()]) {
+        tx = FakeTxApi() {
+    horizon = TrustlineAwareHorizon(
+      anchor,
+      balances ??
+          [
+            FakeHorizonReadService.fundedBalances(
+              other: trustlineAlreadyReady ? {'USDC': '0.0000000'} : const {},
+            ),
+          ],
+    );
     container = ProviderContainer(overrides: <Override>[
       walletProvider.overrideWith(() => UnlockedWallet(KeyPair.random())),
       authApiProvider.overrideWithValue(auth),
@@ -39,6 +48,7 @@ class _Harness {
           pollInterval: Duration.zero,
           accountRetryDelay: Duration.zero,
           maxPolls: maxPolls,
+          maxPollFailures: maxPollFailures,
         ),
       ),
     ]);
@@ -47,7 +57,7 @@ class _Harness {
   final FakeStarterAnchorApi anchor;
   final FakeAuthApi auth;
   final FakeTxApi tx;
-  final FakeHorizonReadService horizon;
+  late final TrustlineAwareHorizon horizon;
   late final ProviderContainer container;
 
   StarterFunds get funds => container.read(starterFundsProvider);
@@ -142,12 +152,31 @@ void main() {
       );
     });
 
-    test('an account that already exists is fine even if friendbot refuses it again', () async {
+    test('an account that already exists is fine even if friendbot would refuse it again', () async {
       final h = _Harness();
       h.auth.fundResult = false; // friendbot: "already funded"
 
       final result = await h.funds.run();
 
+      expect(result.usdcAdded, isNotNull);
+      expect(h.auth.fundCalls, 0, reason: 'nothing to fund, so friendbot is not even asked');
+    });
+
+    test('an account that is short on network fees is topped up', () async {
+      final h = _Harness(balances: [FakeHorizonReadService.fundedBalances(native: '1.5000000')]);
+
+      await h.funds.run();
+
+      expect(h.auth.fundCalls, 1);
+    });
+
+    test('a Horizon that cannot be read yet does not stop the flow: friendbot is asked and Horizon retried', () async {
+      final h = _Harness(balances: [AccountBalances.notFunded, FakeHorizonReadService.fundedBalances()]);
+      h.horizon.failFirstReads = 1;
+
+      final result = await h.funds.run();
+
+      expect(h.auth.fundCalls, 1);
       expect(result.usdcAdded, isNotNull);
     });
 
@@ -182,6 +211,85 @@ void main() {
         h.funds.run(),
         throwsA(isA<ApiException>().having((e) => e.code, 'code', 'anchor.upstream_failed')),
       );
+    });
+  });
+
+  test('the trustline is read off Horizon: an account that has it is not asked to set it up again', () async {
+    final h = _Harness(trustlineAlreadyReady: true);
+
+    await h.funds.run();
+
+    expect(h.anchor.calls, isNot(contains('trustlineXdr')));
+    final sync = h.container.read(syncProvider.notifier) as TrustlineAwareSync;
+    expect(sync.refreshes, 1, reason: 'only the bookkeeping refresh after the deposit — no /sync before it');
+  });
+
+  test('the anchor login starts alongside the wallet setup, not after it', () async {
+    final h = _Harness();
+    h.container.read(anchorSessionProvider.notifier).clear();
+
+    await h.funds.run();
+
+    expect(h.container.read(anchorSessionProvider), 'fresh-jwt');
+    expect(h.anchor.calls.indexOf('challenge'), lessThan(h.anchor.calls.indexOf('trustlineXdr')));
+    expect(h.anchor.calls.where((c) => c == 'token'), hasLength(1), reason: 'one login, reused for every call');
+  });
+
+  group('waiting for the bank', () {
+    test('says what the anchor is doing, once per change, never for the final state', () async {
+      final h = _Harness(trustlineAlreadyReady: true);
+      h.anchor.statuses = ['pending_anchor', 'pending_anchor', 'pending_stellar', 'completed'];
+      final labels = <String>[];
+
+      await h.funds.run(progress: labels.add);
+
+      expect(labels.skip(labels.indexOf('Waiting for the bank…') + 1), [
+        'The anchor is processing it',
+        'Sending on Stellar',
+      ]);
+    });
+
+    test('announces the wait the user may walk away from, right when it starts', () async {
+      final h = _Harness(trustlineAlreadyReady: true);
+      final events = <String>[];
+
+      await h.funds.run(progress: events.add, canContinueInBackground: () => events.add('background'));
+
+      expect(events.last, 'background');
+      expect(events[events.length - 2], 'Waiting for the bank…');
+    });
+
+    test('a deposit the anchor holds for a trustline opens it once, then carries on', () async {
+      final h = _Harness(trustlineAlreadyReady: true);
+      h.anchor.statuses = ['pending_trust', 'pending_anchor', 'completed'];
+      final labels = <String>[];
+
+      final result = await h.funds.run(progress: labels.add);
+
+      expect(h.anchor.calls.where((c) => c == 'trustlineXdr'), hasLength(1));
+      expect(labels, contains('Enabling USDC…'));
+      expect(result.usdcAdded, '24.1000000');
+    });
+
+    test('a blip or two in the polling is ridden out', () async {
+      final h = _Harness(trustlineAlreadyReady: true);
+      h.anchor.pollFailures = 2;
+
+      final result = await h.funds.run();
+
+      expect(result.usdcAdded, '24.1000000');
+    });
+
+    test('an anchor that cannot be reached is reported at once, not after the whole wait', () async {
+      final h = _Harness(trustlineAlreadyReady: true, maxPolls: 50);
+      h.anchor.pollFailures = 99;
+
+      await expectLater(
+        h.funds.run(),
+        throwsA(isA<ApiException>().having((e) => e.code, 'code', 'network.error')),
+      );
+      expect(h.anchor.polls, 0, reason: 'every poll failed');
+      expect(h.anchor.calls.where((c) => c == 'transaction'), hasLength(3));
     });
   });
 

@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:ghostellar_app/core/errors/api_error.dart';
@@ -193,14 +195,36 @@ class FakeHorizonReadService extends Fake implements HorizonReadService {
   final List<AccountBalances> responses;
   int fetchCalls = 0;
 
+  /// The first this-many reads throw (Horizon unreachable / lagging).
+  int failFirstReads = 0;
+
   static AccountBalances fundedBalances({String native = '10000.0000000', Map<String, String> other = const {}}) =>
       AccountBalances(native: native, other: other);
 
   @override
   Future<AccountBalances> fetchBalances(String accountId) async {
+    if (failFirstReads > 0) {
+      failFirstReads--;
+      throw Exception('horizon down');
+    }
     final i = fetchCalls < responses.length ? fetchCalls : responses.length - 1;
     fetchCalls++;
     return responses[i];
+  }
+}
+
+/// Horizon as the starter-funds flow sees it: like [FakeHorizonReadService],
+/// plus a zero-balance USDC trustline appearing once the fake anchor has
+/// confirmed one.
+class TrustlineAwareHorizon extends FakeHorizonReadService {
+  TrustlineAwareHorizon(this.anchor, [super.responses]);
+  final FakeStarterAnchorApi anchor;
+
+  @override
+  Future<AccountBalances> fetchBalances(String accountId) async {
+    final b = await super.fetchBalances(accountId);
+    if (!b.exists || !anchor.trustlineConfirmed || b.other.containsKey('USDC')) return b;
+    return AccountBalances(native: b.native, other: {...b.other, 'USDC': '0.0000000'});
   }
 }
 
@@ -256,6 +280,21 @@ class FakeStarterAnchorApi extends Fake implements AnchorApi {
   Map<String, Object?>? report;
   int polls = 0;
 
+  /// The first this-many status polls fail (network blip / anchor down).
+  int pollFailures = 0;
+
+  @override
+  Future<({String transaction, String networkPassphrase})> challenge(String anchorId) async {
+    calls.add('challenge');
+    return (transaction: 'challenge-xdr', networkPassphrase: '');
+  }
+
+  @override
+  Future<String> token(String anchorId, String signedChallengeXdr) async {
+    calls.add('token');
+    return 'fresh-jwt';
+  }
+
   @override
   Future<String> trustlineXdr(String anchorId) async {
     calls.add('trustlineXdr');
@@ -286,6 +325,10 @@ class FakeStarterAnchorApi extends Fake implements AnchorApi {
   @override
   Future<Sep6Transaction> sep6Transaction(String anchorId, String anchorToken, String txId) async {
     calls.add('transaction');
+    if (pollFailures > 0) {
+      pollFailures--;
+      throw apiError('network.error');
+    }
     final status = statuses[polls < statuses.length ? polls : statuses.length - 1];
     polls++;
     return Sep6Transaction(
@@ -331,14 +374,28 @@ class FakeStarterFunds extends Fake implements StarterFunds {
   Duration? delay;
   final labels = <String>[];
 
+  /// When set, the flow reaches its "wait for the bank" step (the one the user
+  /// may leave) and stays there until [finish] completes.
+  Completer<void>? bankWait;
+
   @override
-  Future<StarterFundsResult> run({void Function(String label)? progress}) async {
+  Future<StarterFundsResult> run({
+    void Function(String label)? progress,
+    void Function()? canContinueInBackground,
+  }) async {
     runs++;
     const label = 'Preparing your wallet…';
     labels.add(label);
     progress?.call(label);
     final wait = delay;
     if (wait != null) await Future<void>.delayed(wait);
+    final bank = bankWait;
+    if (bank != null) {
+      progress?.call('Waiting for the bank…');
+      canContinueInBackground?.call();
+      await bank.future;
+      progress?.call('Sending on Stellar');
+    }
     if (error != null) throw error!;
     return StarterFundsResult(usdcAdded: usdcAdded);
   }

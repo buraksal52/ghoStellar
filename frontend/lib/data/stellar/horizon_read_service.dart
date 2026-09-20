@@ -39,6 +39,10 @@ class AccountBalances {
     return value != null && value > BigInt.zero;
   }
 
+  /// Whether the account has the app's asset trustline open — even with a zero
+  /// balance, which Horizon still lists. Always true for native XLM.
+  bool get hasPayAssetTrustline => payAssetIsNative || other.containsKey(PayAsset.configured.code);
+
   /// Stellar needs a little XLM on every account for fees and the reserve
   /// (1 base + 0.5 per trustline), but the app never shows XLM as an amount —
   /// only this warning when it runs low. 2 XLM leaves room for the base

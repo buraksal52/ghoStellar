@@ -11,7 +11,16 @@ import '../storage/secure_wallet_store.dart';
 class ApiClient {
   ApiClient({required SecureWalletStore walletStore, Dio? dio})
       : _walletStore = walletStore,
-        _dio = dio ?? Dio(BaseOptions(baseUrl: Env.gatewayBaseUrl)) {
+        _dio = dio ??
+            Dio(BaseOptions(
+              baseUrl: Env.gatewayBaseUrl,
+              // Dio waits forever by default: one unanswered request would
+              // leave a screen (or the signing overlay) spinning for good.
+              // A timeout surfaces as `network.error` like any other outage.
+              connectTimeout: const Duration(seconds: 10),
+              sendTimeout: const Duration(seconds: 30),
+              receiveTimeout: const Duration(seconds: 30),
+            )) {
     _dio.interceptors.add(
       InterceptorsWrapper(
         onRequest: (options, handler) async {
