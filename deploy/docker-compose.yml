@@ -56,6 +56,7 @@ services:
       INTERNAL_API_KEY: ${INTERNAL_API_KEY}
       HORIZON_URL: ${HORIZON_URL:-https://horizon-testnet.stellar.org}
       SOROBAN_RPC_URL: ${SOROBAN_RPC_URL:-https://soroban-testnet.stellar.org}
+      FRIENDBOT_URL: ${FRIENDBOT_URL:-https://friendbot.stellar.org}
     # No host port mapping (SERVICE.md #16): only apisix (9080/9443) is
     # reachable from the host. Every other service is reached over the
     # docker network by container name (e.g. http://pay-chain-gateway:8082),

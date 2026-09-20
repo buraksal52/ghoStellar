@@ -30,6 +30,7 @@ services:
       JWT_PUBLIC_KEY_PATH: /secrets/jwt_public.pem
       HORIZON_URL: ${HORIZON_URL:-https://horizon-testnet.stellar.org}
       SOROBAN_RPC_URL: ${SOROBAN_RPC_URL:-https://soroban-testnet.stellar.org}
+      FRIENDBOT_URL: ${FRIENDBOT_URL:-https://friendbot.stellar.org}
       PAY_ESCROW_CONTRACT_ID: ${PAY_ESCROW_CONTRACT_ID}
       ASSET_SAC_CONTRACT_ID: ${ASSET_SAC_CONTRACT_ID}
       ASSET_CODE: ${ASSET_CODE:-USDC}

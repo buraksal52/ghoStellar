@@ -333,6 +333,16 @@ Tasarım kararları:
   eşleşmediğine bakar (`cmd/authsvc`, `cmd/monolith`'teki
   `shouldFundNewAccounts`) — mainnet'te friendbot zaten yok, kod kendiliğinden
   kapanır.
+- **Friendbot ayrı bir host'tur, `FRIENDBOT_URL` ile yapılandırılır.**
+  `chain.Service.Fund` önce SDK'nın `horizonclient.Fund`'ını kullanıyordu;
+  Horizon `/friendbot`'a `friendbot.stellar.org`'a **307 redirect** verir ve
+  `pkg/nethost` allow-list'i redirect hop'larını da denetler — allow-list'te
+  yalnızca Horizon/Soroban olduğundan istek her seferinde `host not
+  allow-listed` ile reddediliyor, hem login'deki otomatik fund hem
+  `POST /auth/fund` sessizce `funded:false` dönüyordu. Artık `Fund`
+  `FRIENDBOT_URL`'i (varsayılan `https://friendbot.stellar.org`) doğrudan
+  çağırır ve host'u allow-list'e eklenir. Boş değer = fund kapalı
+  (`chain.funding_disabled`, "boş env var = özellik kapalı" kalıbı).
 - **USDC trustline açmaz.** Friendbot yalnızca native XLM verir; çek akışının
   ihtiyaç duyduğu trustline ayrı bir akıştır (SEP-6/24 anchor akışı veya
   manuel `change_trust`), burada ele alınmadı.

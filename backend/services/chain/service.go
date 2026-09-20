@@ -8,7 +8,10 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
+	"net/url"
+	"strings"
 
 	"github.com/stellar/go-stellar-sdk/clients/horizonclient"
 	"github.com/stellar/go-stellar-sdk/clients/rpcclient"
@@ -26,10 +29,12 @@ const sendTransactionStatusError = "ERROR"
 // Config configures a Service. SorobanRPCURL empty means Soroban support is
 // disabled (the "boş env var = özellik kapalı" contract, architecture.md
 // §4.6) — the service still starts, but Soroban-only endpoints answer
-// chain.soroban_disabled.
+// chain.soroban_disabled. FriendbotURL empty likewise disables Fund
+// (chain.funding_disabled) — friendbot only exists on test networks.
 type Config struct {
 	HorizonURL    string
 	SorobanRPCURL string
+	FriendbotURL  string
 	NetworkPass   string
 }
 
@@ -37,11 +42,15 @@ type Config struct {
 // SorobanRPCURL was left empty.
 var ErrSorobanDisabled = errors.New("chain: soroban rpc not configured")
 
+// ErrFundingDisabled is returned by Fund when FriendbotURL was left empty.
+var ErrFundingDisabled = errors.New("chain: friendbot not configured")
+
 // Service is the real Horizon/Soroban client. It implements
 // ports.ChainGateway directly, so directadapter (monolith mode) can wrap it
 // with zero glue, and pay-chain-gateway's own HTTP handlers call it too.
 type Service struct {
 	cfg     Config
+	hc      *http.Client
 	horizon *horizonclient.Client
 	rpc     *rpcclient.Client
 }
@@ -57,7 +66,10 @@ func NewService(cfg Config, hc *http.Client) *Service {
 	if cfg.SorobanRPCURL != "" {
 		rpc = rpcclient.NewClient(cfg.SorobanRPCURL, hc)
 	}
-	return &Service{cfg: cfg, horizon: horizonC, rpc: rpc}
+	if hc == nil {
+		hc = http.DefaultClient
+	}
+	return &Service{cfg: cfg, hc: hc, horizon: horizonC, rpc: rpc}
 }
 
 func (s *Service) GetAccount(ctx context.Context, address string) (ports.AccountInfo, error) {
@@ -173,9 +185,28 @@ func (s *Service) SubmitSoroban(ctx context.Context, signedXDR string) (ports.Su
 	}, nil
 }
 
+// Fund asks friendbot to create and fund address. It calls FriendbotURL
+// directly rather than horizonclient.Client.Fund: Horizon answers
+// /friendbot with a 307 to a different host, and the nethost allow-list
+// (which this client is wrapped in) checks every redirect hop, so the SDK
+// path was always rejected with "host not allow-listed".
 func (s *Service) Fund(ctx context.Context, address string) error {
-	if _, err := s.horizon.Fund(address); err != nil {
+	if s.cfg.FriendbotURL == "" {
+		return ErrFundingDisabled
+	}
+	base := strings.TrimRight(s.cfg.FriendbotURL, "/?")
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, base+"/?addr="+url.QueryEscape(address), nil)
+	if err != nil {
+		return fmt.Errorf("chain: friendbot fund: build request: %w", err)
+	}
+	resp, err := s.hc.Do(req)
+	if err != nil {
 		return fmt.Errorf("chain: friendbot fund: %w", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode < 200 || resp.StatusCode > 299 {
+		body, _ := io.ReadAll(io.LimitReader(resp.Body, 512))
+		return fmt.Errorf("chain: friendbot fund: status %d: %s", resp.StatusCode, strings.TrimSpace(string(body)))
 	}
 	return nil
 }

@@ -72,13 +72,16 @@ func main() {
 	// ---- chain (in-process, no HTTP) --------------------------------------
 	horizonURL := envx.Get("HORIZON_URL", "https://horizon-testnet.stellar.org")
 	sorobanURL := envx.Get("SOROBAN_RPC_URL", "https://soroban-testnet.stellar.org")
+	// Friendbot is its own host: Horizon's /friendbot only 307-redirects to
+	// it, and the allow-list below rejects redirect hops to unlisted hosts.
+	friendbotURL := envx.Get("FRIENDBOT_URL", "https://friendbot.stellar.org")
 	chainAllow := nethost.AllowList{}
-	for _, host := range []string{hostOf(horizonURL), hostOf(sorobanURL)} {
+	for _, host := range []string{hostOf(horizonURL), hostOf(sorobanURL), hostOf(friendbotURL)} {
 		if host != "" {
 			chainAllow[host] = true
 		}
 	}
-	chainSvc := chain.NewService(chain.Config{HorizonURL: horizonURL, SorobanRPCURL: sorobanURL}, nethost.Client(chainAllow))
+	chainSvc := chain.NewService(chain.Config{HorizonURL: horizonURL, SorobanRPCURL: sorobanURL, FriendbotURL: friendbotURL}, nethost.Client(chainAllow))
 	chainGW := directadapter.NewChainGateway(chainSvc)
 
 	// ---- auth ---------------------------------------------------------------

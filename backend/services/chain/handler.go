@@ -130,5 +130,9 @@ func writeChainError(w http.ResponseWriter, err error) {
 		httpx.WriteError(w, http.StatusServiceUnavailable, "chain.soroban_disabled", "Soroban RPC is not configured on this deployment", nil)
 		return
 	}
+	if errors.Is(err, ErrFundingDisabled) {
+		httpx.WriteError(w, http.StatusServiceUnavailable, "chain.funding_disabled", "friendbot is not configured on this deployment", nil)
+		return
+	}
 	httpx.WriteError(w, http.StatusBadGateway, "chain.rpc_unavailable", err.Error(), nil)
 }
