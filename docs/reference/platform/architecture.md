@@ -39,6 +39,7 @@ flowchart TB
     cheque -. "DB" .-> db
     tx -. "DB" .-> db
     anchor -. "DB" .-> db
+    auth -->|internal HTTP<br/>X-Internal-Api-Key<br/>friendbot fund only| chain
     cheque -->|internal HTTP<br/>X-Internal-Api-Key| chain
     tx -->|internal HTTP<br/>X-Internal-Api-Key| chain
     scheduler -->|internal HTTP| chain
@@ -55,7 +56,10 @@ instance'ını kullanır. Tablolar `pay` şemasında olsa da servisler yalnızca
 kendi sorumluluğundaki tablolara erişir. APISIX dış API yollarını yönlendirir;
 scheduler ve chain-gateway'in iç uçları edge'den yayınlanmaz.
 
-`pay-auth-service` Horizon/Soroban'a çıkmaz. Scheduler'ın kendi HTTP API'si
+`pay-auth-service` Horizon/Soroban'a doğrudan çıkmaz — tek istisna, ilk
+başarılı SEP-10 login'de yeni hesabı testnet friendbot'uyla fonlamak için
+`pay-chain-gateway`'in `ChainGateway` portunu (best-effort, kimsenin parasını
+hareket ettirmez) kullanması (SERVICE.md #24). Scheduler'ın kendi HTTP API'si
 yoktur; süre aşımı ve TTL işleri için cheque-service ile chain-gateway'i
 internal HTTP üzerinden çağırır.
 

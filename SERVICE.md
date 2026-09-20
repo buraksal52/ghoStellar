@@ -312,3 +312,58 @@ mesaj çevrimdışı ödeme bağlamında biraz yanıltıcı (kullanıcı hiçbir
 kendisi imzalamamış olabilir, ikinci bir cihaz/oturum sequence'ı
 ilerletmiş olabilir). Kapatma yolu: `offline_payment` amaçlı
 gönderimlerde bu koda özel bir metin.
+
+## 24. Yeni hesaplar friendbot ile otomatik fonlanıyor (yalnızca testnet)
+
+`pay-auth-service`, ilk başarılı SEP-10 login'de (`services/auth/service.go`
+`fundIfNeeded`) hesabı zincirde `GetAccount` ile kontrol eder; yoksa
+`ports.ChainGateway.Fund` üzerinden testnet friendbot'unu çağırır. Amaç: hiç
+XLM tutmamış yeni bir cüzdanın kendi ilk işleminin ücretini bile ödeyemediği
+"0 bakiyeli başlama" durumunu ortadan kaldırmak.
+
+Tasarım kararları:
+
+- **Best-effort, asla login'i başarısız kılmaz** — `pkg.audit_log`'a yazma
+  hatasının login'i etkilememesiyle aynı kalıp (madde 11). Friendbot rate
+  limit'e takılırsa veya Horizon geçici olarak cevap vermezse kullanıcı yine
+  giriş yapar, hesabı 0 bakiyeli kalabilir; bir sonraki login'de tekrar
+  denenir (tetikleyici "DB satırı yeni mi" değil, "zincirde hesap var mı").
+- **Yalnızca testnet.** `FUND_NEW_ACCOUNTS` env'i açıkça verilmemişse
+  varsayılan, `NETWORK_PASSPHRASE`'in testnet parolasıyla eşleşip
+  eşleşmediğine bakar (`cmd/authsvc`, `cmd/monolith`'teki
+  `shouldFundNewAccounts`) — mainnet'te friendbot zaten yok, kod kendiliğinden
+  kapanır.
+- **USDC trustline açmaz.** Friendbot yalnızca native XLM verir; çek akışının
+  ihtiyaç duyduğu trustline ayrı bir akıştır (SEP-6/24 anchor akışı veya
+  manuel `change_trust`), burada ele alınmadı.
+- `ports.ChainGateway.Fund` (`ports/ports.go`) daha önce üretim kodunda hiçbir
+  çağırana sahip değildi (yalnızca testlerde kullanılıyordu) — artık
+  `pay-auth-service`'in iki gerçek çağıranı var: `fundIfNeeded` (otomatik,
+  login'de) ve `FundOwnAccount` (manuel, aşağıda).
+
+**Manuel kurtarma yolu: `POST /auth/fund`.** Zaten sıkışmış (fonsuz hesapla
+"Set up USDC" gibi bir işlemin `chain.account_not_funded`'a düşmüş) bir
+kullanıcı, bir sonraki login'i beklemek zorunda kalmasın diye
+`services/auth/handler.go`'daki `Fund`, çağıranın kendi (JWT'deki) adresini
+`FundOwnAccount` ile fonlar. `fundIfNeeded`'dan farkı: `Exists` kontrolü
+yapmaz (istisnasız dener — birkaç fazladan ücretsiz testnet XLM zarar
+vermez) ve `pay.audit_log`'a yazmaz (bu, bir routine login olayı değil,
+kullanıcının kendi tetiklediği bir eylem). İstemci tarafında Settings
+sayfasındaki "Fund with testnet XLM" butonu bunu çağırır
+(`frontend/lib/data/api/endpoints/auth_api.dart:fundTestnetXlm`). Her zaman
+200 döner (`{"funded": true|false}`) — best-effort, `FundOwnAccount` hiçbir
+zaman hata döndürmez.
+
+**İlişkili sertleştirme: `chain.account_not_funded` / `anchor.account_not_funded`.**
+Bu maddenin kapattığı asıl kullanıcı hatası ("Submitting to Stellar failed.
+Try again." — USDC trustline kurulumunda) iki katmanlıydı: (1) yeni
+cüzdanlar hiç fonlanmıyordu, (2) `anchor.TrustlineXDR`/`WithdrawPaymentXDR`
+ve `cheque.PoolDepositXDR`/`PoolWithdrawXDR`, `chain.GetAccount`'un
+`Exists:false` dönüşünü hiç kontrol etmeden `Sequence: 0` ile bozuk bir
+işlem kurup imzalanmaya/Horizon'a gönderilmeye kadar bırakıyordu — Horizon'un
+reddi (`tx_no_source_account` gibi) istemcinin bilinen dört kodundan
+(`tx_insufficient_balance`/`tx_failed`/`tx_bad_auth`/`tx_bad_seq`) biri
+olmadığı için jenerik hataya düşüyordu. (1) bu madde, (2) dört fonksiyona
+eklenen `if !account.Exists { return errAccountNotFunded }` kontrolüyle
+kapatıldı — `cheque.CreateCheque`'in kendi (dolaylı, `hasSufficientBalance`
+üzerinden) yolu bilinçli olarak dokunulmadan bırakıldı.

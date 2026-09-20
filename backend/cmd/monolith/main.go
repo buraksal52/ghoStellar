@@ -19,6 +19,7 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"strconv"
 	"time"
 
 	"github.com/golang-jwt/jwt/v5"
@@ -81,14 +82,16 @@ func main() {
 	chainGW := directadapter.NewChainGateway(chainSvc)
 
 	// ---- auth ---------------------------------------------------------------
+	authNetworkPassphrase := envx.Get("NETWORK_PASSPHRASE", stellarx.TestNetworkPassphrase)
 	authSvc := auth.NewService(auth.Config{
 		ServerSigningSeed: envx.MustGet("SEP10_SIGNING_SEED"),
 		HomeDomain:        envx.Get("HOME_DOMAIN", "localhost"),
 		WebAuthDomain:     webAuthDomain,
-		NetworkPassphrase: envx.Get("NETWORK_PASSPHRASE", stellarx.TestNetworkPassphrase),
+		NetworkPassphrase: authNetworkPassphrase,
 		JWTPrivateKey:     privKey,
 		JWTPublicKey:      pubKey,
-	}, pool)
+		FundNewAccounts:   shouldFundNewAccounts(authNetworkPassphrase),
+	}, pool, chainGW, logger)
 	authHandler := auth.NewHandler(authSvc)
 
 	// ---- cheque ---------------------------------------------------------------
@@ -192,6 +195,20 @@ func readKey(envName, pathEnv, defaultPath string) ([]byte, error) {
 
 func unauthorized(w http.ResponseWriter) {
 	httpx.WriteError(w, http.StatusUnauthorized, "auth.invalid_token", "missing or invalid bearer token", nil)
+}
+
+// shouldFundNewAccounts controls the best-effort testnet friendbot fund on
+// first login (SERVICE.md #24) — see cmd/authsvc's identical helper for the
+// rationale (kept duplicated rather than shared: cmd/* packages are each
+// main, not a library).
+func shouldFundNewAccounts(networkPassphrase string) bool {
+	if v := envx.Get("FUND_NEW_ACCOUNTS", ""); v != "" {
+		b, err := strconv.ParseBool(v)
+		if err == nil {
+			return b
+		}
+	}
+	return networkPassphrase == stellarx.TestNetworkPassphrase
 }
 
 func hostOf(rawURL string) string {

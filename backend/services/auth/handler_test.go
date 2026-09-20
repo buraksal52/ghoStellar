@@ -3,6 +3,7 @@ package auth
 import (
 	"bytes"
 	"context"
+	"crypto/rsa"
 	"encoding/json"
 	"errors"
 	"net/http"
@@ -15,6 +16,7 @@ import (
 
 	"github.com/local-payment/backend/pkg/authx"
 	"github.com/local-payment/backend/pkg/httpx"
+	"github.com/local-payment/backend/ports/portstest"
 )
 
 func TestHandler_Challenge_InvalidAccountRejected(t *testing.T) {
@@ -214,5 +216,104 @@ func testServiceAndServerWithRepo(t *testing.T, repo authRepo) (*Service, *keypa
 		JWTPrivateKey:     priv,
 		JWTPublicKey:      pub,
 	}
-	return newServiceWithRepo(cfg, repo), serverKP
+	return newServiceWithRepo(cfg, repo, nil, discardLogger()), serverKP
+}
+
+// ---- Fund (the manual "Fund with testnet XLM" action) ----------------------
+
+// authedRequest builds a bearer-protected mux around h and a matching signed
+// token for address — the shared setup every Fund test needs.
+func authedRequest(t *testing.T, h *Handler, priv *rsa.PrivateKey, address string) (http.Handler, string) {
+	t.Helper()
+	now := time.Now()
+	claims := authx.Claims{
+		RegisteredClaims: jwt.RegisteredClaims{
+			ExpiresAt: jwt.NewNumericDate(now.Add(time.Hour)),
+			IssuedAt:  jwt.NewNumericDate(now),
+			Subject:   "access",
+		},
+		StellarAccount: address,
+	}
+	tok, err := jwt.NewWithClaims(jwt.SigningMethodRS256, claims).SignedString(priv)
+	if err != nil {
+		t.Fatal(err)
+	}
+	mux := http.NewServeMux()
+	RegisterProtectedRoutes(mux, h)
+	protected := authx.RequireBearer(&priv.PublicKey, "", func(w http.ResponseWriter) {
+		httpx.WriteError(w, http.StatusUnauthorized, ErrInvalidToken, "missing bearer claims", nil)
+	}, mux)
+	return protected, tok
+}
+
+func TestHandler_Fund_RequiresBearer(t *testing.T) {
+	svc, _ := testServiceAndServer(t)
+	h := NewHandler(svc)
+
+	req := httptest.NewRequest("POST", "/auth/fund", nil)
+	rec := httptest.NewRecorder()
+	h.Fund(rec, req)
+
+	if rec.Code != http.StatusUnauthorized {
+		t.Fatalf("got status %d, want 401", rec.Code)
+	}
+}
+
+func TestHandler_Fund_FundsTheCallersOwnAddress(t *testing.T) {
+	priv, _ := testJWTKeys(t)
+	address := "GADDRXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX"
+	chain := &portstest.FakeChain{}
+	svc, _ := testServiceAndServerWithChain(t, chain, true)
+	h := NewHandler(svc)
+	mux, tok := authedRequest(t, h, priv, address)
+
+	req := httptest.NewRequest("POST", "/auth/fund", nil)
+	req.Header.Set("Authorization", "Bearer "+tok)
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("got status %d, body=%s", rec.Code, rec.Body.String())
+	}
+	var env struct {
+		Data struct {
+			Funded bool `json:"funded"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &env); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if !env.Data.Funded {
+		t.Error("funded = false, want true")
+	}
+	if chain.FundCalls != 1 {
+		t.Errorf("FundCalls = %d, want 1", chain.FundCalls)
+	}
+}
+
+func TestHandler_Fund_ReportsFalseWithoutErroringWhenUnavailable(t *testing.T) {
+	priv, _ := testJWTKeys(t)
+	svc, _ := testServiceAndServer(t) // FundNewAccounts=false (e.g. mainnet)
+	h := NewHandler(svc)
+	mux, tok := authedRequest(t, h, priv, "GADDR")
+
+	req := httptest.NewRequest("POST", "/auth/fund", nil)
+	req.Header.Set("Authorization", "Bearer "+tok)
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("got status %d, want 200 even when funding is unavailable, body=%s", rec.Code, rec.Body.String())
+	}
+	var env struct {
+		Data struct {
+			Funded bool `json:"funded"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &env); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if env.Data.Funded {
+		t.Error("funded = true, want false")
+	}
 }

@@ -46,13 +46,15 @@ type LedgerInfo struct {
 
 // SimulateResult is a trimmed view of Soroban's simulateTransaction
 // response: just enough for a caller to assemble a submittable transaction
-// (resource footprint + fee) without depending on the RPC wire format.
+// (resource footprint + fee + required auth) without depending on the RPC
+// wire format.
 type SimulateResult struct {
-	Success            bool   `json:"success"`
-	Error              string `json:"error,omitempty"`
-	TransactionDataXDR string `json:"transactionDataXdr,omitempty"`
-	MinResourceFee     int64  `json:"minResourceFee,omitempty"`
-	ResultXDR          string `json:"resultXdr,omitempty"`
+	Success            bool     `json:"success"`
+	Error              string   `json:"error,omitempty"`
+	TransactionDataXDR string   `json:"transactionDataXdr,omitempty"`
+	MinResourceFee     int64    `json:"minResourceFee,omitempty"`
+	ResultXDR          string   `json:"resultXdr,omitempty"`
+	AuthXDR            []string `json:"authXdr,omitempty"` // base64 SorobanAuthorizationEntry per required auth; recording-mode simulation fills this when the invoked function itself calls require_auth (deposit/withdraw/lock/claim's own address, NOT force_collect's pre-signed entry)
 }
 
 // SubmitResult is the outcome of handing a signed envelope to the network,

@@ -9,6 +9,7 @@ import (
 	"crypto/rsa"
 	"errors"
 	"fmt"
+	"log/slog"
 	"time"
 
 	"github.com/golang-jwt/jwt/v5"
@@ -17,6 +18,7 @@ import (
 
 	"github.com/local-payment/backend/pkg/authx"
 	"github.com/local-payment/backend/pkg/dbx"
+	"github.com/local-payment/backend/ports"
 )
 
 // ErrDBNotReady is returned during the brief post-boot window before the
@@ -29,6 +31,12 @@ const (
 	challengeTimebound = 5 * time.Minute
 	accessTokenTTL     = 15 * time.Minute
 	refreshTokenTTL    = 30 * 24 * time.Hour
+
+	// fundTimeout bounds the best-effort friendbot call below so a slow or
+	// hanging Horizon never turns a successful login into a slow one — and
+	// so it outlives a client that disconnects right after POSTing (see
+	// fundIfNeeded's use of context.WithoutCancel).
+	fundTimeout = 20 * time.Second
 )
 
 // Config configures Service. ServerSigningSeed is the "S..." secret of the
@@ -42,20 +50,33 @@ type Config struct {
 	NetworkPassphrase string
 	JWTPrivateKey     *rsa.PrivateKey
 	JWTPublicKey      *rsa.PublicKey
+
+	// FundNewAccounts turns on the best-effort testnet friendbot fund on
+	// first login (SERVICE.md #24). It has no business being true against
+	// a mainnet Horizon — cmd/authsvc and cmd/monolith default it off
+	// unless NETWORK_PASSPHRASE is the testnet passphrase.
+	FundNewAccounts bool
 }
 
 type Service struct {
 	cfg   Config
 	repos func() (authRepo, error)
+	chain ports.ChainGateway
+	log   *slog.Logger
 }
 
 // NewService constructs a Service. pool need not be connected yet — every
 // DB-touching method re-derives a Repository from pool.Get() on each call
 // and returns ErrDBNotReady during the brief async-connect window at boot
 // (pkg/dbx), rather than requiring a two-phase "attach the repo later"
-// wiring dance.
-func NewService(cfg Config, pool *dbx.Pool) *Service {
-	return &Service{cfg: cfg, repos: func() (authRepo, error) {
+// wiring dance. chain may be nil when cfg.FundNewAccounts is false (e.g. a
+// mainnet deploy that never wires a ChainGateway into pay-auth-service at
+// all); log defaults to slog.Default() when nil.
+func NewService(cfg Config, pool *dbx.Pool, chain ports.ChainGateway, log *slog.Logger) *Service {
+	if log == nil {
+		log = slog.Default()
+	}
+	return &Service{cfg: cfg, chain: chain, log: log, repos: func() (authRepo, error) {
 		p := pool.Get()
 		if p == nil {
 			return nil, ErrDBNotReady
@@ -66,8 +87,11 @@ func NewService(cfg Config, pool *dbx.Pool) *Service {
 
 // newServiceWithRepo is the test seam: the same Service, wired to a
 // caller-supplied repo instead of a *dbx.Pool.
-func newServiceWithRepo(cfg Config, repo authRepo) *Service {
-	return &Service{cfg: cfg, repos: func() (authRepo, error) { return repo, nil }}
+func newServiceWithRepo(cfg Config, repo authRepo, chain ports.ChainGateway, log *slog.Logger) *Service {
+	if log == nil {
+		log = slog.Default()
+	}
+	return &Service{cfg: cfg, chain: chain, log: log, repos: func() (authRepo, error) { return repo, nil }}
 }
 
 // Challenge builds a SEP-10 challenge transaction for account to sign.
@@ -132,6 +156,11 @@ func (s *Service) VerifyAndMint(ctx context.Context, signedChallengeXDR string) 
 		return TokenPair{}, User{}, fmt.Errorf("auth: upsert user: %w", err)
 	}
 
+	// Best-effort, never fails the login (SERVICE.md #24 mirrors #11's
+	// audit-write contract): a testnet wallet that has never held XLM
+	// otherwise has no way to pay its own first transaction fee.
+	s.fundIfNeeded(ctx, repo, clientAccountID)
+
 	pair, err := s.mintPair(clientAccountID)
 	if err != nil {
 		return TokenPair{}, User{}, err
@@ -140,6 +169,62 @@ func (s *Service) VerifyAndMint(ctx context.Context, signedChallengeXDR string) 
 	// a successful login into a reported failure.
 	_ = repo.InsertAudit(ctx, clientAccountID, "auth.login_succeeded", nil)
 	return pair, user, nil
+}
+
+// fundIfNeeded best-effort funds address via testnet friendbot
+// (ports.ChainGateway.Fund) the first time it is seen on chain. It never
+// returns an error to its caller — VerifyAndMint's login must succeed
+// whether or not friendbot cooperates (SERVICE.md #24). The trigger is "does
+// the account exist on chain", not "is this a new DB row": that makes a
+// previously-failed fund self-heal on the user's next login, and skips the
+// friendbot round trip entirely once an account is funded.
+func (s *Service) fundIfNeeded(parent context.Context, repo authRepo, address string) {
+	if !s.cfg.FundNewAccounts || s.chain == nil {
+		return
+	}
+	// context.WithoutCancel: a client that disconnects the instant it POSTs
+	// must not abort the fund attempt mid-flight — it isn't on the response
+	// path at all.
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(parent), fundTimeout)
+	defer cancel()
+
+	info, err := s.chain.GetAccount(ctx, address)
+	if err != nil {
+		s.log.Warn("auth: fundIfNeeded: GetAccount failed", "address", address, "error", err)
+		return
+	}
+	if info.Exists {
+		return
+	}
+	if err := s.chain.Fund(ctx, address); err != nil {
+		s.log.Warn("auth: fundIfNeeded: friendbot fund failed", "address", address, "error", err)
+		return
+	}
+	_ = repo.InsertAudit(ctx, address, "auth.account_funded", nil)
+}
+
+// FundOwnAccount is the manual, on-demand counterpart to fundIfNeeded
+// (SERVICE.md #24): backs a "Fund with testnet XLM" button for someone
+// already stuck with an unfunded wallet, or who missed the automatic fund
+// at login. Unlike fundIfNeeded it does not check whether the account
+// already exists first — this is an explicit action a person asked for, and
+// a few extra free testnet XLM never hurts.
+//
+// Always returns (false, nil) rather than an error when funding isn't
+// possible (not a testnet deployment, or the friendbot call itself failed)
+// — best-effort by design, never something the caller should retry with
+// backoff over; the caller just tells the user it didn't work this time.
+func (s *Service) FundOwnAccount(ctx context.Context, address string) (bool, error) {
+	if !s.cfg.FundNewAccounts || s.chain == nil {
+		return false, nil
+	}
+	ctx, cancel := context.WithTimeout(ctx, fundTimeout)
+	defer cancel()
+	if err := s.chain.Fund(ctx, address); err != nil {
+		s.log.Warn("auth: FundOwnAccount: friendbot fund failed", "address", address, "error", err)
+		return false, nil
+	}
+	return true, nil
 }
 
 // Refresh mints a new access token from a still-valid refresh token,

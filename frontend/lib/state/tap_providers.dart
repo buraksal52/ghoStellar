@@ -66,6 +66,8 @@ class ReceiveSessionState {
     this.request,
     this.claimedChequeId,
     this.offlineSettlementPending = false,
+    this.nfcReading = false,
+    this.nfcError,
   });
 
   final ReceivePhase phase;
@@ -77,7 +79,31 @@ class ReceiveSessionState {
   /// cheque actually claimed on chain — the balance isn't real yet.
   final bool offlineSettlementPending;
 
+  /// True while [ReceiveSessionNotifier.beginNfcRead] is actively waiting for
+  /// a tap — drives the "Hold near their phone…" button state. Cleared
+  /// whenever the phase moves on (a plain `ReceiveSessionState(...)`
+  /// construction, as every phase transition uses, defaults it back to
+  /// false).
+  final bool nfcReading;
+
+  /// A timeout or hardware error from the last [ReceiveSessionNotifier.beginNfcRead].
+  final String? nfcError;
+
   static const idle = ReceiveSessionState();
+
+  /// Copies only the NFC-read display fields, keeping everything else (phase,
+  /// request, …) — used so toggling the read indicator never disturbs the
+  /// rest of the session state.
+  ReceiveSessionState copyWith({bool? nfcReading, String? nfcError, bool clearNfcError = false}) {
+    return ReceiveSessionState(
+      phase: phase,
+      request: request,
+      claimedChequeId: claimedChequeId,
+      offlineSettlementPending: offlineSettlementPending,
+      nfcReading: nfcReading ?? this.nfcReading,
+      nfcError: clearNfcError ? null : (nfcError ?? this.nfcError),
+    );
+  }
 }
 
 /// The receiver's half of a tap/scan payment.
@@ -106,9 +132,14 @@ class ReceiveSessionNotifier extends Notifier<ReceiveSessionState> {
   /// submit → confirm) after they picked up the request.
   static const handoffWindow = Duration(minutes: 2);
 
+  /// How long [beginNfcRead] waits for a tap before giving up — matches the
+  /// sender-side wait in `RecipientResolverSheet`.
+  static const nfcWait = Duration(seconds: 30);
+
   Timer? _poll;
   Timer? _rotate;
   Timer? _awaitTimer;
+  Timer? _nfcReadTimer;
   StreamSubscription<void>? _deliveredSub;
   StreamSubscription<String>? _peerSub;
 
@@ -168,18 +199,42 @@ class ReceiveSessionNotifier extends Notifier<ReceiveSessionState> {
     state = ReceiveSessionState.idle;
   }
 
-  /// Starts a one-shot NFC read, for a device that can only be the reader
-  /// (an iPhone): it pulls the other phone's payload and writes our request
-  /// to it in the same tap. Call it for the first tap and again for the
-  /// second (the cheque handoff). A no-op where we are the tag already.
+  /// Starts an NFC read and shows a "Hold near their phone…" state until
+  /// either a tap lands or [nfcWait] passes with nothing found.
+  ///
+  /// On a device that can only be the reader (an iPhone), this pulls the
+  /// other phone's payload and writes our request to it in the same tap —
+  /// call it for the first tap and again for the second (the cheque
+  /// handoff). On a device that is already the tag (Android), the radio is
+  /// already presenting via [_offer]/[setOffer]; this only surfaces the
+  /// waiting state, since re-starting the tag session would reset the
+  /// broadcast mid-flight.
   Future<void> beginNfcRead() async {
     final uri = _offerUri;
     final nfc = ref.read(nfcServiceProvider);
-    if (uri == null || !nfc.canRead || nfc.canBeTag) return;
+    if (uri == null || !nfc.isAvailable) return;
+
+    state = state.copyWith(nfcReading: true, clearNfcError: true);
+    _nfcReadTimer?.cancel();
+    _nfcReadTimer = Timer(nfcWait, () {
+      if (!state.nfcReading) return;
+      state = state.copyWith(
+        nfcReading: false,
+        nfcError: nfc.canBeTag
+            ? 'No phone found. Hold the phones back to back and try again, or scan their code.'
+            : "No phone found. An iPhone can only tap an Android phone — for another iPhone, scan their code.",
+      );
+    });
+
+    if (nfc.canBeTag) return; // Already presenting — nothing more to start.
     try {
       await nfc.start(role: NfcRole.reader, offer: uri);
     } catch (_) {
-      // NFC off/unavailable — the QR of the same request still works.
+      _nfcReadTimer?.cancel();
+      state = state.copyWith(
+        nfcReading: false,
+        nfcError: 'NFC is turned off or unavailable. Scan their code instead.',
+      );
     }
   }
 
@@ -413,11 +468,13 @@ class ReceiveSessionNotifier extends Notifier<ReceiveSessionState> {
     _poll?.cancel();
     _rotate?.cancel();
     _awaitTimer?.cancel();
+    _nfcReadTimer?.cancel();
     _deliveredSub?.cancel();
     _peerSub?.cancel();
     _poll = null;
     _rotate = null;
     _awaitTimer = null;
+    _nfcReadTimer = null;
     _deliveredSub = null;
     _peerSub = null;
   }

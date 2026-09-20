@@ -5,6 +5,7 @@ import (
 	"crypto/rand"
 	"crypto/rsa"
 	"errors"
+	"log/slog"
 	"testing"
 
 	"github.com/stellar/go-stellar-sdk/keypair"
@@ -12,9 +13,22 @@ import (
 
 	"github.com/local-payment/backend/pkg/authx"
 	"github.com/local-payment/backend/pkg/dbx"
+	"github.com/local-payment/backend/ports"
+	"github.com/local-payment/backend/ports/portstest"
 )
 
 const testPassphrase = "Test SDF Network ; September 2015"
+
+// discardLogger mirrors services/anchor's test helper of the same name —
+// a *slog.Logger that writes nowhere, so tests that must exercise a
+// best-effort warn-and-continue path don't spam test output.
+func discardLogger() *slog.Logger {
+	return slog.New(slog.NewTextHandler(discardWriter{}, nil))
+}
+
+type discardWriter struct{}
+
+func (discardWriter) Write(p []byte) (int, error) { return len(p), nil }
 
 func testJWTKeys(t *testing.T) (*rsa.PrivateKey, *rsa.PublicKey) {
 	t.Helper()
@@ -26,6 +40,13 @@ func testJWTKeys(t *testing.T) (*rsa.PrivateKey, *rsa.PublicKey) {
 }
 
 func testServiceAndServer(t *testing.T) (*Service, *keypair.Full) {
+	t.Helper()
+	return testServiceAndServerWithChain(t, nil, false)
+}
+
+// testServiceAndServerWithChain is testServiceAndServer but lets fund-path
+// tests wire in a fake ports.ChainGateway and toggle FundNewAccounts.
+func testServiceAndServerWithChain(t *testing.T, chain ports.ChainGateway, fundNewAccounts bool) (*Service, *keypair.Full) {
 	t.Helper()
 	serverKP, err := keypair.Random()
 	if err != nil {
@@ -39,8 +60,9 @@ func testServiceAndServer(t *testing.T) (*Service, *keypair.Full) {
 		NetworkPassphrase: testPassphrase,
 		JWTPrivateKey:     priv,
 		JWTPublicKey:      pub,
+		FundNewAccounts:   fundNewAccounts,
 	}
-	return newServiceWithRepo(cfg, newFakeRepo()), serverKP
+	return newServiceWithRepo(cfg, newFakeRepo(), chain, discardLogger()), serverKP
 }
 
 // signChallenge decodes the unsigned challenge XDR Challenge() returned and
@@ -192,10 +214,179 @@ func TestGetProfile_NotFound(t *testing.T) {
 func TestService_DBNotReady(t *testing.T) {
 	pool := &dbx.Pool{} // never connected
 	priv, pub := testJWTKeys(t)
-	svc := NewService(Config{JWTPrivateKey: priv, JWTPublicKey: pub, NetworkPassphrase: testPassphrase}, pool)
+	svc := NewService(Config{JWTPrivateKey: priv, JWTPublicKey: pub, NetworkPassphrase: testPassphrase}, pool, nil, discardLogger())
 
 	_, err := svc.GetProfile(context.Background(), "GADDR")
 	if !errors.Is(err, ErrDBNotReady) {
 		t.Fatalf("got %v, want ErrDBNotReady", err)
+	}
+}
+
+// loginAndSignChallenge drives a full Challenge -> sign -> VerifyAndMint
+// round trip and returns the address logged in with — the shared setup for
+// every fundIfNeeded test below.
+func loginAndSignChallenge(t *testing.T, svc *Service) (string, TokenPair, error) {
+	t.Helper()
+	clientKP, err := keypair.Random()
+	if err != nil {
+		t.Fatal(err)
+	}
+	unsignedXDR, err := svc.Challenge(clientKP.Address())
+	if err != nil {
+		t.Fatalf("Challenge: %v", err)
+	}
+	signedXDR := signChallenge(t, unsignedXDR, clientKP)
+	pair, _, err := svc.VerifyAndMint(context.Background(), signedXDR)
+	return clientKP.Address(), pair, err
+}
+
+func TestVerifyAndMint_FundsNewAccountOnChain(t *testing.T) {
+	chain := &portstest.FakeChain{
+		GetAccountFunc: func(ctx context.Context, address string) (ports.AccountInfo, error) {
+			return ports.AccountInfo{Address: address, Exists: false}, nil
+		},
+	}
+	svc, _ := testServiceAndServerWithChain(t, chain, true)
+
+	_, pair, err := loginAndSignChallenge(t, svc)
+	if err != nil {
+		t.Fatalf("VerifyAndMint: %v", err)
+	}
+	if pair.AccessToken == "" {
+		t.Error("expected a successful login even though the account needed funding")
+	}
+	if chain.GetAccountCalls != 1 {
+		t.Errorf("GetAccountCalls = %d, want 1", chain.GetAccountCalls)
+	}
+	if chain.FundCalls != 1 {
+		t.Errorf("FundCalls = %d, want 1", chain.FundCalls)
+	}
+}
+
+func TestVerifyAndMint_SkipsFriendbotWhenAccountAlreadyExists(t *testing.T) {
+	chain := &portstest.FakeChain{
+		GetAccountFunc: func(ctx context.Context, address string) (ports.AccountInfo, error) {
+			return ports.AccountInfo{Address: address, Exists: true}, nil
+		},
+	}
+	svc, _ := testServiceAndServerWithChain(t, chain, true)
+
+	_, _, err := loginAndSignChallenge(t, svc)
+	if err != nil {
+		t.Fatalf("VerifyAndMint: %v", err)
+	}
+	if chain.FundCalls != 0 {
+		t.Errorf("FundCalls = %d, want 0 (account already exists)", chain.FundCalls)
+	}
+}
+
+func TestVerifyAndMint_LoginSucceedsWhenFriendbotFails(t *testing.T) {
+	chain := &portstest.FakeChain{
+		GetAccountFunc: func(ctx context.Context, address string) (ports.AccountInfo, error) {
+			return ports.AccountInfo{Address: address, Exists: false}, nil
+		},
+		FundFunc: func(ctx context.Context, address string) error {
+			return errors.New("friendbot: rate limited")
+		},
+	}
+	svc, _ := testServiceAndServerWithChain(t, chain, true)
+
+	_, pair, err := loginAndSignChallenge(t, svc)
+	if err != nil {
+		t.Fatalf("VerifyAndMint: %v (login must succeed even when friendbot fails)", err)
+	}
+	if pair.AccessToken == "" {
+		t.Error("expected a non-empty access token despite the fund failure")
+	}
+	if chain.FundCalls != 1 {
+		t.Errorf("FundCalls = %d, want 1", chain.FundCalls)
+	}
+}
+
+func TestVerifyAndMint_FundDisabledNeverTouchesChain(t *testing.T) {
+	chain := &portstest.FakeChain{}
+	svc, _ := testServiceAndServerWithChain(t, chain, false)
+
+	_, _, err := loginAndSignChallenge(t, svc)
+	if err != nil {
+		t.Fatalf("VerifyAndMint: %v", err)
+	}
+	if chain.GetAccountCalls != 0 {
+		t.Errorf("GetAccountCalls = %d, want 0 (FundNewAccounts is false)", chain.GetAccountCalls)
+	}
+	if chain.FundCalls != 0 {
+		t.Errorf("FundCalls = %d, want 0 (FundNewAccounts is false)", chain.FundCalls)
+	}
+}
+
+// ---- FundOwnAccount (the manual "Fund with testnet XLM" action) -----------
+
+func TestFundOwnAccount_CallsFriendbotUnconditionally(t *testing.T) {
+	chain := &portstest.FakeChain{
+		GetAccountFunc: func(ctx context.Context, address string) (ports.AccountInfo, error) {
+			// Unlike fundIfNeeded, FundOwnAccount must not even check this —
+			// an explicit "fund me" action always tries.
+			return ports.AccountInfo{Address: address, Exists: true}, nil
+		},
+	}
+	svc, _ := testServiceAndServerWithChain(t, chain, true)
+
+	funded, err := svc.FundOwnAccount(context.Background(), "GADDR")
+	if err != nil {
+		t.Fatalf("FundOwnAccount: %v", err)
+	}
+	if !funded {
+		t.Error("funded = false, want true")
+	}
+	if chain.GetAccountCalls != 0 {
+		t.Errorf("GetAccountCalls = %d, want 0 (FundOwnAccount never checks Exists)", chain.GetAccountCalls)
+	}
+	if chain.FundCalls != 1 {
+		t.Errorf("FundCalls = %d, want 1", chain.FundCalls)
+	}
+}
+
+func TestFundOwnAccount_DisabledOnNonTestnetDeployments(t *testing.T) {
+	chain := &portstest.FakeChain{}
+	svc, _ := testServiceAndServerWithChain(t, chain, false)
+
+	funded, err := svc.FundOwnAccount(context.Background(), "GADDR")
+	if err != nil {
+		t.Fatalf("FundOwnAccount: %v (must never error, even when unavailable)", err)
+	}
+	if funded {
+		t.Error("funded = true, want false when FundNewAccounts is off")
+	}
+	if chain.FundCalls != 0 {
+		t.Errorf("FundCalls = %d, want 0", chain.FundCalls)
+	}
+}
+
+func TestFundOwnAccount_FriendbotFailureIsReportedNotThrown(t *testing.T) {
+	chain := &portstest.FakeChain{
+		FundFunc: func(ctx context.Context, address string) error {
+			return errors.New("friendbot: rate limited")
+		},
+	}
+	svc, _ := testServiceAndServerWithChain(t, chain, true)
+
+	funded, err := svc.FundOwnAccount(context.Background(), "GADDR")
+	if err != nil {
+		t.Fatalf("FundOwnAccount: %v (best-effort — must not surface as an error)", err)
+	}
+	if funded {
+		t.Error("funded = true, want false when the friendbot call itself failed")
+	}
+}
+
+func TestFundOwnAccount_NoChainGateway(t *testing.T) {
+	svc, _ := testServiceAndServer(t) // chain=nil, FundNewAccounts=false
+
+	funded, err := svc.FundOwnAccount(context.Background(), "GADDR")
+	if err != nil {
+		t.Fatalf("FundOwnAccount: %v", err)
+	}
+	if funded {
+		t.Error("funded = true, want false with no chain gateway wired")
 	}
 }

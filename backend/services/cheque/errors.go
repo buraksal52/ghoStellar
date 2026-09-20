@@ -19,4 +19,8 @@ const (
 	ErrBadRequest            = "cheque.bad_request"
 	ErrDBNotReady            = "cheque.db_not_ready"
 	ErrChainUnavailable      = "chain.rpc_unavailable"
+	// ErrAccountNotFunded: the caller's Stellar account doesn't exist
+	// on-chain yet (0 XLM, never funded) — see the anchor package's
+	// identical constant for the full rationale.
+	ErrAccountNotFunded = "cheque.account_not_funded"
 )

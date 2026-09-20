@@ -122,6 +122,43 @@ class _ReceivePageState extends ConsumerState<ReceivePage> {
     );
   }
 
+  /// The NFC read button shown in `awaitingCheque` and `idle`/`offering`:
+  /// idle "Tap sender's phone", or — while [ReceiveSessionNotifier.beginNfcRead]
+  /// is waiting for a tap — a spinner and "Hold near their phone…", matching
+  /// the sender-side button in `RecipientResolverSheet`. Shown on every NFC-
+  /// capable device, including Android, where the tag is already presenting
+  /// and this only surfaces the waiting state.
+  Widget _nfcButton(AppColors c, ReceiveSessionState session) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.center,
+      children: [
+        TextButton.icon(
+          onPressed: session.nfcReading ? null : _session.beginNfcRead,
+          icon: session.nfcReading
+              ? SizedBox(
+                  width: 18,
+                  height: 18,
+                  child: CircularProgressIndicator(strokeWidth: 2, color: c.text),
+                )
+              : Icon(Icons.nfc, size: 18, color: c.text),
+          label: Text(
+            session.nfcReading ? 'Hold near their phone…' : "Tap sender's phone",
+            style: TextStyle(fontSize: 13, color: c.text),
+          ),
+        ),
+        if (session.nfcError != null)
+          Padding(
+            padding: const EdgeInsets.only(top: 4),
+            child: Text(
+              session.nfcError!,
+              textAlign: TextAlign.center,
+              style: TextStyle(fontSize: 13, color: c.negative),
+            ),
+          ),
+      ],
+    );
+  }
+
   Widget _title(BuildContext context, String title, String body, AppColors c) {
     return Column(
       children: [
@@ -207,15 +244,7 @@ class _ReceivePageState extends ConsumerState<ReceivePage> {
                 : 'The sender is signing. When they show "Payment sent", tap their phone again — or scan their code.',
             c,
           ),
-          if (nfc.isAvailable && !nfc.canBeTag)
-            TextButton.icon(
-              onPressed: _session.beginNfcRead,
-              icon: Icon(Icons.nfc, size: 18, color: c.text),
-              label: Text(
-                "Tap sender's phone",
-                style: TextStyle(fontSize: 13, color: c.text),
-              ),
-            ),
+          if (nfc.isAvailable) _nfcButton(c, session),
           TextButton.icon(
             onPressed: _openReceiveOptions,
             icon: Icon(Icons.qr_code_scanner, size: 18, color: c.text),
@@ -242,15 +271,7 @@ class _ReceivePageState extends ConsumerState<ReceivePage> {
               style: TextStyle(fontSize: 13, color: c.textSecondary),
             ),
           ],
-          if (nfc.isAvailable && !nfc.canBeTag)
-            TextButton.icon(
-              onPressed: _session.beginNfcRead,
-              icon: Icon(Icons.nfc, size: 18, color: c.text),
-              label: Text(
-                "Tap sender's phone",
-                style: TextStyle(fontSize: 13, color: c.text),
-              ),
-            ),
+          if (nfc.isAvailable) _nfcButton(c, session),
         ];
     }
   }

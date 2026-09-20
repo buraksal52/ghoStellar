@@ -84,6 +84,9 @@ services:
       NETWORK_PASSPHRASE: ${NETWORK_PASSPHRASE:-Test SDF Network ; September 2015}
       JWT_PRIVATE_KEY_PATH: /secrets/jwt_private.pem
       JWT_PUBLIC_KEY_PATH: /secrets/jwt_public.pem
+      INTERNAL_API_KEY: ${INTERNAL_API_KEY}
+      CHAIN_GATEWAY_URL: http://pay-chain-gateway:8082
+      FUND_NEW_ACCOUNTS: ${FUND_NEW_ACCOUNTS:-true}
     volumes:
       - ./secrets:/secrets:ro
     depends_on:
@@ -91,6 +94,8 @@ services:
         condition: service_healthy
       migrate:
         condition: service_completed_successfully
+      pay-chain-gateway:
+        condition: service_healthy
     healthcheck:
       test: ["CMD", "wget", "--spider", "-q", "http://localhost:8081/health"]
       interval: 10s

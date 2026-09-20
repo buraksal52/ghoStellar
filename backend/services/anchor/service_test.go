@@ -234,6 +234,27 @@ func TestTrustlineXDR_NoIssuerConfigured(t *testing.T) {
 	}
 }
 
+// TestTrustlineXDR_UnfundedAccountRejected is the regression test for the
+// "Submitting to Stellar failed" bug: a brand-new wallet has no on-chain
+// account (GetAccount returns Exists:false, Sequence:0, no error) — before
+// this check, TrustlineXDR built a change_trust tx with Sequence 0 against
+// a nonexistent source and let it go all the way to a signed submission
+// Horizon could only reject with a result code the client didn't recognize.
+func TestTrustlineXDR_UnfundedAccountRejected(t *testing.T) {
+	chain := &portstest.FakeChain{
+		GetAccountFunc: func(ctx context.Context, address string) (ports.AccountInfo, error) {
+			return ports.AccountInfo{Address: address, Exists: false}, nil
+		},
+	}
+	cfg := testConfig(testAnchorDomain, testIssuer(t))
+	svc := newServiceWithRepo(cfg, newFakeRepo(), NewClient(http.DefaultClient), chain, discardLogger())
+
+	_, err := svc.TrustlineXDR(context.Background(), "GADDR")
+	if !errors.Is(err, errAccountNotFunded) {
+		t.Fatalf("got %v, want errAccountNotFunded", err)
+	}
+}
+
 func withdrawTestService(t *testing.T) (*Service, Config, string) {
 	t.Helper()
 	sender, err := keypair.Random()
@@ -335,6 +356,21 @@ func TestWithdrawPaymentXDR_NoIssuerConfigured(t *testing.T) {
 	svc.cfg.AssetIssuer = ""
 	if _, err := svc.WithdrawPaymentXDR(context.Background(), owner, testIssuer(t), "id", "1", "5"); err == nil {
 		t.Fatal("expected an error when no asset issuer is configured")
+	}
+}
+
+func TestWithdrawPaymentXDR_UnfundedAccountRejected(t *testing.T) {
+	chain := &portstest.FakeChain{
+		GetAccountFunc: func(ctx context.Context, address string) (ports.AccountInfo, error) {
+			return ports.AccountInfo{Address: address, Exists: false}, nil
+		},
+	}
+	cfg := testConfig(testAnchorDomain, testIssuer(t))
+	svc := newServiceWithRepo(cfg, newFakeRepo(), NewClient(http.DefaultClient), chain, discardLogger())
+
+	_, err := svc.WithdrawPaymentXDR(context.Background(), "GOWNER", testIssuer(t), "id", "1", "5")
+	if !errors.Is(err, errAccountNotFunded) {
+		t.Fatalf("got %v, want errAccountNotFunded", err)
 	}
 }
 

@@ -10,8 +10,15 @@ import '../../state/core_providers.dart';
 import '../../state/sync_providers.dart';
 import '../../state/wallet_providers.dart';
 
-class SettingsPage extends ConsumerWidget {
+class SettingsPage extends ConsumerStatefulWidget {
   const SettingsPage({super.key});
+
+  @override
+  ConsumerState<SettingsPage> createState() => _SettingsPageState();
+}
+
+class _SettingsPageState extends ConsumerState<SettingsPage> {
+  bool _funding = false;
 
   Future<void> _revealRecoveryPhrase(BuildContext context, WidgetRef ref) async {
     final store = ref.read(secureWalletStoreProvider);
@@ -65,8 +72,36 @@ class SettingsPage extends ConsumerWidget {
     }
   }
 
+  /// Backed by `POST /auth/fund` (pay-auth-service), never a direct
+  /// client-side Horizon call — `services/auth/service.go`'s
+  /// `FundOwnAccount` is the one place that touches friendbot, matching
+  /// the automatic fund-on-login it shares its logic with (SERVICE.md #24).
+  /// This is the manual recovery path for a wallet that missed that (or is
+  /// already stuck, like the "Submitting to Stellar failed" trustline case).
+  Future<void> _fundWallet(BuildContext context) async {
+    if (_funding) return;
+    setState(() => _funding = true);
+    bool funded;
+    try {
+      funded = await ref.read(authApiProvider).fundTestnetXlm();
+    } catch (_) {
+      funded = false;
+    }
+    if (!context.mounted) return;
+    setState(() => _funding = false);
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(
+          funded
+              ? 'Funded — you can set up USDC or send a payment now.'
+              : "Couldn't fund the account right now. Try again in a moment.",
+        ),
+      ),
+    );
+  }
+
   @override
-  Widget build(BuildContext context, WidgetRef ref) {
+  Widget build(BuildContext context) {
     final c = context.colors;
     final isDark = ref.watch(themeModeProvider) == ThemeMode.dark;
     final publicKey = ref.watch(walletProvider).publicKey ?? '';
@@ -95,6 +130,36 @@ class SettingsPage extends ConsumerWidget {
         row('Wallet address', publicKey.isEmpty ? '' : '${publicKey.substring(0, 4)}...${publicKey.substring(publicKey.length - 4)}', () {}),
         row('Recovery phrase', 'View', () => _revealRecoveryPhrase(context, ref)),
         row('Network', networkLabel, () {}),
+        if (networkLabel == 'Testnet')
+          InkWell(
+            onTap: _funding ? null : () => _fundWallet(context),
+            child: Container(
+              padding: const EdgeInsets.symmetric(vertical: 17, horizontal: 2),
+              decoration: BoxDecoration(border: Border(bottom: BorderSide(color: c.border))),
+              child: Row(
+                children: [
+                  Expanded(
+                    child: Text(
+                      'Fund with testnet XLM',
+                      style: TextStyle(
+                        fontSize: 15,
+                        fontWeight: FontWeight.w500,
+                        color: _funding ? c.muted : null,
+                      ),
+                    ),
+                  ),
+                  if (_funding)
+                    SizedBox(
+                      width: 16,
+                      height: 16,
+                      child: CircularProgressIndicator(strokeWidth: 2, color: c.muted),
+                    )
+                  else
+                    Icon(Icons.chevron_right, size: 16, color: c.muted),
+                ],
+              ),
+            ),
+          ),
         row('Reset wallet', '', () => _logout(context, ref)),
         const SizedBox(height: 20),
         Row(

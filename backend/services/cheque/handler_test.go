@@ -234,6 +234,7 @@ func TestWriteChequeError_Mapping(t *testing.T) {
 		{errPoolWithdrawLocked, http.StatusConflict, ErrPoolWithdrawLocked},
 		{errChainUnavailable, http.StatusBadGateway, ErrChainUnavailable},
 		{errBadRequest, http.StatusBadRequest, ErrBadRequest},
+		{errAccountNotFunded, http.StatusUnprocessableEntity, ErrAccountNotFunded},
 	}
 	for _, tc := range tests {
 		t.Run(tc.wantCode, func(t *testing.T) {

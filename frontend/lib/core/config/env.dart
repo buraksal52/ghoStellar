@@ -52,14 +52,17 @@ class Env {
     defaultValue: 'https://ghostellar-production.up.railway.app',
   );
 
-  static const String _testnetPassphrase = 'Test SDF Network ; September 2015';
+  /// Exposed (not just used internally by [networkLabel]) because it also
+  /// gates testnet-only behavior that must never run against a real
+  /// network — see `data/stellar/testnet_friendbot.dart`.
+  static const String testnetPassphrase = 'Test SDF Network ; September 2015';
   static const String _publicPassphrase = 'Public Global Stellar Network ; September 2015';
 
   /// A short label for whichever network [passphrase] identifies — the one
   /// place a build pointed at the wrong network (SERVICE.md #20) would be
   /// visible to the user (see the Settings page).
   static String networkLabel(String passphrase) => switch (passphrase) {
-        _testnetPassphrase => 'Testnet',
+        testnetPassphrase => 'Testnet',
         _publicPassphrase => 'Public',
         _ => 'Custom',
       };

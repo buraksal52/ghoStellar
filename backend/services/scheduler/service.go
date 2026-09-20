@@ -158,15 +158,15 @@ func (s *Service) refundOne(ctx context.Context, c ExpiredCheque) error {
 		return fmt.Errorf("build refund op: %w", err)
 	}
 
-	simulator := func(ctx context.Context, unsignedXDR string) (string, error) {
+	simulator := func(ctx context.Context, unsignedXDR string) (stellarx.SimulationResult, error) {
 		res, err := s.chain.SimulateTransaction(ctx, unsignedXDR)
 		if err != nil {
-			return "", err
+			return stellarx.SimulationResult{}, err
 		}
 		if !res.Success {
-			return "", fmt.Errorf("simulation failed: %s", res.Error)
+			return stellarx.SimulationResult{}, fmt.Errorf("simulation failed: %s", res.Error)
 		}
-		return res.TransactionDataXDR, nil
+		return stellarx.SimulationResult{TransactionDataXDR: res.TransactionDataXDR, AuthXDR: res.AuthXDR}, nil
 	}
 	unsignedXDR, err := stellarx.AssembleInvocation(ctx, simulator, s.cfg.NetworkPassphrase, s.keeper.Address(), keeperAccount.Sequence, op)
 	if err != nil {
@@ -204,12 +204,12 @@ func (s *Service) BumpEscrowInstance(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	simulator := func(ctx context.Context, unsignedXDR string) (string, error) {
+	simulator := func(ctx context.Context, unsignedXDR string) (stellarx.SimulationResult, error) {
 		res, err := s.chain.SimulateTransaction(ctx, unsignedXDR)
 		if err != nil {
-			return "", err
+			return stellarx.SimulationResult{}, err
 		}
-		return res.TransactionDataXDR, nil
+		return stellarx.SimulationResult{TransactionDataXDR: res.TransactionDataXDR, AuthXDR: res.AuthXDR}, nil
 	}
 	unsignedXDR, err := stellarx.AssembleInvocation(ctx, simulator, s.cfg.NetworkPassphrase, s.keeper.Address(), keeperAccount.Sequence, op)
 	if err != nil {

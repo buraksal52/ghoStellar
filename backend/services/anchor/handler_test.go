@@ -14,6 +14,7 @@ import (
 	"github.com/golang-jwt/jwt/v5"
 
 	"github.com/local-payment/backend/pkg/authx"
+	"github.com/local-payment/backend/pkg/httpx"
 )
 
 // bearerHandler wraps next with a real authx.RequireBearer backed by a
@@ -237,5 +238,39 @@ func TestSepProxy_MalformedJSONStillRejectedForOrdinaryRequests(t *testing.T) {
 
 	if rec.Code != http.StatusBadRequest {
 		t.Fatalf("got status %d, want 400", rec.Code)
+	}
+}
+
+// ---- writeAnchorError status/code mapping ----------------------------------
+
+func TestWriteAnchorError_Mapping(t *testing.T) {
+	tests := []struct {
+		err        error
+		wantStatus int
+		wantCode   string
+	}{
+		{ErrDBNotReadyErr, http.StatusServiceUnavailable, ErrDBNotReady},
+		{errNotAllowed, http.StatusNotFound, ErrNotAllowed},
+		{errAuthRequired, http.StatusUnauthorized, ErrAuthRequired},
+		{errChainUnavailable, http.StatusBadGateway, ErrChainUnavailable},
+		{errTrustlineMissing, http.StatusUnprocessableEntity, ErrTrustlineMissing},
+		{errBadRequest, http.StatusBadRequest, ErrBadRequest},
+		{errAccountNotFunded, http.StatusUnprocessableEntity, ErrAccountNotFunded},
+	}
+	for _, tc := range tests {
+		t.Run(tc.wantCode, func(t *testing.T) {
+			rec := httptest.NewRecorder()
+			writeAnchorError(rec, tc.err)
+			if rec.Code != tc.wantStatus {
+				t.Errorf("status = %d, want %d", rec.Code, tc.wantStatus)
+			}
+			var env httpx.ErrorEnvelope
+			if err := json.Unmarshal(rec.Body.Bytes(), &env); err != nil {
+				t.Fatalf("decode error envelope: %v", err)
+			}
+			if env.Error.Code != tc.wantCode {
+				t.Errorf("code = %q, want %q", env.Error.Code, tc.wantCode)
+			}
+		})
 	}
 }

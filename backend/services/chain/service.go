@@ -126,6 +126,9 @@ func (s *Service) SimulateTransaction(ctx context.Context, unsignedXDR string) (
 	if len(resp.Results) > 0 && resp.Results[0].ReturnValueXDR != nil {
 		result.ResultXDR = *resp.Results[0].ReturnValueXDR
 	}
+	if len(resp.Results) > 0 && resp.Results[0].AuthXDR != nil {
+		result.AuthXDR = *resp.Results[0].AuthXDR
+	}
 	return result, nil
 }
 

@@ -335,6 +335,8 @@ func writeChequeError(w http.ResponseWriter, err error) {
 		code, status = ErrPoolWithdrawLocked, http.StatusConflict
 	case errors.Is(err, errChainUnavailable):
 		code, status = ErrChainUnavailable, http.StatusBadGateway
+	case errors.Is(err, errAccountNotFunded):
+		code, status = ErrAccountNotFunded, http.StatusUnprocessableEntity
 	}
 	httpx.WriteError(w, status, code, err.Error(), nil)
 }

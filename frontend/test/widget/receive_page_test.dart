@@ -114,7 +114,8 @@ void main() {
 
     expect(find.byType(QrCard), findsNothing);
     expect(find.text('Scan QR Code'), findsNothing);
-    await tester.tap(find.byIcon(Icons.nfc));
+    // `.first`: the big ring's icon, not the inline "Tap sender's phone" button.
+    await tester.tap(find.byIcon(Icons.nfc).first);
     await tester.pumpAndSettle();
     expect(find.text('Scan QR Code'), findsOneWidget);
     expect(find.text('Use this code'), findsOneWidget);
@@ -137,7 +138,8 @@ void main() {
 
     expect(find.text('Ready to Receive'), findsOneWidget);
     expect(find.byType(QrCard), findsNothing);
-    await tester.tap(find.byIcon(Icons.nfc));
+    // `.first`: the big ring's icon, not the inline "Tap sender's phone" button.
+    await tester.tap(find.byIcon(Icons.nfc).first);
     await tester.pumpAndSettle();
     expect(find.text('Scan QR Code'), findsOneWidget);
     await tester.tap(find.text('Show QR code'));
@@ -178,13 +180,73 @@ void main() {
   );
 
   testWidgets(
-    'an Android receiver has no read button — it is the tag already',
+    'an Android receiver has a read button too — it just shows the wait, '
+    'since the tag is already presenting',
     (tester) async {
       final rig = _Rig();
       await _open(tester, rig);
 
-      expect(find.text("Tap sender's phone"), findsNothing);
+      expect(find.text("Tap sender's phone"), findsOneWidget);
       expect(rig.nfc.started.single.role, NfcRole.tag);
+
+      await tester.tap(find.text("Tap sender's phone"));
+      await tester.pump();
+
+      expect(
+        find.text('Hold near their phone…'),
+        findsOneWidget,
+      );
+      expect(
+        rig.nfc.started,
+        hasLength(1),
+        reason: 'the tag broadcast is not restarted, only the wait is shown',
+      );
+
+      await _leave(tester, rig);
+    },
+  );
+
+  testWidgets(
+    'the NFC read wait times out with "no phone found" and resets the button',
+    (tester) async {
+      final rig = _Rig();
+      rig.nfc.canBeTag = false; // reader only
+      await _open(tester, rig);
+
+      await tester.tap(find.text("Tap sender's phone"));
+      await tester.pump();
+      expect(find.text('Hold near their phone…'), findsOneWidget);
+
+      await tester.pump(const Duration(seconds: 30));
+
+      expect(find.text("Tap sender's phone"), findsOneWidget);
+      expect(
+        find.text(
+          "No phone found. An iPhone can only tap an Android phone — for another iPhone, scan their code.",
+        ),
+        findsOneWidget,
+      );
+
+      await _leave(tester, rig);
+    },
+  );
+
+  testWidgets(
+    'the NFC read shows an error when NFC is off',
+    (tester) async {
+      final rig = _Rig();
+      rig.nfc.canBeTag = false; // reader only
+      rig.nfc.startError = StateError('NFC is off');
+      await _open(tester, rig);
+
+      await tester.tap(find.text("Tap sender's phone"));
+      await tester.pump();
+
+      expect(find.text("Tap sender's phone"), findsOneWidget);
+      expect(
+        find.text('NFC is turned off or unavailable. Scan their code instead.'),
+        findsOneWidget,
+      );
 
       await _leave(tester, rig);
     },
@@ -344,7 +406,8 @@ void main() {
     final nonce = _container(
       tester,
     ).read(receiveSessionProvider).request!.nonce!;
-    await tester.tap(find.byIcon(Icons.nfc));
+    // `.first`: the big ring's icon, not the inline "Tap sender's phone" button.
+    await tester.tap(find.byIcon(Icons.nfc).first);
     await tester.pumpAndSettle();
     final manual = find.widgetWithText(
       TextField,

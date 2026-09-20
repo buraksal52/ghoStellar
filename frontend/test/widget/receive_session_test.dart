@@ -219,16 +219,59 @@ void main() {
       expect(rig.state.phase, ReceivePhase.done);
     });
 
-    testWidgets('beginNfcRead is a no-op on a device that is already the tag', (tester) async {
+    testWidgets(
+      'beginNfcRead does not restart the radio on a device that is already '
+      'the tag — it only shows the waiting state',
+      (tester) async {
+        final rig = _Rig();
+        addTearDown(rig.container.dispose);
+        await rig.ready(tester);
+        await rig.session.start();
+        expect(rig.nfc.started, hasLength(1));
+
+        await rig.session.beginNfcRead();
+
+        expect(rig.nfc.started, hasLength(1));
+        expect(rig.state.nfcReading, isTrue);
+        rig.session.stop();
+      },
+    );
+
+    testWidgets('beginNfcRead times out with "no phone found" after nfcWait', (tester) async {
       final rig = _Rig();
+      rig.nfc.canBeTag = false;
       addTearDown(rig.container.dispose);
       await rig.ready(tester);
       await rig.session.start();
-      expect(rig.nfc.started, hasLength(1));
 
       await rig.session.beginNfcRead();
+      expect(rig.state.nfcReading, isTrue);
 
-      expect(rig.nfc.started, hasLength(1));
+      await tester.pump(ReceiveSessionNotifier.nfcWait);
+
+      expect(rig.state.nfcReading, isFalse);
+      expect(
+        rig.state.nfcError,
+        "No phone found. An iPhone can only tap an Android phone — for another iPhone, scan their code.",
+      );
+      rig.session.stop();
+    });
+
+    testWidgets('a phase change (e.g. delivery) clears the NFC-read waiting state', (tester) async {
+      final rig = _Rig();
+      rig.nfc.canBeTag = false;
+      addTearDown(rig.container.dispose);
+      await rig.ready(tester);
+      await rig.session.start();
+
+      await rig.session.beginNfcRead();
+      expect(rig.state.nfcReading, isTrue);
+
+      rig.nfc.delivered();
+      await tester.pump();
+
+      expect(rig.state.phase, ReceivePhase.awaitingCheque);
+      expect(rig.state.nfcReading, isFalse);
       rig.session.stop();
     });
 
@@ -243,6 +286,11 @@ void main() {
       await rig.session.beginNfcRead(); // must not throw
 
       expect(rig.state.phase, ReceivePhase.offering);
+      expect(rig.state.nfcReading, isFalse);
+      expect(
+        rig.state.nfcError,
+        'NFC is turned off or unavailable. Scan their code instead.',
+      );
       rig.session.stop();
     });
   });

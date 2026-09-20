@@ -299,6 +299,14 @@ func (s *Service) TrustlineXDR(ctx context.Context, owner string) (string, error
 	if err != nil {
 		return "", fmt.Errorf("%w: %v", errChainUnavailable, err)
 	}
+	if !account.Exists {
+		// A brand-new wallet has no on-chain account until it's funded (D6:
+		// Horizon is authoritative, we don't guess). Building a tx with
+		// Sequence 0 against a nonexistent source would sign and submit a
+		// transaction Horizon can only reject — fail fast with a message
+		// the client actually recognizes instead.
+		return "", errAccountNotFunded
+	}
 	asset := txnbuild.CreditAsset{Code: s.cfg.AssetCode, Issuer: s.cfg.AssetIssuer}
 	op := &txnbuild.ChangeTrust{
 		Line:          asset.MustToChangeTrustAsset(),
@@ -342,6 +350,9 @@ func (s *Service) WithdrawPaymentXDR(ctx context.Context, owner, destination, me
 	account, err := s.chain.GetAccount(ctx, owner)
 	if err != nil {
 		return "", fmt.Errorf("%w: %v", errChainUnavailable, err)
+	}
+	if !account.Exists {
+		return "", errAccountNotFunded
 	}
 	op := &txnbuild.Payment{
 		Destination:   destination,
@@ -422,4 +433,5 @@ var (
 	errChainUnavailable = errors.New(ErrChainUnavailable)
 	errTrustlineMissing = errors.New(ErrTrustlineMissing)
 	errBadRequest       = errors.New(ErrBadRequest)
+	errAccountNotFunded = errors.New(ErrAccountNotFunded)
 )

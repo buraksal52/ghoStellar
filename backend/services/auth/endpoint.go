@@ -15,4 +15,5 @@ func RegisterRoutes(mux *http.ServeMux, h *Handler) {
 // mux here should already be behind authx.RequireBearer.
 func RegisterProtectedRoutes(mux *http.ServeMux, h *Handler) {
 	mux.HandleFunc("GET /auth/me", h.Me)
+	mux.HandleFunc("POST /auth/fund", h.Fund)
 }

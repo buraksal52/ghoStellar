@@ -22,6 +22,8 @@ class ErrorCopy {
     'cheque.expired': 'This cheque has expired.',
     'cheque.terminal_state': 'This cheque can no longer be acted on.',
     'cheque.not_found': 'That cheque could not be found.',
+    'cheque.account_not_funded':
+        "Your wallet has no XLM yet — it needs a small test balance first. Fund it from Settings.",
     'pool.withdraw_locked':
         'Your pool balance isn\'t withdrawable yet — deposits lock for a period after each deposit.',
     'chain.rpc_unavailable':
@@ -42,6 +44,8 @@ class ErrorCopy {
     'anchor.bad_request': 'That request to the anchor was invalid.',
     'anchor.db_not_ready': 'Service is starting up — try again in a moment.',
     'anchor.trustline_missing': 'Set up USDC before continuing.',
+    'anchor.account_not_funded':
+        "Your wallet has no XLM yet — it needs a small test balance first. Fund it from Settings.",
   };
 
   static String forCode(String code) =>

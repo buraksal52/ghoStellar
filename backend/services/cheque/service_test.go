@@ -454,6 +454,45 @@ func TestPoolDepositXDR_InvalidAmount(t *testing.T) {
 	}
 }
 
+// TestPoolDepositXDR_UnfundedAccountRejected and its withdraw counterpart
+// below are regression tests for the "Submitting to Stellar failed" bug
+// (SERVICE.md, TrustlineXDR's sibling issue): a brand-new wallet has no
+// on-chain account (GetAccount returns Exists:false, Sequence:0, no error),
+// and building a deposit/withdraw invocation with Sequence 0 against a
+// nonexistent source is a doomed transaction Horizon can only reject with a
+// result code the client doesn't recognize.
+func TestPoolDepositXDR_UnfundedAccountRejected(t *testing.T) {
+	chain := &portstest.FakeChain{
+		GetAccountFunc: func(ctx context.Context, address string) (ports.AccountInfo, error) {
+			return ports.AccountInfo{Address: address, Exists: false}, nil
+		},
+	}
+	svc := newServiceWithRepo(testConfig(), newFakeRepo(), chain)
+	if _, err := svc.PoolDepositXDR(context.Background(), testSender, "10"); !errors.Is(err, errAccountNotFunded) {
+		t.Fatalf("got %v, want errAccountNotFunded", err)
+	}
+}
+
+func TestPoolWithdrawXDR_UnfundedAccountRejected(t *testing.T) {
+	repo := newFakeRepo()
+	if err := repo.RecordDeposit(context.Background(), testSender, "100000000", testDecimals, 1); err != nil {
+		t.Fatalf("RecordDeposit: %v", err)
+	}
+	p := repo.pools[testSender]
+	p.LastDepositAt = time.Now().Add(-8 * 24 * time.Hour) // past the lock window
+	repo.pools[testSender] = p
+
+	chain := &portstest.FakeChain{
+		GetAccountFunc: func(ctx context.Context, address string) (ports.AccountInfo, error) {
+			return ports.AccountInfo{Address: address, Exists: false}, nil
+		},
+	}
+	svc := newServiceWithRepo(testConfig(), repo, chain)
+	if _, err := svc.PoolWithdrawXDR(context.Background(), testSender, "10"); !errors.Is(err, errAccountNotFunded) {
+		t.Fatalf("got %v, want errAccountNotFunded", err)
+	}
+}
+
 func TestPoolWithdrawXDR_LockedThenUnlocked(t *testing.T) {
 	repo := newFakeRepo()
 	svc := newServiceWithRepo(testConfig(), repo, fundedChain(t, 1))

@@ -77,15 +77,15 @@ func (s *Service) asset() money.AssetID {
 }
 
 func (s *Service) simulator() stellarx.Simulator {
-	return func(ctx context.Context, unsignedXDR string) (string, error) {
+	return func(ctx context.Context, unsignedXDR string) (stellarx.SimulationResult, error) {
 		res, err := s.chain.SimulateTransaction(ctx, unsignedXDR)
 		if err != nil {
-			return "", err
+			return stellarx.SimulationResult{}, err
 		}
 		if !res.Success {
-			return "", fmt.Errorf("simulation failed: %s", res.Error)
+			return stellarx.SimulationResult{}, fmt.Errorf("simulation failed: %s", res.Error)
 		}
-		return res.TransactionDataXDR, nil
+		return stellarx.SimulationResult{TransactionDataXDR: res.TransactionDataXDR, AuthXDR: res.AuthXDR}, nil
 	}
 }
 
@@ -552,6 +552,9 @@ func (s *Service) PoolDepositXDR(ctx context.Context, owner, amountStr string) (
 	if err != nil {
 		return "", fmt.Errorf("%w: %v", errChainUnavailable, err)
 	}
+	if !ownerAccount.Exists {
+		return "", errAccountNotFunded
+	}
 	depositArgs, err := scArgs(scAddr(owner), scAddr(s.cfg.TokenContractID), scI128(amount.Raw))
 	if err != nil {
 		return "", err
@@ -593,6 +596,9 @@ func (s *Service) PoolWithdrawXDR(ctx context.Context, owner, amountStr string) 
 	ownerAccount, err := s.chain.GetAccount(ctx, owner)
 	if err != nil {
 		return "", fmt.Errorf("%w: %v", errChainUnavailable, err)
+	}
+	if !ownerAccount.Exists {
+		return "", errAccountNotFunded
 	}
 	withdrawArgs, err := scArgs(scAddr(owner), scI128(amount.Raw))
 	if err != nil {
@@ -826,6 +832,7 @@ var (
 	errPoolWithdrawLocked  = errors.New(ErrPoolWithdrawLocked)
 	errBadRequest          = errors.New(ErrBadRequest)
 	errChainUnavailable    = errors.New(ErrChainUnavailable)
+	errAccountNotFunded    = errors.New(ErrAccountNotFunded)
 )
 
 // requestIDPattern bounds the receiver-chosen request id: it is stored and

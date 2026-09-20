@@ -1,4 +1,5 @@
 import 'package:flutter_test/flutter_test.dart';
+import 'package:ghostellar_app/data/api/endpoints/auth_api.dart';
 import 'package:ghostellar_app/data/api/endpoints/cheque_api.dart';
 import 'package:ghostellar_app/data/api/endpoints/sync_api.dart';
 import 'package:ghostellar_app/data/api/endpoints/tx_api.dart';
@@ -169,3 +170,22 @@ Cheque testCheque(
       updatedAt: 'x',
     );
 
+
+class FakeAuthApi extends Fake implements AuthApi {
+  bool fundResult = true;
+  Object? fundError;
+  int fundCalls = 0;
+
+  /// Delays [fundTestnetXlm] by this long — lets a test catch it mid-flight
+  /// (e.g. to prove a second tap while funding is in progress is ignored).
+  Duration? fundDelay;
+
+  @override
+  Future<bool> fundTestnetXlm() async {
+    fundCalls++;
+    final delay = fundDelay;
+    if (delay != null) await Future<void>.delayed(delay);
+    if (fundError != null) throw fundError!;
+    return fundResult;
+  }
+}

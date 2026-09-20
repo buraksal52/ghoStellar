@@ -30,6 +30,10 @@ class _OnboardingStep2PageState extends ConsumerState<OnboardingStep2Page> {
       publicKey: keyPair.accountId,
     );
     ref.read(walletProvider.notifier).unlock(keyPair);
+    // A brand-new wallet has no on-chain account yet (0 XLM, doesn't exist
+    // on Horizon) — pay-auth-service funds it via testnet friendbot on the
+    // SEP-10 login that /auth-gate is about to run (services/auth/service.go
+    // `fundIfNeeded`), so no client-side step is needed here.
     if (mounted) context.go('/auth-gate');
   }
 

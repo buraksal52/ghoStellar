@@ -40,6 +40,7 @@ services:
       KEEPER_SECRET_SEED: ${KEEPER_SECRET_SEED}
       SWEEP_INTERVAL_SECONDS: ${SWEEP_INTERVAL_SECONDS:-60}
       BUMP_INTERVAL_SECONDS: ${BUMP_INTERVAL_SECONDS:-21600}
+      FUND_NEW_ACCOUNTS: ${FUND_NEW_ACCOUNTS:-true}
     volumes:
       - ./secrets:/secrets:ro
     depends_on:

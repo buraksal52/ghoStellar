@@ -341,6 +341,8 @@ func writeAnchorError(w http.ResponseWriter, err error) {
 		code, status = ErrTrustlineMissing, http.StatusUnprocessableEntity
 	case errors.Is(err, errBadRequest):
 		code, status = ErrBadRequest, http.StatusBadRequest
+	case errors.Is(err, errAccountNotFunded):
+		code, status = ErrAccountNotFunded, http.StatusUnprocessableEntity
 	case isAnchorAuthError(err):
 		// 403, not 401: the app's ApiClient treats any 401 as ITS OWN
 		// session expiring and would wipe the user's tokens.

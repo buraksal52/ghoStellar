@@ -89,3 +89,18 @@ func (h *Handler) Me(w http.ResponseWriter, r *http.Request) {
 	}
 	httpx.WriteData(w, http.StatusOK, user)
 }
+
+// Fund is the manual "Fund with testnet XLM" action (SERVICE.md #24):
+// funds the CALLER's own account (from the bearer token, never a body
+// param — nobody funds an address that isn't theirs). Always 200: this is
+// best-effort by design (Service.FundOwnAccount never returns an error),
+// `funded` tells the client whether it actually worked this time.
+func (h *Handler) Fund(w http.ResponseWriter, r *http.Request) {
+	claims, ok := authx.ClaimsFromContext(r.Context())
+	if !ok {
+		httpx.WriteError(w, http.StatusUnauthorized, ErrInvalidToken, "missing bearer claims", nil)
+		return
+	}
+	funded, _ := h.svc.FundOwnAccount(r.Context(), claims.StellarAccount)
+	httpx.WriteData(w, http.StatusOK, map[string]bool{"funded": funded})
+}
