@@ -62,7 +62,8 @@ class ActivityItem {
       icon: ActivityIcon.pool,
       title: isWithdraw ? 'Pool Withdrawal' : 'Pool Deposit',
       timestamp: e.timestamp,
-      amountDisplay: '${isWithdraw ? '−' : '+'}${e.amount} ${e.assetCode}',
+      // The pool is always in the platform's one asset, never the anchor's.
+      amountDisplay: '${isWithdraw ? '−' : '+'}${e.amount} ${PayAsset.configured.label}',
       isNegative: isWithdraw,
       statusLabel: 'Completed',
       category: 'pool',
@@ -72,7 +73,11 @@ class ActivityItem {
   /// A bank deposit/withdrawal from the backend's anchor ledger. Every row
   /// counts, not just finished ones: one that is still waiting on the user's
   /// wire, or that failed, is exactly what they come here to look for.
-  static ActivityItem fromAnchorTransaction(AnchorTransaction t) {
+  ///
+  /// [assetCode] is the anchor's own asset — independent from
+  /// [PayAsset.configured], the platform's — since a bank transfer never
+  /// moves the platform asset.
+  static ActivityItem fromAnchorTransaction(AnchorTransaction t, {required String assetCode}) {
     final isDeposit = t.kind == 'deposit';
     final raw = t.amount;
     final decimals = t.decimals;
@@ -84,9 +89,9 @@ class ActivityItem {
       icon: ActivityIcon.bank,
       title: isDeposit ? 'Deposit from Bank' : 'Withdrawal to Bank',
       timestamp: DateTime.tryParse(t.updatedAt) ?? DateTime.tryParse(t.startedAt) ?? DateTime.now(),
-      amountDisplay: amount == null ? '' : '${isDeposit ? '+' : '−'}$amount ${PayAsset.configured.label}',
+      amountDisplay: amount == null ? '' : '${isDeposit ? '+' : '−'}$amount $assetCode',
       isNegative: !isDeposit,
-      statusLabel: anchorStatusShortLabel(t.state),
+      statusLabel: anchorStatusShortLabel(t.state, assetCode: assetCode),
       category: 'anchor',
     );
   }

@@ -89,12 +89,12 @@ class _SettingsPageState extends ConsumerState<SettingsPage> {
     }
   }
 
-  /// "Get test funds": network fees (`POST /auth/fund` — pay-auth-service is
-  /// the one place that touches friendbot, SERVICE.md #24), the USDC
-  /// trustline, and a sandbox TRY→USDC bank deposit — so the wallet ends up
-  /// with USDC, the app's one unit, instead of a fee balance nobody can see.
-  /// The signing overlay shows the steps, the amount that arrived, or why it
-  /// failed.
+  /// "Get test funds": the faucet (`POST /auth/fund` — pay-auth-service is
+  /// the one place that touches friendbot, SERVICE.md #24) funds the wallet
+  /// with native XLM, the platform's one asset — see `state/starter_funds.dart`.
+  /// It never touches the anchor's own asset (e.g. USDC); that only arrives
+  /// through a bank deposit on the Bank screen. The signing overlay shows the
+  /// steps, the amount that arrived, or why it failed.
   Future<void> _fundWallet() async {
     if (_funding) return;
     setState(() => _funding = true);

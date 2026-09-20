@@ -84,6 +84,24 @@ func (f *fakeRepo) CompleteSubmission(ctx context.Context, key, txHash, state, r
 	return nil
 }
 
+func (f *fakeRepo) ReleaseSubmission(ctx context.Context, key, resultCode string) error {
+	if err := f.failOn["ReleaseSubmission"]; err != nil {
+		return err
+	}
+	sub, ok := f.submissions[key]
+	if ok {
+		sub.State = "failed"
+		sub.ResultCode = resultCode
+		sub.UpdatedAt = time.Now()
+		f.submissions[key] = sub
+	}
+	if f.keyStatus[key] == "pending" {
+		delete(f.keyStatus, key)
+		delete(f.keyExpiresAt, key)
+	}
+	return nil
+}
+
 func (f *fakeRepo) GetSubmission(ctx context.Context, key string) (Submission, error) {
 	if err := f.failOn["GetSubmission"]; err != nil {
 		return Submission{}, err

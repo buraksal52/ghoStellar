@@ -5,13 +5,20 @@ import 'package:go_router/go_router.dart';
 import '../../../core/config/pay_asset.dart';
 import '../../../core/theme/app_colors.dart';
 import '../../../core/utils/amount_formatter.dart';
+import '../../../state/anchor_providers.dart';
 import '../../../state/home_providers.dart';
 import '../../../state/sync_providers.dart';
 
-/// The one balance the app talks about is [PayAsset.configured] (XLM). XLM
-/// only backs network fees and is never shown as an amount — a second unit
-/// next to the USDC figure made a funded-but-USDC-less wallet look like it
-/// could pay or use the pool. A low fee balance only raises a hint.
+/// The main balance is [PayAsset.configured] (XLM) — the asset cheques and
+/// the pool use. It backs network fees too and is never shown as a second,
+/// separate amount, so a funded wallet never looks like it can't pay or use
+/// the pool. A low fee balance only raises a hint.
+///
+/// A deployment can also have a separate anchor asset (e.g. USDC, ramped
+/// through the bank) that never enters the pool or a cheque — see
+/// `AnchorInfo.assetCode`. When the wallet holds any, it gets its own,
+/// clearly-labeled second line so that money isn't invisible after a bank
+/// deposit.
 class BalanceCard extends ConsumerWidget {
   const BalanceCard({super.key});
 
@@ -22,6 +29,7 @@ class BalanceCard extends ConsumerWidget {
     // null until /sync has answered: only an explicit `false` means "no
     // trustline", so the hint never flashes while loading.
     final trustlineReady = ref.watch(syncProvider).value?.trustlineReady;
+    final anchor = ref.watch(primaryAnchorProvider);
 
     return Container(
       padding: const EdgeInsets.all(18),
@@ -71,6 +79,25 @@ class BalanceCard extends ConsumerWidget {
                     c,
                     'Set up ${PayAsset.configured.label} to receive funds →',
                     onTap: () => context.push('/anchor/trustline'),
+                  ),
+                if (anchor != null && anchor.assetIssuer.isNotEmpty && b.other.containsKey(anchor.assetCode))
+                  Padding(
+                    padding: const EdgeInsets.only(top: 8),
+                    child: InkWell(
+                      onTap: () => context.push('/anchor'),
+                      child: RichText(
+                        text: TextSpan(
+                          style: TextStyle(fontSize: 13, color: c.textSecondary),
+                          children: [
+                            TextSpan(
+                              text: '${AmountFormatter.trimTrailingZeros(b.other[anchor.assetCode]!)} ${anchor.assetCode} ',
+                              style: TextStyle(fontWeight: FontWeight.w600, color: c.info),
+                            ),
+                            const TextSpan(text: 'from your bank'),
+                          ],
+                        ),
+                      ),
+                    ),
                   ),
               ],
             ),

@@ -2,8 +2,7 @@
 //! Exercises the p2p doc's §9 case catalog for the entries that land on the
 //! chain side of the state machine (see lib.rs module docs and the plan's
 //! "Test: src/test.rs" note): A5/A6 (reject at write time), C5/C6 (claim vs
-//! refund/claim races), D1'/D5'/D7' (force_collect's guards), and H2 (pool
-//! withdraw lock).
+//! refund/claim races), and D1'/D5'/D7' (force_collect's guards).
 
 use super::*;
 use soroban_sdk::{
@@ -11,8 +10,7 @@ use soroban_sdk::{
     Env,
 };
 
-const DAY: u64 = 24 * 60 * 60;
-const WEEK: u64 = 7 * DAY;
+const WEEK: u64 = 7 * 24 * 60 * 60;
 
 fn setup(e: &Env) -> (PayEscrowClient<'_>, Address, Address) {
     let contract_id = e.register(PayEscrow, ());
@@ -285,7 +283,7 @@ fn d7_funding_wins_the_race_against_force_collect() {
 // ---- 9.H Süre / Havuz ---------------------------------------------------
 
 #[test]
-fn h2_pool_withdraw_locked_for_one_week_after_last_deposit() {
+fn pool_withdraw_is_available_immediately_after_deposit() {
     let e = Env::default();
     e.mock_all_auths();
     let (client, token_id, _admin) = setup(&e);
@@ -293,30 +291,15 @@ fn h2_pool_withdraw_locked_for_one_week_after_last_deposit() {
     mint(&e, &token_id, &owner, 1_000);
 
     client.deposit(&owner, &token_id, &300);
-    let too_early = client.try_withdraw(&owner, &100);
-    assert_eq!(too_early, Err(Ok(Error::WithdrawLocked)));
-
-    e.ledger().set_timestamp(e.ledger().timestamp() + WEEK);
     client.withdraw(&owner, &100);
     assert_eq!(balance(&e, &token_id, &owner), 800); // 1000 - 300 + 100
     assert_eq!(client.get_pool(&owner).unwrap().amount, 200);
-}
 
-#[test]
-fn h2_deposit_resets_the_lock_clock() {
-    let e = Env::default();
-    e.mock_all_auths();
-    let (client, token_id, _admin) = setup(&e);
-    let owner = Address::generate(&e);
-    mint(&e, &token_id, &owner, 1_000);
-
-    client.deposit(&owner, &token_id, &300);
-    e.ledger().set_timestamp(e.ledger().timestamp() + WEEK - DAY); // almost unlocked
-    client.deposit(&owner, &token_id, &100); // resets the clock (§7)
-
-    e.ledger().set_timestamp(e.ledger().timestamp() + DAY + 1); // would have been unlocked under the OLD clock
-    let result = client.try_withdraw(&owner, &50);
-    assert_eq!(result, Err(Ok(Error::WithdrawLocked)));
+    // A later deposit does not lock the existing or newly added balance.
+    client.deposit(&owner, &token_id, &100);
+    client.withdraw(&owner, &50);
+    assert_eq!(balance(&e, &token_id, &owner), 750);
+    assert_eq!(client.get_pool(&owner).unwrap().amount, 250);
 }
 
 #[test]
@@ -328,7 +311,6 @@ fn withdraw_more_than_balance_rejected() {
     mint(&e, &token_id, &owner, 1_000);
 
     client.deposit(&owner, &token_id, &300);
-    e.ledger().set_timestamp(e.ledger().timestamp() + WEEK);
     let result = client.try_withdraw(&owner, &301);
     assert_eq!(result, Err(Ok(Error::InsufficientPoolBalance)));
 }

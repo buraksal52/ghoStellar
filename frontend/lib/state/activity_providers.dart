@@ -18,12 +18,15 @@ final activityItemsProvider = FutureProvider<List<ActivityItem>>((ref) async {
   // rows empty rather than fail the whole feed — cheques still have to show.
   // This provider re-runs by itself once the ledger has loaded.
   final bank = ref.watch(anchorTransactionsProvider).value ?? const [];
+  final anchor = ref.watch(primaryAnchorProvider);
 
   final items = <ActivityItem>[];
   if (sync != null && me != null) {
     items.addAll(sync.cheques.map((c) => ActivityItem.fromCheque(c, myAddress: me)));
   }
-  items.addAll(bank.map(ActivityItem.fromAnchorTransaction));
+  if (anchor != null) {
+    items.addAll(bank.map((t) => ActivityItem.fromAnchorTransaction(t, assetCode: anchor.assetCode)));
+  }
 
   final localEvents = await log.readAll();
   // Older builds also logged completed bank transfers here. The ledger above

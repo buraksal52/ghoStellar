@@ -9,32 +9,33 @@ import 'package:shared_preferences/shared_preferences.dart';
 /// comes from `/sync` and bank transfers from the anchor ledger
 /// (`GET /anchors/{id}/transactions`); neither needs this.
 ///
+/// Pool events are always in the platform's one asset ([PayAsset.configured]),
+/// never the anchor's — so the asset is derived at read time
+/// (`ActivityItem.fromLocalEvent`), not stored here. It used to be, and older
+/// records may still carry a now-ignored `assetCode` key.
+///
 /// Builds before that change also wrote `anchor_deposit`/`anchor_withdraw`
 /// events; they may still be stored, and readers must ignore them.
 class LocalActivityEvent {
   const LocalActivityEvent({
     required this.kind, // 'pool_deposit' | 'pool_withdraw'
     required this.amount,
-    required this.assetCode,
     required this.timestamp,
   });
 
   final String kind;
   final String amount;
-  final String assetCode;
   final DateTime timestamp;
 
   Map<String, dynamic> toJson() => {
         'kind': kind,
         'amount': amount,
-        'assetCode': assetCode,
         'timestamp': timestamp.toIso8601String(),
       };
 
   factory LocalActivityEvent.fromJson(Map<String, dynamic> json) => LocalActivityEvent(
         kind: json['kind'] as String,
         amount: json['amount'] as String,
-        assetCode: json['assetCode'] as String,
         timestamp: DateTime.parse(json['timestamp'] as String),
       );
 }

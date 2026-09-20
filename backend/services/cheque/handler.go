@@ -333,14 +333,19 @@ func writeChequeError(w http.ResponseWriter, err error) {
 		code, status = ErrTerminalState, http.StatusConflict
 	case errors.Is(err, errNotFound):
 		code, status = ErrNotFound, http.StatusNotFound
-	case errors.Is(err, errPoolWithdrawLocked):
-		code, status = ErrPoolWithdrawLocked, http.StatusConflict
 	case errors.Is(err, errChainUnavailable):
 		code, status = ErrChainUnavailable, http.StatusBadGateway
 	case errors.Is(err, errAccountNotFunded):
 		code, status = ErrAccountNotFunded, http.StatusUnprocessableEntity
 	case errors.Is(err, errSimulationFailed):
 		code, status = ErrSimulationFailed, http.StatusUnprocessableEntity
+	case errors.Is(err, errAlreadyClaimed):
+		// 409, like errAlreadyActive/errRequestUsed: a conflict with the
+		// cheque's own current state, not a client mistake (400) or a
+		// permanently closed case (errTerminalState's 409 covers that).
+		code, status = ErrAlreadyClaimed, http.StatusConflict
+	case errors.Is(err, errNotFunded):
+		code, status = ErrNotFunded, http.StatusUnprocessableEntity
 	}
 	httpx.WriteError(w, status, code, err.Error(), nil)
 }

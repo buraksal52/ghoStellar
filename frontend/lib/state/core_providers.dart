@@ -19,6 +19,12 @@ import 'sync_providers.dart';
 /// overlay) live in their own files under this directory.
 final secureWalletStoreProvider = Provider((ref) => SecureWalletStore());
 
+/// Wall clock behind an override point, so expiry logic (offline payment
+/// handoffs, the offline-payment retry queue) is testable. Lives here
+/// rather than in a feature-specific file so both `tap_providers.dart` and
+/// `offline_providers.dart` can depend on it without an import cycle.
+final clockProvider = Provider<DateTime Function()>((ref) => DateTime.now);
+
 final apiClientProvider = Provider((ref) {
   return ApiClient(walletStore: ref.watch(secureWalletStoreProvider));
 });

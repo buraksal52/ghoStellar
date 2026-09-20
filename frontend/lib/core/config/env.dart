@@ -1,9 +1,10 @@
 /// Build-time network + gateway constants.
 ///
 /// Mirrors `deploy/example.env` in the backend so the app never guesses at
-/// values the backend already fixes. USDC asset code/issuer and the anchor
-/// domain are NOT hardcoded here — they are per-deployment and must be
-/// fetched at runtime from `GET /anchors`.
+/// values the backend already fixes. The anchor's own asset code/issuer and
+/// domain are NOT hardcoded here — they are per-deployment and independent
+/// from [payAssetCode]/[payAssetIssuer] below, and must be fetched at
+/// runtime from `GET /anchors`.
 class Env {
   Env._();
 

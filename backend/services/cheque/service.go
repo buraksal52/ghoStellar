@@ -20,11 +20,7 @@ import (
 	"github.com/local-payment/backend/ports"
 )
 
-// Cheque validity (p2p doc §0 rule 2 / §9.H1) and the pool's withdraw lock
-// (§7 / §9.H2) — kept in sync with contracts/soroban/pay-escrow/src/lib.rs's
-// own constants; the contract is the actual enforcement point (D6), these
-// mirror them only for building correct unsigned XDR and readable /sync
-// countdowns.
+// Cheque validity (p2p doc §0 rule 2 / §9.H1), kept in sync with the contract.
 const (
 	chequeValidity = 7 * 24 * time.Hour
 	// Ledger close time varies; ~5s/ledger is Stellar's design target, used
@@ -275,6 +271,19 @@ func (s *Service) ConfirmLock(ctx context.Context, chequeID, caller, txHash stri
 }
 
 // ClaimXDR builds the unsigned claim transaction for the cheque's receiver.
+//
+// A cheque still recorded as IMZALI_REZERVE/FONLANIYOR locally is not
+// automatically refused as terminal any more: the sender's own
+// `confirm-lock` (ConfirmLock, "the caller's word") can be lost to a
+// network blip after the lock transaction itself already succeeded on
+// chain, leaving the receiver unable to ever claim their own funded cheque.
+// Before giving up, this re-derives the truth from the contract's own
+// get_cheque (SERVICE.md #1) and repairs the local row when the chain
+// disagrees, in both directions: already Funded (repair to HAVUZDA and
+// proceed), or already Claimed (repair to TALEP_EDILDI and answer
+// ErrAlreadyClaimed instead of a generic terminal-state refusal — the
+// receiver's own earlier claim submit may have succeeded while its
+// ConfirmClaim calls back failed).
 func (s *Service) ClaimXDR(ctx context.Context, chequeID, receiver string) (string, error) {
 	repo, err := s.repos()
 	if err != nil {
@@ -287,17 +296,46 @@ func (s *Service) ClaimXDR(ctx context.Context, chequeID, receiver string) (stri
 	if c.ReceiverAddress != receiver {
 		return "", errInvalidReceiver
 	}
-	if c.State != StateHavuzda {
-		return "", errTerminalState
-	}
-	if time.Now().After(c.ExpiresAt) {
-		return "", errExpired
-	}
 
 	receiverAccount, err := s.chain.GetAccount(ctx, receiver)
 	if err != nil {
 		return "", fmt.Errorf("%w: %v", errChainUnavailable, err)
 	}
+
+	if c.State != StateHavuzda {
+		switch c.State {
+		case StateImzaliRezerve, StateFonlaniyor:
+			record, present, ok := s.chainChequeRecord(ctx, c, receiverAccount.Sequence)
+			if !ok {
+				return "", errTerminalState
+			}
+			switch {
+			case present && record.State == "Funded":
+				if terr := repo.Transition(ctx, chequeID, c.State, StateHavuzda, "chain_verified", c.LockTxHash); terr != nil &&
+					!errors.Is(terr, ErrBadTransitionInRepo) {
+					return "", terr
+				}
+				s.audit(ctx, repo, receiver, "cheque.lock_repaired_from_chain", map[string]string{"chequeId": chequeID})
+				// Fall through below with c treated as HAVUZDA.
+			case present && record.State == "Claimed":
+				if terr := repo.Transition(ctx, chequeID, c.State, StateTalepEdildi, "chain_verified", c.LockTxHash); terr != nil &&
+					!errors.Is(terr, ErrBadTransitionInRepo) {
+					return "", terr
+				}
+				return "", errAlreadyClaimed
+			default:
+				// Not yet funded on chain (or absent): a real "not yet",
+				// distinct from a permanent terminal-state refusal.
+				return "", errNotFunded
+			}
+		default:
+			return "", errTerminalState
+		}
+	}
+	if time.Now().After(c.ExpiresAt) {
+		return "", errExpired
+	}
+
 	idBytes, err := decodeULID(chequeID)
 	if err != nil {
 		return "", err
@@ -578,29 +616,9 @@ func (s *Service) PoolDepositXDR(ctx context.Context, owner, amountStr string) (
 	return stellarx.AssembleInvocation(ctx, s.simulator(), s.cfg.NetworkPassphrase, owner, ownerAccount.Sequence, op)
 }
 
-// PoolWithdrawXDR builds the unsigned withdraw transaction. The contract —
-// not this service — is what actually rejects an early withdraw (H2,
-// "backend'e güvenilmez"); this only pre-checks so the device gets a fast,
-// friendly cheque.pool_withdraw_locked instead of paying a network fee to
-// find out on-chain.
+// PoolWithdrawXDR builds the unsigned withdraw transaction. Pool funds are
+// withdrawable at any time; balance and authorization remain contract-checked.
 func (s *Service) PoolWithdrawXDR(ctx context.Context, owner, amountStr string) (string, error) {
-	repo, err := s.repos()
-	if err != nil {
-		return "", err
-	}
-	pool, exists, err := repo.GetPool(ctx, owner)
-	if err != nil {
-		return "", err
-	}
-	if exists && !pool.LastDepositAt.IsZero() {
-		unlocksAt := pool.LastDepositAt.Add(chequeValidity) // same 1-week constant as §9.H2
-		if time.Now().Before(unlocksAt) {
-			return "", errPoolWithdrawLocked
-		}
-	}
-	// pool.LastDepositAt zero (row predates migration 000002, or was never
-	// set) skips this fast pre-check entirely — the contract's own
-	// WithdrawLocked check (D6) is the real enforcement point either way.
 	amount, err := money.ParseAmount(amountStr, s.asset(), s.cfg.Decimals)
 	if err != nil || amount.Raw.Sign() <= 0 {
 		return "", errInvalidAmount
@@ -655,39 +673,50 @@ func (s *Service) ConfirmPoolWithdraw(ctx context.Context, owner, amountStr stri
 
 // ---- SERVICE.md #1: chain cross-verification ---------------------------
 
-// verifyChequeOnChain simulates the contract's own get_cheque and compares
-// its ChequeState against c's locally-recorded State. Returns nil (not
-// false) on any simulate/decode failure — a transient RPC hiccup or an
-// unverified ScVal encoding must never be reported as a mismatch; it means
-// "couldn't check", which the client should treat the same as not having
-// asked at all.
-func (s *Service) verifyChequeOnChain(ctx context.Context, c Cheque, callerSequence int64) *bool {
+// chainChequeRecord simulates the contract's own get_cheque for c and
+// decodes the result. ok=false means "couldn't check" (a transient RPC
+// hiccup, or an unverified ScVal encoding) — never treated as "not found
+// on chain", which is a decoded answer (present=false) in its own right.
+func (s *Service) chainChequeRecord(ctx context.Context, c Cheque, callerSequence int64) (record stellarx.ChequeRecordView, present, ok bool) {
 	idBytes, err := decodeULID(c.ID)
 	if err != nil {
-		return nil
+		return stellarx.ChequeRecordView{}, false, false
 	}
 	idArg, err := scBytes(idBytes)()
 	if err != nil {
-		return nil
+		return stellarx.ChequeRecordView{}, false, false
 	}
 	op, err := stellarx.InvokeContract(s.cfg.EscrowContractID, c.ReceiverAddress, "get_cheque", idArg)
 	if err != nil {
-		return nil
+		return stellarx.ChequeRecordView{}, false, false
 	}
 	xdrStr, err := stellarx.AssembleInvocation(ctx, s.simulator(), s.cfg.NetworkPassphrase, c.ReceiverAddress, callerSequence, op)
 	if err != nil {
-		return nil
+		return stellarx.ChequeRecordView{}, false, false
 	}
 	result, err := s.chain.SimulateTransaction(ctx, xdrStr)
 	if err != nil || !result.Success || result.ResultXDR == "" {
-		return nil
+		return stellarx.ChequeRecordView{}, false, false
 	}
 	var resultVal xdr.ScVal
 	if err := xdr.SafeUnmarshalBase64(result.ResultXDR, &resultVal); err != nil {
-		return nil
+		return stellarx.ChequeRecordView{}, false, false
 	}
-	record, present, err := stellarx.DecodeChequeRecord(resultVal)
+	record, present, err = stellarx.DecodeChequeRecord(resultVal)
 	if err != nil {
+		return stellarx.ChequeRecordView{}, false, false
+	}
+	return record, present, true
+}
+
+// verifyChequeOnChain compares the contract's own get_cheque state against
+// c's locally-recorded State. Returns nil (not false) when chainChequeRecord
+// couldn't get an answer — that must never be reported as a mismatch; it
+// means "couldn't check", which the client should treat the same as not
+// having asked at all.
+func (s *Service) verifyChequeOnChain(ctx context.Context, c Cheque, callerSequence int64) *bool {
+	record, present, ok := s.chainChequeRecord(ctx, c, callerSequence)
+	if !ok {
 		return nil
 	}
 	matched := chequeStateMatchesChain(c.State, present, record.State)
@@ -842,11 +871,12 @@ var (
 	errExpired             = errors.New(ErrExpired)
 	errTerminalState       = errors.New(ErrTerminalState)
 	errNotFound            = errors.New(ErrNotFound)
-	errPoolWithdrawLocked  = errors.New(ErrPoolWithdrawLocked)
 	errBadRequest          = errors.New(ErrBadRequest)
 	errChainUnavailable    = errors.New(ErrChainUnavailable)
 	errAccountNotFunded    = errors.New(ErrAccountNotFunded)
 	errSimulationFailed    = errors.New(ErrSimulationFailed)
+	errNotFunded           = errors.New(ErrNotFunded)
+	errAlreadyClaimed      = errors.New(ErrAlreadyClaimed)
 )
 
 // requestIDPattern bounds the receiver-chosen request id: it is stored and

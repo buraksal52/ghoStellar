@@ -6,7 +6,6 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import 'package:uuid/uuid.dart';
 
-import '../../core/config/pay_asset.dart';
 import '../../core/errors/api_error.dart';
 import '../../core/errors/error_copy.dart';
 import '../../core/theme/app_colors.dart';
@@ -18,8 +17,8 @@ import '../../data/api/models/tx_models.dart';
 import '../../state/anchor_bookkeeping.dart';
 import '../../state/anchor_providers.dart';
 import '../../state/core_providers.dart';
+import '../../state/home_providers.dart';
 import '../../state/signing_overlay_provider.dart';
-import '../../state/sync_providers.dart';
 import '../../state/wallet_providers.dart';
 
 /// Fiat leg of the local mock anchor. Deposits are wired in this currency;
@@ -338,9 +337,6 @@ class _AnchorDepositWithdrawPageState extends ConsumerState<AnchorDepositWithdra
   Widget build(BuildContext context) {
     final c = context.colors;
     final anchor = ref.watch(primaryAnchorProvider);
-    // XLM is native: it never needs a trustline. Keep issued-asset support
-    // intact while allowing the local XLM mock anchor to use this screen.
-    final trustlineReady = PayAsset.configured.isNative || (ref.watch(syncProvider).value?.trustlineReady ?? false);
     final active = _active;
 
     if (anchor == null) {
@@ -358,17 +354,35 @@ class _AnchorDepositWithdrawPageState extends ConsumerState<AnchorDepositWithdra
       );
     }
 
+    // The anchor's own asset needs a trustline — independent from whether
+    // the platform's own asset (cheques/pool) is native. The TR mock anchor
+    // ramps USDC regardless of what those use.
+    final anchorIsNative = anchor.assetIssuer.isEmpty;
+    final balances = ref.watch(balancesProvider).value;
+    final trustlineReady = anchorIsNative || (balances?.other.containsKey(anchor.assetCode) ?? false);
+    // Never shown anywhere else in the app (the home balance card only
+    // shows the platform asset) — without this, a completed deposit would
+    // be invisible.
+    final anchorBalance = balances?.other[anchor.assetCode];
+
     return ListView(
       children: [
         Text(
           'Move money between your bank and your Stellar wallet.',
           style: TextStyle(fontSize: 14, color: c.textSecondary),
         ),
+        if (anchorBalance != null) ...[
+          const SizedBox(height: 8),
+          Text(
+            '${anchor.assetCode} balance: $anchorBalance',
+            style: TextStyle(fontSize: 13, color: c.textSecondary, fontWeight: FontWeight.w600),
+          ),
+        ],
         const SizedBox(height: 16),
         _modeToggle(enabled: active == null),
-        if (!PayAsset.configured.isNative && !trustlineReady) ...[
+        if (!anchorIsNative && !trustlineReady) ...[
           const SizedBox(height: 16),
-          _trustlineBanner(),
+          _trustlineBanner(anchor.assetCode),
         ],
         const SizedBox(height: 16),
         if (active == null) ..._form(anchor, trustlineReady) else _activeCard(anchor, active),
@@ -492,7 +506,7 @@ class _AnchorDepositWithdrawPageState extends ConsumerState<AnchorDepositWithdra
                 child: Text(
                   active.timedOut && !active.isTerminal
                       ? 'Still processing — check Recent bank activity later'
-                      : anchorStatusLabel(active.status, isDeposit: active.isDeposit),
+                      : anchorStatusLabel(active.status, isDeposit: active.isDeposit, assetCode: anchor.assetCode),
                   style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w600),
                 ),
               ),
@@ -620,7 +634,7 @@ class _AnchorDepositWithdrawPageState extends ConsumerState<AnchorDepositWithdra
                     children: [
                       Text(t.kind == 'deposit' ? 'Deposit' : 'Withdraw', style: const TextStyle(fontSize: 14)),
                       Text(
-                        anchorStatusLabel(t.state, isDeposit: t.kind == 'deposit'),
+                        anchorStatusLabel(t.state, isDeposit: t.kind == 'deposit', assetCode: anchor.assetCode),
                         style: TextStyle(fontSize: 12, color: c.muted),
                       ),
                     ],
@@ -638,7 +652,7 @@ class _AnchorDepositWithdrawPageState extends ConsumerState<AnchorDepositWithdra
     );
   }
 
-  Widget _trustlineBanner() {
+  Widget _trustlineBanner(String assetCode) {
     final c = context.colors;
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
@@ -648,7 +662,7 @@ class _AnchorDepositWithdrawPageState extends ConsumerState<AnchorDepositWithdra
           Icon(Icons.info_outline, size: 16, color: c.info),
           const SizedBox(width: 10),
           Expanded(
-            child: Text('USDC needs a one-time setup.', style: TextStyle(fontSize: 13, color: c.textSecondary)),
+            child: Text('$assetCode needs a one-time setup.', style: TextStyle(fontSize: 13, color: c.textSecondary)),
           ),
           TextButton(
             onPressed: () => context.push('/anchor/trustline'),

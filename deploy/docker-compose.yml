@@ -189,9 +189,9 @@ services:
       JWT_PUBLIC_KEY_PATH: /secrets/jwt_public.pem
       ANCHOR_ID: ${ANCHOR_ID:-default}
       ANCHOR_DOMAIN: ${ANCHOR_DOMAIN:-tr-mock-anchor.fly.dev}
-      ASSET_CODE: ${ASSET_CODE:-native}
-      ASSET_ISSUER: ${ASSET_ISSUER:-}
-      ASSET_DECIMALS: ${ASSET_DECIMALS:-7}
+      ANCHOR_ASSET_CODE: ${ANCHOR_ASSET_CODE:-USDC}
+      ANCHOR_ASSET_ISSUER: ${ANCHOR_ASSET_ISSUER:-GBBD47IF6LWK7P7MDEVSCWR7DPUWV3NY3DTQEVFL4NAT4AQH3ZLLFLA5}
+      ANCHOR_ASSET_DECIMALS: ${ANCHOR_ASSET_DECIMALS:-7}
     volumes:
       - ./secrets:/secrets:ro
     depends_on:

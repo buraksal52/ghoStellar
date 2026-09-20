@@ -1,7 +1,7 @@
 package cheque
 
 // Error codes match the plan's "Hata kodları" list and the p2p doc's case
-// catalog (A1-A6, F3, H2, D5) one-to-one.
+// catalog (A1-A6, F3, D5) one-to-one.
 const (
 	ErrSenderNoTrustline     = "cheque.sender_no_trustline"
 	ErrInsufficientBalance   = "cheque.insufficient_balance"  // A1
@@ -15,7 +15,6 @@ const (
 	ErrExpired               = "cheque.expired"
 	ErrTerminalState         = "cheque.terminal_state"
 	ErrNotFound              = "cheque.not_found"
-	ErrPoolWithdrawLocked    = "pool.withdraw_locked"     // H2
 	ErrPoolOperationInFlight = "pool.operation_in_flight" // D5
 	ErrBadRequest            = "cheque.bad_request"
 	ErrDBNotReady            = "cheque.db_not_ready"
@@ -29,4 +28,16 @@ const (
 	// its own code it fell into ErrBadRequest and the real cause never
 	// reached the user.
 	ErrSimulationFailed = "cheque.simulation_failed"
+	// ErrNotFunded: the cheque hasn't reached the contract as `Funded` yet
+	// per the chain's own get_cheque (SERVICE.md #1) — unlike
+	// ErrTerminalState, this is a "not yet" the caller may see clear up on
+	// its own (e.g. the lock transaction is still confirming), not a
+	// permanent refusal.
+	ErrNotFunded = "cheque.not_funded"
+	// ErrAlreadyClaimed: the chain's own get_cheque (SERVICE.md #1) already
+	// shows this cheque as Claimed — returned instead of ErrTerminalState
+	// specifically for ClaimXDR so a client whose earlier confirm-claim
+	// never landed (network blip right after a successful on-chain claim)
+	// can recognize its own past success instead of retrying forever.
+	ErrAlreadyClaimed = "cheque.already_claimed"
 )

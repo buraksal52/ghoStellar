@@ -3,8 +3,10 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_riverpod/misc.dart' show Override;
 import 'package:flutter_test/flutter_test.dart';
 import 'package:ghostellar_app/core/theme/app_colors.dart';
+import 'package:ghostellar_app/data/api/models/anchor_models.dart';
 import 'package:ghostellar_app/data/stellar/horizon_read_service.dart';
 import 'package:ghostellar_app/features/home/widgets/balance_card.dart';
+import 'package:ghostellar_app/state/anchor_providers.dart';
 import 'package:ghostellar_app/state/core_providers.dart';
 import 'package:ghostellar_app/state/home_providers.dart';
 import 'package:ghostellar_app/state/sync_providers.dart';
@@ -16,10 +18,22 @@ import '../support/fakes.dart';
 const _testnet = 'Test SDF Network ; September 2015';
 const _public = 'Public Global Stellar Network ; September 2015';
 
+const _anchor = AnchorInfo(
+  id: 'default',
+  domain: 'tr-mock-anchor.fly.dev',
+  signingKey: 'GSIGNING',
+  webAuthEndpoint: 'https://tr-mock-anchor.fly.dev/auth',
+  assetCode: 'USDC',
+  assetIssuer: 'GBBD47IF6LWK7P7MDEVSCWR7DPUWV3NY3DTQEVFL4NAT4AQH3ZLLFLA5',
+);
+
 Widget _app(
   FakeHorizonReadService horizon, {
   bool trustlineReady = true,
   String passphrase = _testnet,
+  // null = anchor not loaded yet (most tests don't care about the bank's own
+  // asset); pass `_anchor` to exercise the secondary bank-balance line.
+  AnchorInfo? anchor,
 }) {
   return ProviderScope(
     overrides: <Override>[
@@ -27,6 +41,7 @@ Widget _app(
       horizonReadServiceProvider.overrideWithValue(horizon),
       syncProvider.overrideWith(() => FakeSyncNotifier(const [], trustlineReady: trustlineReady)),
       networkPassphraseProvider.overrideWithValue(passphrase),
+      primaryAnchorProvider.overrideWithValue(anchor),
     ],
     child: MaterialApp(
       theme: ThemeData(extensions: [AppColors.light]),
@@ -142,6 +157,29 @@ void main() {
       await _settle(tester);
 
       expect(find.textContaining("isn't funded yet"), findsOneWidget);
+    });
+  });
+
+  group('the anchor\'s own asset (e.g. USDC from a bank deposit)', () {
+    testWidgets('is never shown without a trustline for it', (tester) async {
+      final horizon = FakeHorizonReadService([FakeHorizonReadService.fundedBalances()]);
+      await tester.pumpWidget(_app(horizon, anchor: _anchor));
+      await _settle(tester);
+
+      expect(find.textContaining('USDC'), findsNothing);
+    });
+
+    testWidgets('gets its own labeled line once the wallet holds any', (tester) async {
+      final horizon = FakeHorizonReadService([
+        FakeHorizonReadService.fundedBalances(other: {'USDC': '42.5000000'}),
+      ]);
+      await tester.pumpWidget(_app(horizon, anchor: _anchor));
+      await _settle(tester);
+
+      // The main figure stays XLM; USDC is a separate, clearly-labeled line.
+      expect(find.textContaining('10000 XLM', findRichText: true), findsOneWidget);
+      expect(find.textContaining('42.5 USDC', findRichText: true), findsOneWidget);
+      expect(find.textContaining('from your bank', findRichText: true), findsOneWidget);
     });
   });
 }

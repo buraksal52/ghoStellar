@@ -36,7 +36,7 @@ func main() {
 	dsn := envx.Get("DATABASE_URL", "postgres://postgres:postgres@localhost:5434/localpayment?sslmode=disable")
 	pool := dbx.ConnectAsync(ctx, dsn, logger)
 
-	anchorDomain := envx.Get("ANCHOR_DOMAIN", "pay-mock-anchor")
+	anchorDomain := envx.Get("ANCHOR_DOMAIN", "tr-mock-anchor.fly.dev")
 	// SSRF allow-list contains ONLY the operator-configured anchor domain —
 	// never one derived from a request (architecture.md §10).
 	allowedHosts := nethost.AllowList{anchorDomain: true}
@@ -49,12 +49,16 @@ func main() {
 		nil,
 	)
 
+	// The anchor's own asset is independent from the platform asset
+	// (ASSET_CODE/ASSET_ISSUER, read by pay-cheque-service): the TR mock
+	// anchor only ever ramps USDC, regardless of what cheques/pool are
+	// denominated in. Defaults match tr-mock-anchor.fly.dev's stellar.toml.
 	svc := anchor.NewService(anchor.Config{
 		AnchorID:     envx.Get("ANCHOR_ID", "default"),
 		AnchorDomain: anchorDomain,
-		AssetCode:    envx.Get("ASSET_CODE", "native"),
-		AssetIssuer:  envx.Get("ASSET_ISSUER", ""),
-		Decimals:     uint8(envx.GetInt("ASSET_DECIMALS", 7)),
+		AssetCode:    envx.Get("ANCHOR_ASSET_CODE", "USDC"),
+		AssetIssuer:  envx.Get("ANCHOR_ASSET_ISSUER", "GBBD47IF6LWK7P7MDEVSCWR7DPUWV3NY3DTQEVFL4NAT4AQH3ZLLFLA5"),
+		Decimals:     uint8(envx.GetInt("ANCHOR_ASSET_DECIMALS", 7)),
 	}, pool, anchorClient, chainGW, logger)
 	handler := anchor.NewHandler(svc, logger)
 

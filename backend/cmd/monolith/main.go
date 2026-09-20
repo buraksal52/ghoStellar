@@ -113,14 +113,18 @@ func main() {
 	txHandler := tx.NewHandler(txSvc)
 
 	// ---- anchor ---------------------------------------------------------------
-	anchorDomain := envx.Get("ANCHOR_DOMAIN", "pay-mock-anchor")
+	// The anchor's own asset is independent from the platform asset above
+	// (ASSET_CODE/ASSET_ISSUER): the TR mock anchor only ever ramps USDC,
+	// regardless of what cheques/pool are denominated in. Defaults match
+	// tr-mock-anchor.fly.dev's stellar.toml.
+	anchorDomain := envx.Get("ANCHOR_DOMAIN", "tr-mock-anchor.fly.dev")
 	anchorClient := anchor.NewClient(nethost.Client(nethost.AllowList{anchorDomain: true}))
 	anchorSvc := anchor.NewService(anchor.Config{
 		AnchorID:     envx.Get("ANCHOR_ID", "default"),
 		AnchorDomain: anchorDomain,
-		AssetCode:    envx.Get("ASSET_CODE", "native"),
-		AssetIssuer:  envx.Get("ASSET_ISSUER", ""),
-		Decimals:     uint8(envx.GetInt("ASSET_DECIMALS", 7)),
+		AssetCode:    envx.Get("ANCHOR_ASSET_CODE", "USDC"),
+		AssetIssuer:  envx.Get("ANCHOR_ASSET_ISSUER", "GBBD47IF6LWK7P7MDEVSCWR7DPUWV3NY3DTQEVFL4NAT4AQH3ZLLFLA5"),
+		Decimals:     uint8(envx.GetInt("ANCHOR_ASSET_DECIMALS", 7)),
 	}, pool, anchorClient, chainGW, logger)
 	anchorHandler := anchor.NewHandler(anchorSvc, logger)
 

@@ -398,3 +398,106 @@ olmadığı için jenerik hataya düşüyordu. (1) bu madde, (2) dört fonksiyon
 eklenen `if !account.Exists { return errAccountNotFunded }` kontrolüyle
 kapatıldı — `cheque.CreateCheque`'in kendi (dolaylı, `hasSufficientBalance`
 üzerinden) yolu bilinçli olarak dokunulmadan bırakıldı.
+
+## 25. Anchor varlığı ile platform varlığı arasında takas yolu yok
+
+Platform tek bir varlıkta çalışır (`ASSET_CODE`/`ASSET_ISSUER`, varsayılan
+native XLM) — çek ve havuz yalnızca bunu kullanır
+(`backend/services/cheque/service.go`, `pkg/money`). Anchor ise kendi ayrı
+varlığında ramp yapar (`ANCHOR_ASSET_CODE`/`ANCHOR_ASSET_ISSUER`, varsayılan
+USDC — `backend/cmd/{anchorsvc,monolith}/main.go`), çünkü TR Mock Anchor
+(`tr-mock-anchor.fly.dev`) yalnızca USDC/TRY ramp ediyor, native XLM ramp
+edemiyor.
+
+Bu iki varlık arasında **hiçbir takas mekanizması yoktur.** Sonuç: bir
+kullanıcı bankadan (SEP-6) USDC yatırdığında bu USDC cüzdanında durur ama
+doğrudan çeke yazılamaz veya havuza yatırılamaz — önce kullanıcının kendisinin
+(uygulama dışında, örn. Stellar DEX üzerinde) XLM'e çevirmesi gerekir. Aynı
+şekilde havuzdan/çekten çekilen XLM doğrudan bankaya (USDC bekleyen bir
+withdraw akışına) gönderilemez.
+
+Bu, MVP'nin kasıtlı bir kapsam sınırlamasıdır — önceki bir sürüm bu takası
+DEX üzerinden otomatik yapmaya çalışıyordu
+(`frontend/lib/state/starter_funds.dart`'taki tarihsel not), ama testnet
+order-book likiditesine bağımlıydı ve uzun süre asılı kalabiliyor veya
+tamamen başarısız olabiliyordu; kaldırıldı. İstemci tarafı bu ayrımı dürüstçe
+gösterir: ana bakiye kartı platform varlığını (XLM), Bank ekranı ve ikincil
+bakiye satırı anchor varlığını (USDC) — `AnchorInfo.assetCode` üzerinden —
+ayrı ayrı etiketler; hiçbiri diğerinin yerine geçmez.
+
+## 26. [Kapatıldı] Çevrimdışı ödemede gönderen kendi kuyruğuna hiç yazmıyordu
+
+`frontend/lib/features/send/send_page.dart`'taki `_buildOfflinePayment`,
+imzalı ödemeyi yalnızca bellekteki handoff nesnesine (`_OfflineHandoffToDeliver`)
+koyuyordu — `pendingOfflinePaymentsProvider`'a hiç eklemiyordu; yalnızca
+*alıcı* tarafı (`tap_providers.dart`'taki `acceptOfflinePayment`) kendi
+kopyasını kalıcı kuyruğa yazıyordu. Handoff penceresi (NFC/QR, birkaç saniye)
+alıcı tarafından hiç yakalanmazsa (kaçırılan tap, kapatılan uygulama), imzalı
+XDR hiçbir yerde kalmıyordu — oysa `reserve()` bakiyeyi ve sequence'i,
+`markSpent()` de talep nonce'unu zaten kalıcı olarak tüketmişti. Para ne
+zincire ulaşıyor ne de geri alınabiliyordu.
+
+Kapatıldı: gönderen artık aynı kalıcı, kendi kendine yeniden deneyen kuyruğa
+(`pendingOfflinePaymentsProvider`) kendi kopyasını da ekliyor — idempotency
+anahtarı işlemin kendi hash'i olduğu için (`offline_providers.dart`) alıcı da
+aynı ödemeyi yakalayıp kuyruğa koysa bile ikinci `POST /tx/submit` yalnızca
+`replayed` döner, çift harcama olmaz.
+
+İlişkili iki sertleştirme:
+- `pay-tx-service`'in `Submit`'i (`backend/services/tx/service.go`), chain-
+  gateway'e hiç ulaşılamadığında (RPC/ağ hatası — zincirin kendi kararı
+  değil) idempotency anahtarını artık `ReleaseSubmission` ile serbest
+  bırakıyor, `CompleteSubmission` ile kalıcı `done` işaretlemiyor. Öncesinde
+  bu geçici hata da kalıcı bir `done` sonucu olarak `pay.idempotency_keys`'e
+  yazılıyordu — aynı anahtarla her yeniden deneme (özellikle çevrimdışı
+  kuyrunun 15 sn'lik döngüsü) `GetIdempotentResponse` üzerinden aynı
+  başarısızlığı sonsuza dek `replayed` olarak geri alıyordu, geçici sorun
+  düzeldikten çok sonra bile. Zincirin kendi kararı (`Successful:false` +
+  gerçek bir `resultCode`) hâlâ `done` olarak cache'leniyor — bu D3'ün
+  garantisi için doğru davranış.
+- `frontend/lib/state/offline_providers.dart`'taki `retryAll`, artık
+  `OfflinePaymentBuilder.validity` (24 saat) süresi dolmuş bir ödemeyi
+  sonsuza dek yeniden denemek yerine düşürüyor, ve son hatayı/başarısızlığı
+  `offlineQueueErrorProvider` üzerinden Home ekranındaki yeni
+  `PendingOfflinePaymentsBanner`'a taşıyor — öncesinde kuyruk tamamen
+  sessizdi, kullanıcı bekleyen veya sonsuza dek başarısız olan bir ödemeyi
+  hiçbir yerde göremiyordu.
+
+## 27. [Kapatıldı] `ClaimXDR`, gönderenin kaçırdığı `confirm-lock`'u kalıcı olarak engele çeviriyordu
+
+Madde 1'in "yazma uçları zaten zincirden kontrol eder" savunması
+`ClaimXDR` için tam doğru değildi: `services/cheque/service.go`'daki
+`ClaimXDR`, `HAVUZDA` dışındaki her durumu doğrudan `cheque.terminal_state`
+ile reddediyordu. Bir çek yalnızca gönderenin `POST /tx/submit`'ten sonraki
+`confirm-lock` çağrısıyla `IMZALI_REZERVE`/`FONLANIYOR`'dan `HAVUZDA`'ya
+geçiyordu (madde 1) — gönderenin uygulaması bu ikisi arasında ağı kaybederse
+(çökme, kapatma), kilit zincirde başarıyla tamamlanmış olsa bile yerel satır
+sonsuza dek `IMZALI_REZERVE`'de donuyor, alıcı "Claim"e bastığında
+*"This cheque can no longer be acted on."* alıyor ve hiçbir kurtarma yolu
+olmuyordu (`force-collect-xdr` istemciden hiç çağrılmıyor).
+
+Kapatıldı: `ClaimXDR` artık `IMZALI_REZERVE`/`FONLANIYOR` durumundaki bir
+çek için önce kontratın kendi `get_cheque`'ini okuyor
+(`chainChequeRecord`, madde 1'in `verifyChequeOnChain`'iyle paylaşılan bir
+yardımcı) ve yerel durumu buna göre onarıyor:
+- Zincirde `Funded` ise satırı `HAVUZDA`'ya taşıyıp normal claim akışına
+  devam ediyor (gönderen `confirm-lock`'u hiç çağırmamış olsa bile alıcı
+  parasını alabiliyor).
+- Zincirde `Claimed` ise (alıcının kendi önceki `claim` submit'i başarılı
+  olmuş ama `confirm-claim` geri çağrısı ağ hatasına düşmüşse — bu olmadan
+  önce `cheque.simulation_failed` ile 15 sn'de bir sonsuz döngüye giriyordu)
+  satırı `TALEP_EDILDI`'ye taşıyıp yeni `cheque.already_claimed` kodunu
+  dönüyor; istemci (`claim_core.dart`) bunu başarı sayıp yalnızca `ack`
+  deniyor.
+- Zincir okunamıyorsa (RPC hatası, decode hatası) eski davranış
+  (`cheque.terminal_state`) korunuyor — "onaramadım" hiçbir zaman "yanlış
+  eşleşme" ile karıştırılmıyor.
+
+Yeni `cheque.not_funded` kodu, zincirin henüz `Funded` demediği (ör. kilit
+işlemi hâlâ onaylanıyor) geçici durumu, kalıcı bir `cheque.terminal_state`
+reddinden ayırıyor — istemci bunu `retryLater` sayıyor, `gone` değil.
+İlişkili istemci sertleştirmeleri: kilitli cüzdanla "Claim"e basmak artık
+sessizce hiçbir şey yapmıyor, imzalama overlay'inde görünür bir hata
+gösteriyor (`tap_providers.dart`); Soroban `PENDING` sonucu artık hemen
+`confirmClaim` çağırmıyor, bir sonraki deneme zincirden doğrulasın diye
+kuyrukta bırakılıyor (`claim_core.dart`).

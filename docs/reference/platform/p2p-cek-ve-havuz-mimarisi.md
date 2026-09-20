@@ -42,8 +42,8 @@ Bu doküman aşağıdaki beş maddenin üzerine kuruludur; her biri Bölüm 6'da
 bir veya daha fazla case grubuna karşılık gelir.
 
 1. Yeterli parası olan kullanıcı Pool'a para gönderme (Çek) başlatabilir.
-2. Pool'a para eklemek her zaman serbesttir; çekmek için en az 1 hafta
-   geçmesi gerekir. Çek'in geçerlilik süresi de 1 haftadır.
+2. Pool'a para eklemek ve çekmek her zaman serbesttir. Çek'in geçerlilik
+   süresi 1 haftadır.
 3. Pool'a Çek'i aynı anda yalnızca 1 kişi başlatabilir, aynı anda
    yalnızca 1 kişi çekebilir. Her çekimden sonra alıcının onayı gerekir.
 4. Gönderen online olduğunda parayı Pool'a atar; alıcı 1 hafta içinde
@@ -150,9 +150,8 @@ yerel kayıt düzeltilir, kullanıcıya asla zincirdekinden farklı bir
 bakiye gösterilmez.
 
 **D7 — Zincir saati**
-Tüm süre (1 hafta claim, 1 hafta çekim kilidi) kararları ledger zaman
-damgasından (predicate not-after) okunur. Cihaz saati yalnız
-görüntülemede kullanılır, hiçbir yetkilendirme kararında kullanılmaz.
+Çek geçerlilik süresi (1 hafta) ledger zaman damgasından (predicate
+not-after) okunur. Cihaz saati hiçbir yetkilendirme kararında kullanılmaz.
 
 **D8 — Ya hep ya hiç**
 Kısmi fonlama, kısmi claim, kısmi zorla tahsil yoktur. Bir Çek ya tam
@@ -294,13 +293,12 @@ Alici(online olur) --> Zorunlu Mutabakat --> Pool bos oldugunu gorur
             (alici onay verir)        (gonderen eksiye DUSMEZ, D2/D8)
 ```
 
-## 7. Pool Mevduat Kuralları (kullanıcının kendi kilitli bakiyesi)
+## 7. Pool Mevduat Kuralları (kullanıcının kendi bakiyesi)
 
 - **Ekleme**: her zaman serbest, bekleme yok, anında kilitli bakiyeye
   eklenir.
-- **Çekme**: yalnızca son ekleme işleminden itibaren >= 1 hafta
-  geçmişse (D7, ledger saati). Erken çekme isteği zincir tarafından
-  reddedilir — backend'e güvenilmez.
+- **Çekme**: istenen tutar havuz bakiyesini aşmıyorsa her zaman
+  yapılabilir; işlem Stellar ağına bağlanınca gönderilir.
 - **Eşzamanlılık (D5)**: aynı anda tek yatıran, tek çekim işlemi —
   ikinci istek, birincisi zincirde sonuçlanana kadar kuyruğa alınır
   veya reddedilip yeniden denenmesi istenir (kullanıcıya açık "işlem
@@ -581,8 +579,7 @@ varsayım olarak Bölüm 10'da not edilmiştir.
 ### 9.H Süre
 
 **H1** — Çek geçerlilik süresi = 1 hafta (D7, ledger saati)
-**H2** — Pool mevduatında çekim kilidi = son eklemeden itibaren 1
-hafta (Bölüm 7)
+**H2** — Kaldırıldı: Pool'dan çekimde zaman kilidi yoktur.
 **H3** — Süre sonu iadesi izinsizdir, kimse gönderenin/alıcının online
 olmasını beklemez (D9)
 **H4** — Süre uzatma YOKTUR — ihtiyaç olursa gönderen yeni bir Çek

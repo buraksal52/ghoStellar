@@ -98,27 +98,89 @@ func TestSubmit_KeyInFlightRejected(t *testing.T) {
 	}
 }
 
-func TestSubmit_ChainErrorStillRecordsFailedState(t *testing.T) {
+// TestSubmit_GatewayErrorReleasesKeyForRetry is SERVICE.md #14/#23's
+// regression test: a chain-gateway/Horizon-level error (never reaching the
+// network's own verdict) must release the idempotency key instead of
+// caching the failure as "done" — otherwise a retried offline payment (or
+// any client honoring D3) would replay the SAME transient failure forever
+// via GetIdempotentResponse, even long after the outage cleared.
+func TestSubmit_GatewayErrorReleasesKeyForRetry(t *testing.T) {
 	repo := newFakeRepo()
+	calls := 0
 	chain := &portstest.FakeChain{
 		SubmitClassicFunc: func(ctx context.Context, signedXDR string) (ports.SubmitResult, error) {
-			return ports.SubmitResult{}, errors.New("horizon: connection refused")
+			calls++
+			if calls == 1 {
+				return ports.SubmitResult{}, errors.New("horizon: connection refused")
+			}
+			return ports.SubmitResult{Hash: "hash-1", Successful: true}, nil
 		},
 	}
 	svc := newServiceWithRepo(repo, chain)
+	req := SubmitRequest{IdempotencyKey: "key-1", Kind: KindClassic, SignedXDR: "AAAA=="}
 
-	_, err := svc.Submit(context.Background(), SubmitRequest{IdempotencyKey: "key-1", Kind: KindClassic, SignedXDR: "AAAA=="})
-	if err == nil {
-		t.Fatal("expected an error when the chain submit fails")
+	if _, err := svc.Submit(context.Background(), req); err == nil {
+		t.Fatal("expected an error when the chain gateway itself fails")
 	}
 	sub := repo.submissions["key-1"]
 	if sub.State != "failed" {
 		t.Errorf("recorded state = %q, want %q", sub.State, "failed")
 	}
-	// The key must still be marked done — a chain failure is a terminal
-	// outcome for this key, not something to retry via the same key.
+	// The key must NOT be marked done: a gateway error is not the network's
+	// verdict, so the caller must be able to retry with the same key.
+	if status, ok := repo.keyStatus["key-1"]; ok {
+		t.Errorf("keyStatus = %q, want key to be released (absent)", status)
+	}
+
+	resp, err := svc.Submit(context.Background(), req)
+	if err != nil {
+		t.Fatalf("retry after gateway error: %v", err)
+	}
+	if resp.Replayed {
+		t.Fatal("the retry reached the chain for real and must not be marked Replayed")
+	}
+	if !resp.Successful || resp.Hash != "hash-1" {
+		t.Fatalf("got %+v, want a successful resubmission", resp)
+	}
+	if calls != 2 {
+		t.Fatalf("chain was called %d times, want exactly 2", calls)
+	}
+}
+
+// TestSubmit_ChainRejectionIsCachedAsTerminal is the counterpart: once the
+// chain itself has spoken (submitErr == nil, whether or not the transaction
+// was accepted), that IS the network's verdict — D3's idempotency cache
+// must still make it replay-safe, unlike a gateway-level error.
+func TestSubmit_ChainRejectionIsCachedAsTerminal(t *testing.T) {
+	repo := newFakeRepo()
+	chain := &portstest.FakeChain{
+		SubmitClassicFunc: func(ctx context.Context, signedXDR string) (ports.SubmitResult, error) {
+			return ports.SubmitResult{Hash: "hash-1", Successful: false, ResultCode: "tx_bad_seq"}, nil
+		},
+	}
+	svc := newServiceWithRepo(repo, chain)
+	req := SubmitRequest{IdempotencyKey: "key-1", Kind: KindClassic, SignedXDR: "AAAA=="}
+
+	first, err := svc.Submit(context.Background(), req)
+	if err != nil {
+		t.Fatalf("Submit: %v", err)
+	}
+	if first.Successful || first.ResultCode != "tx_bad_seq" {
+		t.Fatalf("got %+v, want a recorded rejection", first)
+	}
 	if repo.keyStatus["key-1"] != "done" {
 		t.Errorf("keyStatus = %q, want %q", repo.keyStatus["key-1"], "done")
+	}
+
+	second, err := svc.Submit(context.Background(), req)
+	if err != nil {
+		t.Fatalf("replayed Submit: %v", err)
+	}
+	if !second.Replayed {
+		t.Fatal("a genuine chain rejection must still be replayed from cache, not resubmitted")
+	}
+	if chain.SubmitClassicCalls != 1 {
+		t.Fatalf("chain was called %d times, want exactly 1", chain.SubmitClassicCalls)
 	}
 }
 

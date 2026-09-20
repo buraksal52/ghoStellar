@@ -14,6 +14,7 @@ import '../../data/api/models/tx_models.dart';
 import '../../data/nfc/nfc_service.dart';
 import 'package:stellar_flutter_sdk/stellar_flutter_sdk.dart' show KeyPair;
 
+import '../../data/storage/offline_payment_store.dart';
 import '../../data/stellar/offline_payment_builder.dart';
 import '../../state/core_providers.dart';
 import '../../state/home_providers.dart';
@@ -229,9 +230,27 @@ class _SendPageState extends ConsumerState<SendPage> {
     // Irrevocable from here (the payment is signed): record it before
     // anything else can fail, exactly like the online path marks the
     // request spent by creating the cheque.
+    //
+    // Crucially, the SENDER also enqueues it in the same durable,
+    // self-retrying queue the receiver uses (`pendingOfflinePaymentsProvider`)
+    // — not just the in-memory handoff shown for a few seconds. Without
+    // this, a handoff that the receiver never actually collects (missed
+    // NFC tap, closed app, no QR scan) left the signed payment nowhere:
+    // gone the moment the handoff window closed, even though the balance
+    // was already reserved and the nonce already spent. The transaction's
+    // own hash is the idempotency key (`offline_providers.dart`), so it's
+    // safe for both sides to end up submitting the same payment.
     await ref.read(accountSnapshotProvider.notifier).reserve(amountRaw);
     await ref.read(offlinePaymentStoreProvider).markSpent(nonce);
     ref.read(offlineSpentRequestIdsProvider.notifier).add(nonce);
+    await ref.read(pendingOfflinePaymentsProvider.notifier).add(PendingOfflinePayment(
+          signedXdr: xdr,
+          nonce: nonce,
+          from: keyPair.accountId,
+          amountRaw: amountRaw,
+          decimals: snapshot.decimals,
+          receivedAt: ref.read(clockProvider)(),
+        ));
 
     return OfflinePayment(signedXdr: xdr, nonce: nonce, from: keyPair.accountId, amount: amount);
   }
