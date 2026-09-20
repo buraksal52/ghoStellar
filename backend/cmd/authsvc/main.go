@@ -77,9 +77,12 @@ func main() {
 
 	api := http.NewServeMux()
 	auth.RegisterRoutes(api, handler)
-	protected := http.NewServeMux()
-	auth.RegisterProtectedRoutes(protected, handler)
-	api.Handle("/auth/me", authx.RequireBearer(pubKey, envx.Get("WEB_AUTH_DOMAIN", "localhost"), unauthorized, protected))
+	protectedMux := http.NewServeMux()
+	auth.RegisterProtectedRoutes(protectedMux, handler)
+	protected := authx.RequireBearer(pubKey, envx.Get("WEB_AUTH_DOMAIN", "localhost"), unauthorized, protectedMux)
+	for _, p := range auth.ProtectedPaths() {
+		api.Handle(p, protected)
+	}
 	mux.Handle("/auth/", dbx.RequireReady(pool, "auth.db_not_ready", api))
 
 	addr := envx.Get("LISTEN_ADDR", ":8081")

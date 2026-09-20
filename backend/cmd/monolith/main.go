@@ -150,9 +150,12 @@ func main() {
 
 	authAPI := http.NewServeMux()
 	auth.RegisterRoutes(authAPI, authHandler)
-	authProtected := http.NewServeMux()
-	auth.RegisterProtectedRoutes(authProtected, authHandler)
-	authAPI.Handle("/auth/me", authx.RequireBearer(pubKey, webAuthDomain, unauthorized, authProtected))
+	authProtectedMux := http.NewServeMux()
+	auth.RegisterProtectedRoutes(authProtectedMux, authHandler)
+	authProtected := authx.RequireBearer(pubKey, webAuthDomain, unauthorized, authProtectedMux)
+	for _, p := range auth.ProtectedPaths() {
+		authAPI.Handle(p, authProtected)
+	}
 	mux.Handle("/auth/", dbx.RequireReady(pool, "auth.db_not_ready", authAPI))
 
 	chequeAPI := http.NewServeMux()
