@@ -5,6 +5,7 @@ import 'package:ghostellar_app/data/api/endpoints/sync_api.dart';
 import 'package:ghostellar_app/data/api/endpoints/tx_api.dart';
 import 'package:ghostellar_app/data/api/models/cheque_models.dart';
 import 'package:ghostellar_app/data/api/models/tx_models.dart';
+import 'package:ghostellar_app/data/stellar/horizon_read_service.dart';
 import 'package:ghostellar_app/data/stellar/stellar_signing_service.dart';
 import 'package:ghostellar_app/state/sync_providers.dart';
 import 'package:ghostellar_app/state/wallet_providers.dart';
@@ -129,21 +130,25 @@ class UnlockedWallet extends WalletNotifier {
 }
 
 class FakeSyncNotifier extends SyncNotifier {
-  FakeSyncNotifier(this.initial);
+  FakeSyncNotifier(this.initial, {this.trustlineReady = true, this.poolAmountRaw = '0'});
   final List<Cheque> initial;
+  final bool trustlineReady;
+  final String poolAmountRaw;
   int refreshes = 0;
 
   @override
-  Future<SyncResponse> build() async => syncResponse(initial);
+  Future<SyncResponse> build() async =>
+      syncResponse(initial, trustlineReady: trustlineReady, poolAmountRaw: poolAmountRaw);
 
   @override
   Future<void> refresh() async => refreshes++;
 }
 
-SyncResponse syncResponse(List<Cheque> cheques) => SyncResponse(
+SyncResponse syncResponse(List<Cheque> cheques, {bool trustlineReady = true, String poolAmountRaw = '0'}) =>
+    SyncResponse(
       cheques: cheques,
-      pool: const PoolDeposit(ownerAddress: 'x', amountRaw: '0', decimals: 7, updatedAt: 't'),
-      trustlineReady: true,
+      pool: PoolDeposit(ownerAddress: 'x', amountRaw: poolAmountRaw, decimals: 7, updatedAt: 't'),
+      trustlineReady: trustlineReady,
       ledgerSeq: 1,
       serverTimeUnix: 1,
     );
@@ -170,6 +175,27 @@ Cheque testCheque(
       updatedAt: 'x',
     );
 
+
+/// Serves [responses] to successive `fetchBalances` calls (the last one
+/// repeats), so a test can model "Horizon doesn't see the account yet, then
+/// does" and count how often the app re-reads.
+class FakeHorizonReadService extends Fake implements HorizonReadService {
+  FakeHorizonReadService([List<AccountBalances>? responses])
+      : responses = responses ?? [fundedBalances()];
+
+  final List<AccountBalances> responses;
+  int fetchCalls = 0;
+
+  static AccountBalances fundedBalances({String native = '10000.0000000', Map<String, String> other = const {}}) =>
+      AccountBalances(native: native, other: other);
+
+  @override
+  Future<AccountBalances> fetchBalances(String accountId) async {
+    final i = fetchCalls < responses.length ? fetchCalls : responses.length - 1;
+    fetchCalls++;
+    return responses[i];
+  }
+}
 
 class FakeAuthApi extends Fake implements AuthApi {
   bool fundResult = true;

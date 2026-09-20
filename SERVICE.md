@@ -343,6 +343,17 @@ Tasarım kararları:
   `FRIENDBOT_URL`'i (varsayılan `https://friendbot.stellar.org`) doğrudan
   çağırır ve host'u allow-list'e eklenir. Boş değer = fund kapalı
   (`chain.funding_disabled`, "boş env var = özellik kapalı" kalıbı).
+- **Uygulamanın tek varlığı USDC; XLM yalnızca ağ ücreti bakiyesidir.**
+  Cheque, havuz ve anchor (TRY ↔ USDC, SEP-6) hep `ASSET_CODE`/`PayAsset.configured`
+  üzerinden çalışır. Friendbot yalnızca XLM verdiği için "funded" bir cüzdan
+  havuza/cheque'e hazır **değildir**: önce USDC trustline'ı, sonra bank
+  sekmesinden TRY deposit'i gerekir. Arayüz bunu böyle gösterir — ana bakiye
+  USDC, XLM "Network fee balance" satırı; havuz sayfası trustline/USDC yoksa
+  nedenini ve çözüm ekranını söyler. (Eskiden havuz sayfası "XLM" yazıp
+  kontrat USDC çektiği için deposit simülasyonda sessizce düşüyordu.)
+- **Simülasyon hataları artık kendi kodunu taşır:** `cheque.simulation_failed`
+  (422). Önceden `cheque.bad_request`'e düşüp istemcide "Something went wrong"
+  olarak görünüyordu. Ham simülatör mesajı yanıtın `message` alanında kalır.
 - **USDC trustline açmaz.** Friendbot yalnızca native XLM verir; çek akışının
   ihtiyaç duyduğu trustline ayrı bir akıştır (SEP-6/24 anchor akışı veya
   manuel `change_trust`), burada ele alınmadı.

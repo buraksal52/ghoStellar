@@ -8,6 +8,7 @@ import '../../core/theme/app_colors.dart';
 import '../../data/api/models/tx_models.dart';
 import '../../state/anchor_providers.dart';
 import '../../state/core_providers.dart';
+import '../../state/home_providers.dart';
 import '../../state/signing_overlay_provider.dart';
 import '../../state/sync_providers.dart';
 import '../../state/wallet_providers.dart';
@@ -48,6 +49,8 @@ class TrustlineSetupPage extends ConsumerWidget {
       // `anchor.trustline_missing` if it isn't there.
       await anchorApi.trustlineConfirm(anchor.id);
       await ref.read(syncProvider.notifier).refresh();
+      // A new trustline adds a USDC entry to the account's balances.
+      ref.invalidate(balancesProvider);
       final synced = ref.read(syncProvider).value;
       if (synced != null && !synced.trustlineReady) {
         throw ApiException(code: 'anchor.trustline_missing', message: 'trustline not visible on-chain');

@@ -85,19 +85,34 @@ class _OnboardingStep2PageState extends ConsumerState<OnboardingStep2Page> {
                           itemCount: widget.words.length,
                           itemBuilder: (context, i) => Row(
                             children: [
+                              // Wide enough for "12", and one line whatever the
+                              // system text scale — a wrapped number is cut off
+                              // by the fixed-height grid cell.
                               SizedBox(
-                                width: 16,
-                                child: Text('${i + 1}',
-                                    style: TextStyle(color: c.muted, fontSize: 13)),
+                                width: 24,
+                                child: FittedBox(
+                                  fit: BoxFit.scaleDown,
+                                  alignment: Alignment.centerLeft,
+                                  child: Text('${i + 1}',
+                                      maxLines: 1,
+                                      softWrap: false,
+                                      style: TextStyle(color: c.muted, fontSize: 13)),
+                                ),
                               ),
                               const SizedBox(width: 6),
                               Expanded(
-                                child: Text(
-                                  widget.words[i],
-                                  style: const TextStyle(
-                                    fontFamily: 'monospace',
-                                    fontSize: 13,
-                                    fontWeight: FontWeight.w500,
+                                child: FittedBox(
+                                  fit: BoxFit.scaleDown,
+                                  alignment: Alignment.centerLeft,
+                                  child: Text(
+                                    widget.words[i],
+                                    maxLines: 1,
+                                    softWrap: false,
+                                    style: const TextStyle(
+                                      fontFamily: 'monospace',
+                                      fontSize: 13,
+                                      fontWeight: FontWeight.w500,
+                                    ),
                                   ),
                                 ),
                               ),
@@ -116,12 +131,18 @@ class _OnboardingStep2PageState extends ConsumerState<OnboardingStep2Page> {
                           Expanded(
                             child: Padding(
                               padding: const EdgeInsets.only(top: 12),
-                              child: Text(
-                                "I've saved my recovery phrase somewhere safe.",
-                                style: Theme.of(context)
-                                    .textTheme
-                                    .bodySmall
-                                    ?.copyWith(color: c.textSecondary, fontSize: 13),
+                              child: FittedBox(
+                                fit: BoxFit.scaleDown,
+                                alignment: Alignment.centerLeft,
+                                child: Text(
+                                  "I've saved my recovery phrase somewhere safe.",
+                                  maxLines: 1,
+                                  softWrap: false,
+                                  style: Theme.of(context)
+                                      .textTheme
+                                      .bodySmall
+                                      ?.copyWith(color: c.textSecondary, fontSize: 13),
+                                ),
                               ),
                             ),
                           ),

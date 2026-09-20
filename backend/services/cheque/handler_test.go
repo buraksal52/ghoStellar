@@ -5,6 +5,7 @@ import (
 	"crypto/rand"
 	"crypto/rsa"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -235,6 +236,7 @@ func TestWriteChequeError_Mapping(t *testing.T) {
 		{errChainUnavailable, http.StatusBadGateway, ErrChainUnavailable},
 		{errBadRequest, http.StatusBadRequest, ErrBadRequest},
 		{errAccountNotFunded, http.StatusUnprocessableEntity, ErrAccountNotFunded},
+		{fmt.Errorf("stellarx: simulate: %w: HostError", errSimulationFailed), http.StatusUnprocessableEntity, ErrSimulationFailed},
 	}
 	for _, tc := range tests {
 		t.Run(tc.wantCode, func(t *testing.T) {

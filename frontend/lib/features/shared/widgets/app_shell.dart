@@ -6,6 +6,7 @@ import 'package:go_router/go_router.dart';
 
 import '../../../core/theme/app_colors.dart';
 import '../../../core/theme/theme_provider.dart';
+import '../../../state/home_providers.dart';
 import '../../../state/inbox_providers.dart';
 import '../../../state/offline_providers.dart';
 import 'app_drawer.dart';
@@ -76,7 +77,13 @@ class _AppShellState extends ConsumerState<AppShell> with WidgetsBindingObserver
 
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
-    if (state == AppLifecycleState.resumed) _comeOnline();
+    if (state == AppLifecycleState.resumed) {
+      _comeOnline();
+      // Money may have arrived while the app was in the background. Not part
+      // of _comeOnline: that also runs from initState, where WidgetRef.invalidate
+      // can't be used (it depends on the ProviderScope inherited widget).
+      ref.invalidate(balancesProvider);
+    }
   }
 
   /// Everything that needs "we might be online now": retry both offline

@@ -1,6 +1,7 @@
 import 'package:stellar_flutter_sdk/stellar_flutter_sdk.dart';
 
 import '../../core/config/env.dart';
+import '../../core/config/pay_asset.dart';
 
 /// Reads account balances directly from Horizon testnet. This is the one
 /// deliberate exception to "the app only talks to the backend gateway": the
@@ -18,6 +19,16 @@ class AccountBalances {
   final Map<String, String> other;
 
   final bool exists;
+
+  /// The app deals in ONE asset ([PayAsset.configured], USDC by default; an
+  /// empty issuer means native XLM) — cheques, the pool and the bank ramp all use
+  /// it. XLM is otherwise only the network-fee balance, so screens show this
+  /// getter as "the" balance and [native] as the fee reserve.
+  bool get payAssetIsNative => PayAsset.configured.isNative;
+
+  /// Balance of the app's one asset; `'0'` when the account holds none (no
+  /// trustline yet, or the account doesn't exist).
+  String get payAsset => payAssetIsNative ? native : (other[PayAsset.configured.code] ?? '0');
 
   static const AccountBalances notFunded =
       AccountBalances(native: '0', other: {}, exists: false);

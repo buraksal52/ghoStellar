@@ -67,13 +67,13 @@ class _ReceivePageState extends ConsumerState<ReceivePage> {
     );
   }
 
-  Future<void> _openReceiveOptions() async {
+  Future<void> _openReceiveOptions({bool autoNfc = false}) async {
     // Either a ChequeHandoff (the sender was online) or an OfflinePayment
     // (they weren't) — HandoffScannerSheet decides which by what parses.
     final result = await showModalBottomSheet<Object>(
       context: context,
       isScrollControlled: true,
-      builder: (_) => const HandoffScannerSheet(),
+      builder: (_) => HandoffScannerSheet(autoScanNfc: autoNfc),
     );
     if (result == null || !mounted) return;
     final accepted = switch (result) {
@@ -122,12 +122,11 @@ class _ReceivePageState extends ConsumerState<ReceivePage> {
     );
   }
 
-  /// The NFC read button shown in `awaitingCheque` and `idle`/`offering`:
+  /// The inline NFC read button shown in `awaitingCheque` (the second tap):
   /// idle "Tap sender's phone", or — while [ReceiveSessionNotifier.beginNfcRead]
-  /// is waiting for a tap — a spinner and "Hold near their phone…", matching
-  /// the sender-side button in `RecipientResolverSheet`. Shown on every NFC-
-  /// capable device, including Android, where the tag is already presenting
-  /// and this only surfaces the waiting state.
+  /// is waiting for a tap — a spinner and "Hold near their phone…", like the
+  /// sender's "Tap receiver's phone" after "Payment sent". In `idle`/`offering`
+  /// the same button lives in [HandoffScannerSheet], as on Send.
   Widget _nfcButton(AppColors c, ReceiveSessionState session) {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.center,
@@ -168,8 +167,8 @@ class _ReceivePageState extends ConsumerState<ReceivePage> {
           style: Theme.of(context).textTheme.titleLarge,
         ),
         const SizedBox(height: 4),
-        SizedBox(
-          width: 230,
+        ConstrainedBox(
+          constraints: const BoxConstraints(maxWidth: 280),
           child: Text(
             body,
             textAlign: TextAlign.center,
@@ -226,7 +225,11 @@ class _ReceivePageState extends ConsumerState<ReceivePage> {
           Stack(
             alignment: Alignment.center,
             children: [
-              _nfcRing(c, Icons.nfc, onTap: _openReceiveOptions),
+              _nfcRing(
+                c,
+                Icons.nfc,
+                onTap: () => _openReceiveOptions(autoNfc: true),
+              ),
               const SizedBox(
                 width: 184,
                 height: 184,
@@ -257,7 +260,11 @@ class _ReceivePageState extends ConsumerState<ReceivePage> {
       case ReceivePhase.idle:
       case ReceivePhase.offering:
         return [
-          _nfcRing(c, Icons.nfc, onTap: _openReceiveOptions),
+          _nfcRing(
+            c,
+            Icons.nfc,
+            onTap: () => _openReceiveOptions(autoNfc: true),
+          ),
           _title(
             context,
             'Ready to Receive',
@@ -271,7 +278,6 @@ class _ReceivePageState extends ConsumerState<ReceivePage> {
               style: TextStyle(fontSize: 13, color: c.textSecondary),
             ),
           ],
-          if (nfc.isAvailable) _nfcButton(c, session),
         ];
     }
   }
@@ -359,9 +365,14 @@ class _ReceivePageState extends ConsumerState<ReceivePage> {
         ..._hero(context, c, session),
         const SizedBox(height: 20),
         Center(
-          child: Text(
-            'Secure on-device signing · payments arrive in your wallet.',
-            style: TextStyle(fontSize: 12, color: c.muted),
+          child: FittedBox(
+            fit: BoxFit.scaleDown,
+            child: Text(
+              'Secure on-device signing · payments arrive in your wallet.',
+              maxLines: 1,
+              softWrap: false,
+              style: TextStyle(fontSize: 12, color: c.muted),
+            ),
           ),
         ),
         const SizedBox(height: 16),

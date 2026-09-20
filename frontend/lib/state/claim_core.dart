@@ -5,6 +5,7 @@ import 'package:uuid/uuid.dart';
 import '../core/errors/api_error.dart';
 import '../data/api/models/tx_models.dart';
 import 'core_providers.dart';
+import 'home_providers.dart';
 import 'signing_overlay_provider.dart';
 import 'sync_providers.dart';
 
@@ -56,4 +57,5 @@ Future<void> performClaim(
   await chequeApi.confirmClaim(chequeId, result.hash);
   await chequeApi.ack(chequeId);
   await ref.read(syncProvider.notifier).refresh();
+  ref.invalidate(balancesProvider);
 }

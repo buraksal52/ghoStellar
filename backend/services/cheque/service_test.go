@@ -454,6 +454,25 @@ func TestPoolDepositXDR_InvalidAmount(t *testing.T) {
 	}
 }
 
+// TestPoolDepositXDR_SimulationFailureIsItsOwnError: a funded account with no
+// trustline / not enough USDC makes the contract call fail in simulation.
+// That used to surface as a generic cheque.bad_request the app could only
+// show as "Something went wrong"; it must stay identifiable.
+func TestPoolDepositXDR_SimulationFailureIsItsOwnError(t *testing.T) {
+	chain := fundedChain(t, 5)
+	chain.SimulateTransactionFunc = func(ctx context.Context, unsignedXDR string) (ports.SimulateResult, error) {
+		return ports.SimulateResult{Success: false, Error: "HostError: Error(Contract, #10)"}, nil
+	}
+	svc := newServiceWithRepo(testConfig(), newFakeRepo(), chain)
+	_, err := svc.PoolDepositXDR(context.Background(), testSender, "10")
+	if !errors.Is(err, errSimulationFailed) {
+		t.Fatalf("got %v, want errSimulationFailed", err)
+	}
+	if !strings.Contains(err.Error(), "Error(Contract, #10)") {
+		t.Errorf("error %q should keep the simulator's message for the logs", err)
+	}
+}
+
 // TestPoolDepositXDR_UnfundedAccountRejected and its withdraw counterpart
 // below are regression tests for the "Submitting to Stellar failed" bug
 // (SERVICE.md, TrustlineXDR's sibling issue): a brand-new wallet has no

@@ -7,6 +7,7 @@ import '../../core/theme/app_colors.dart';
 import '../../core/theme/theme_provider.dart';
 import '../../state/auth_providers.dart';
 import '../../state/core_providers.dart';
+import '../../state/home_providers.dart';
 import '../../state/sync_providers.dart';
 import '../../state/wallet_providers.dart';
 
@@ -87,17 +88,34 @@ class _SettingsPageState extends ConsumerState<SettingsPage> {
     } catch (_) {
       funded = false;
     }
+    if (funded) await _refreshBalancesAfterFund();
     if (!context.mounted) return;
     setState(() => _funding = false);
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
         content: Text(
           funded
-              ? 'Funded — you can set up USDC or send a payment now.'
+              ? 'Funded with XLM for network fees. Add USDC with a bank deposit to send or use the pool.'
               : "Couldn't fund the account right now. Try again in a moment.",
         ),
       ),
     );
+  }
+
+  /// Friendbot's transaction is confirmed before `/auth/fund` answers, but
+  /// Horizon can take a moment to serve the new account — so the first
+  /// re-read may still say "not found". Re-read a few times until it shows.
+  Future<void> _refreshBalancesAfterFund() async {
+    for (var attempt = 0; attempt < 4; attempt++) {
+      if (!mounted) return;
+      ref.invalidate(balancesProvider);
+      try {
+        if ((await ref.read(balancesProvider.future)).exists) return;
+      } catch (_) {
+        // A failed read is retried like a "not found" one.
+      }
+      await Future<void>.delayed(const Duration(seconds: 2));
+    }
   }
 
   @override

@@ -18,6 +18,7 @@ import '../../data/storage/local_activity_log.dart';
 import '../../state/activity_providers.dart';
 import '../../state/anchor_providers.dart';
 import '../../state/core_providers.dart';
+import '../../state/home_providers.dart';
 import '../../state/signing_overlay_provider.dart';
 import '../../state/sync_providers.dart';
 import '../../state/wallet_providers.dart';
@@ -245,6 +246,9 @@ class _AnchorDepositWithdrawPageState extends ConsumerState<AnchorDepositWithdra
           timestamp: DateTime.now(),
         ));
         await sync.refresh();
+        // The deposit/withdrawal moved USDC on chain; the Horizon-backed
+        // balance card is not part of /sync.
+        ref.invalidate(balancesProvider);
       }
     } catch (_) {
       // Bookkeeping only — the anchor's own record is authoritative, and the

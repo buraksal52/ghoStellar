@@ -1,12 +1,14 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:go_router/go_router.dart';
 import 'package:uuid/uuid.dart';
 
+import '../../core/config/pay_asset.dart';
 import '../../core/theme/app_colors.dart';
-import '../../core/errors/api_error.dart';
-import '../../core/errors/error_copy.dart';
 import '../../core/utils/amount_formatter.dart';
+import '../../data/api/models/cheque_models.dart';
 import '../../data/api/models/tx_models.dart';
+import '../../data/stellar/horizon_read_service.dart';
 import '../../data/storage/local_activity_log.dart';
 import '../../state/activity_providers.dart';
 import '../../state/core_providers.dart';
@@ -21,6 +23,15 @@ import '../../state/wallet_providers.dart';
 /// design copy and SERVICE.md's description of the MVP contract.
 const _poolLockDays = 7;
 
+/// A known reason the pool action can't work right now, with an optional
+/// screen that fixes it.
+class _Blocker {
+  const _Blocker(this.message, [this.actionLabel, this.route]);
+  final String message;
+  final String? actionLabel;
+  final String? route;
+}
+
 class PoolPage extends ConsumerStatefulWidget {
   const PoolPage({super.key});
 
@@ -31,12 +42,10 @@ class PoolPage extends ConsumerStatefulWidget {
 class _PoolPageState extends ConsumerState<PoolPage> {
   bool _isDeposit = true;
   final _amountController = TextEditingController();
-  String? _lockError;
 
   Future<void> _submit() async {
     final amount = _amountController.text.trim();
     if (!AmountFormatter.isValidPositiveDecimal(amount)) return;
-    setState(() => _lockError = null);
 
     final keyPair = ref.read(walletProvider).keyPair;
     if (keyPair == null) return;
@@ -47,48 +56,100 @@ class _PoolPageState extends ConsumerState<PoolPage> {
     final overlay = ref.read(signingOverlayProvider.notifier);
     final log = ref.read(localActivityLogProvider);
 
-    try {
-      await overlay.run((report) async {
-        final xdr = _isDeposit ? await poolApi.depositXdr(amount) : await poolApi.withdrawXdr(amount);
-        report(SigningStep.signing);
-        final signed = signing.signTransactionXdr(xdr, keyPair);
-        report(SigningStep.submitting);
-        await txApi.submit(
-          idempotencyKey: const Uuid().v4(),
-          purpose: _isDeposit ? 'pool_deposit' : 'pool_withdraw',
-          kind: TxKind.soroban,
-          xdr: signed,
-        );
-        report(SigningStep.confirming);
-        if (_isDeposit) {
-          final ledgerSeq = ref.read(syncProvider).value?.ledgerSeq ?? 0;
-          await poolApi.confirmDeposit(amount: amount, ledgerSeq: ledgerSeq);
-        } else {
-          await poolApi.confirmWithdraw(amount);
-        }
-        await log.append(LocalActivityEvent(
-          kind: _isDeposit ? 'pool_deposit' : 'pool_withdraw',
-          amount: amount,
-          assetCode: 'XLM',
-          timestamp: DateTime.now(),
-        ));
-        ref.invalidate(activityItemsProvider);
-        await ref.read(syncProvider.notifier).refresh();
-        ref.invalidate(balancesProvider);
-        if (mounted) _amountController.clear();
-      });
-    } on ApiException catch (e) {
-      if (e.code == 'pool.withdraw_locked' && mounted) {
-        setState(() => _lockError = ErrorCopy.forException(e));
+    // Failures (including `pool.withdraw_locked`) are caught by the overlay,
+    // which shows the ErrorCopy message — nothing is left to catch here.
+    await overlay.run((report) async {
+      final xdr = _isDeposit ? await poolApi.depositXdr(amount) : await poolApi.withdrawXdr(amount);
+      report(SigningStep.signing);
+      final signed = signing.signTransactionXdr(xdr, keyPair);
+      report(SigningStep.submitting);
+      await txApi.submit(
+        idempotencyKey: const Uuid().v4(),
+        purpose: _isDeposit ? 'pool_deposit' : 'pool_withdraw',
+        kind: TxKind.soroban,
+        xdr: signed,
+      );
+      report(SigningStep.confirming);
+      if (_isDeposit) {
+        final ledgerSeq = ref.read(syncProvider).value?.ledgerSeq ?? 0;
+        await poolApi.confirmDeposit(amount: amount, ledgerSeq: ledgerSeq);
+      } else {
+        await poolApi.confirmWithdraw(amount);
       }
-    }
+      await log.append(LocalActivityEvent(
+        kind: _isDeposit ? 'pool_deposit' : 'pool_withdraw',
+        amount: amount,
+        assetCode: PayAsset.configured.code,
+        timestamp: DateTime.now(),
+      ));
+      ref.invalidate(activityItemsProvider);
+      await ref.read(syncProvider.notifier).refresh();
+      ref.invalidate(balancesProvider);
+      if (mounted) _amountController.clear();
+    });
   }
+
+  /// Why deposit/withdraw can't work right now, if we already know — so the
+  /// user reads a reason instead of a failed simulation. This is UX only; the
+  /// contract and backend stay the real enforcement. Returns null while the
+  /// inputs are still loading (never block on missing data).
+  _Blocker? _blocker({
+    required AccountBalances? balances,
+    required bool? trustlineReady,
+    required PoolDeposit? pool,
+    required String amount,
+  }) {
+    if (balances == null) return null;
+    if (!balances.exists) {
+      return const _Blocker('Your wallet isn\'t funded yet. Fund it from Settings first.', 'Open Settings', '/settings');
+    }
+    if (!balances.payAssetIsNative && trustlineReady == false) {
+      return _Blocker('Set up ${PayAsset.configured.label} before using the pool.', 'Set up ${PayAsset.configured.label}', '/anchor/trustline');
+    }
+
+    final BigInt? limit;
+    final String shortage;
+    if (_isDeposit) {
+      final raw = AmountFormatter.toRaw(balances.payAsset, _decimals(pool));
+      limit = raw == null ? null : BigInt.tryParse(raw);
+      if (limit == BigInt.zero) {
+        return _Blocker(
+          'You have no ${PayAsset.configured.label} yet. Add funds with a TRY bank deposit.',
+          'Add funds',
+          '/anchor',
+        );
+      }
+      shortage = 'Not enough ${PayAsset.configured.label} — you have ${AmountFormatter.trimTrailingZeros(balances.payAsset)}.';
+    } else {
+      limit = pool == null ? null : BigInt.tryParse(pool.amountRaw);
+      if (limit == BigInt.zero) return const _Blocker('You have nothing in the pool to withdraw yet.');
+      shortage = 'That is more than your pool balance.';
+    }
+
+    final typedRaw = AmountFormatter.toRaw(amount, _decimals(pool));
+    final typed = typedRaw == null ? null : BigInt.tryParse(typedRaw);
+    if (limit != null && typed != null && typed > limit) return _Blocker(shortage);
+    return null;
+  }
+
+  int _decimals(PoolDeposit? pool) => pool?.decimals ?? 7;
 
   @override
   Widget build(BuildContext context) {
     final c = context.colors;
-    final pool = ref.watch(syncProvider).value?.pool;
+    final synced = ref.watch(syncProvider).value;
+    final pool = synced?.pool;
     final balances = ref.watch(balancesProvider).value;
+    final amountText = _amountController.text.trim();
+    final blocker = _blocker(
+      balances: balances,
+      trustlineReady: synced?.trustlineReady,
+      pool: pool,
+      amount: amountText,
+    );
+    final availableText = _isDeposit
+        ? (balances == null ? '—' : AmountFormatter.trimTrailingZeros(balances.payAsset))
+        : (pool == null ? '—' : AmountFormatter.trimTrailingZeros(AmountFormatter.fromRaw(pool.amountRaw, pool.decimals)));
 
     return ListView(
       children: [
@@ -117,7 +178,7 @@ class _PoolPageState extends ConsumerState<PoolPage> {
                         text: pool == null
                             ? '—'
                             : '${AmountFormatter.trimTrailingZeros(AmountFormatter.fromRaw(pool.amountRaw, pool.decimals))} '),
-                    TextSpan(text: 'XLM', style: TextStyle(fontSize: 15, color: c.info)),
+                    TextSpan(text: PayAsset.configured.label, style: TextStyle(fontSize: 15, color: c.info)),
                   ],
                 ),
               ),
@@ -186,7 +247,7 @@ class _PoolPageState extends ConsumerState<PoolPage> {
                       onChanged: (_) => setState(() {}),
                     ),
                   ),
-                  Text('XLM', style: TextStyle(fontSize: 15, color: c.info)),
+                  Text(PayAsset.configured.label, style: TextStyle(fontSize: 15, color: c.info)),
                 ],
               ),
               const SizedBox(height: 8),
@@ -196,22 +257,30 @@ class _PoolPageState extends ConsumerState<PoolPage> {
                 padding: const EdgeInsets.only(top: 10),
                 decoration: BoxDecoration(border: Border(top: BorderSide(color: c.border))),
                 child: Text(
-                  'Available: ${balances?.native ?? '—'} XLM',
+                  '${_isDeposit ? 'Available' : 'In pool'}: $availableText ${PayAsset.configured.label}',
                   style: TextStyle(fontSize: 12, color: c.muted),
                 ),
               ),
             ],
           ),
         ),
-        if (_lockError != null) ...[
+        if (blocker != null) ...[
           const SizedBox(height: 12),
-          Text(_lockError!, style: TextStyle(color: c.negative, fontSize: 13)),
+          Text(blocker.message, style: TextStyle(color: c.negative, fontSize: 13)),
+          if (blocker.actionLabel != null && blocker.route != null)
+            Align(
+              alignment: Alignment.centerLeft,
+              child: TextButton(
+                onPressed: () => context.go(blocker.route!),
+                child: Text('${blocker.actionLabel!} →'),
+              ),
+            ),
         ],
         const SizedBox(height: 20),
         SizedBox(
           height: 52,
           child: ElevatedButton(
-            onPressed: AmountFormatter.isValidPositiveDecimal(_amountController.text) ? _submit : null,
+            onPressed: blocker == null && AmountFormatter.isValidPositiveDecimal(amountText) ? _submit : null,
             style: ElevatedButton.styleFrom(
               backgroundColor: c.primary,
               foregroundColor: c.primaryText,

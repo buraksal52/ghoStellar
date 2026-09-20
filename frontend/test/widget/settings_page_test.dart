@@ -3,6 +3,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_riverpod/misc.dart' show Override;
 import 'package:flutter_test/flutter_test.dart';
 import 'package:ghostellar_app/core/theme/app_colors.dart';
+import 'package:ghostellar_app/data/stellar/horizon_read_service.dart';
 import 'package:ghostellar_app/features/settings/settings_page.dart';
 import 'package:ghostellar_app/state/auth_providers.dart';
 import 'package:ghostellar_app/state/core_providers.dart';
@@ -20,10 +21,11 @@ class _NoOpAuth extends AuthNotifier {
   Future<bool> build() async => true;
 }
 
-Widget _app(FakeAuthApi authApi, {String networkPassphrase = _testnet}) {
+Widget _app(FakeAuthApi authApi, {String networkPassphrase = _testnet, FakeHorizonReadService? horizon}) {
   return ProviderScope(
     overrides: <Override>[
       walletProvider.overrideWith(() => UnlockedWallet(KeyPair.random())),
+      horizonReadServiceProvider.overrideWithValue(horizon ?? FakeHorizonReadService()),
       authApiProvider.overrideWithValue(authApi),
       authProvider.overrideWith(_NoOpAuth.new),
       networkPassphraseProvider.overrideWithValue(networkPassphrase),
@@ -45,9 +47,54 @@ void main() {
     await tester.tap(find.text('Fund with testnet XLM'));
     await tester.pump();
     await tester.pump();
+    await tester.pump();
 
     expect(authApi.fundCalls, 1);
-    expect(find.text('Funded — you can set up USDC or send a payment now.'), findsOneWidget);
+    expect(
+      find.text('Funded with XLM for network fees. Add USDC with a bank deposit to send or use the pool.'),
+      findsOneWidget,
+    );
+  });
+
+  testWidgets('a successful fund re-reads the balance so the UI does not keep showing 0', (tester) async {
+    final horizon = FakeHorizonReadService();
+    await tester.pumpWidget(_app(FakeAuthApi(), horizon: horizon));
+
+    await tester.tap(find.text('Fund with testnet XLM'));
+    await tester.pump();
+    await tester.pump();
+    await tester.pump();
+
+    expect(horizon.fetchCalls, 1);
+  });
+
+  testWidgets('the balance is re-read until Horizon can see the freshly funded account', (tester) async {
+    final horizon = FakeHorizonReadService([
+      AccountBalances.notFunded, // Horizon hasn't indexed the new account yet
+      FakeHorizonReadService.fundedBalances(),
+    ]);
+    await tester.pumpWidget(_app(FakeAuthApi(), horizon: horizon));
+
+    await tester.tap(find.text('Fund with testnet XLM'));
+    await tester.pump();
+    await tester.pump();
+    expect(horizon.fetchCalls, 1);
+
+    await tester.pump(const Duration(seconds: 2));
+    await tester.pump();
+    await tester.pump();
+    expect(horizon.fetchCalls, 2);
+  });
+
+  testWidgets('a failed fund does not touch balances', (tester) async {
+    final horizon = FakeHorizonReadService();
+    await tester.pumpWidget(_app(FakeAuthApi()..fundResult = false, horizon: horizon));
+
+    await tester.tap(find.text('Fund with testnet XLM'));
+    await tester.pump();
+    await tester.pump();
+
+    expect(horizon.fetchCalls, 0);
   });
 
   testWidgets('the fund button is hidden on a non-testnet network', (tester) async {

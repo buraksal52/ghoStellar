@@ -23,4 +23,9 @@ const (
 	// on-chain yet (0 XLM, never funded) — see the anchor package's
 	// identical constant for the full rationale.
 	ErrAccountNotFunded = "cheque.account_not_funded"
+	// ErrSimulationFailed: the Soroban simulation of a contract call was
+	// rejected (typically no trustline or not enough of the asset). Without
+	// its own code it fell into ErrBadRequest and the real cause never
+	// reached the user.
+	ErrSimulationFailed = "cheque.simulation_failed"
 )

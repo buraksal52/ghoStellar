@@ -75,6 +75,15 @@ Future<void> _open(WidgetTester tester, _Rig rig) async {
   await tester.pump(); // baseline resolved
 }
 
+/// Taps the big NFC circle — the receive sheet opens and, like Send's
+/// "Find recipient", starts waiting for a tap on its own. No `pumpAndSettle`:
+/// the sheet's wait spinner never settles.
+Future<void> _openSheet(WidgetTester tester) async {
+  await tester.tap(find.byIcon(Icons.nfc).first);
+  await tester.pump();
+  await tester.pump(const Duration(milliseconds: 400));
+}
+
 /// Leaving the page must stop the session (its poll timer would otherwise
 /// outlive the test).
 Future<void> _leave(WidgetTester tester, _Rig rig) async {
@@ -114,7 +123,7 @@ void main() {
 
     expect(find.byType(QrCard), findsNothing);
     expect(find.text('Scan QR Code'), findsNothing);
-    // `.first`: the big ring's icon, not the inline "Tap sender's phone" button.
+    // `.first`: the big ring's icon (the sheet has its own NFC icon).
     await tester.tap(find.byIcon(Icons.nfc).first);
     await tester.pumpAndSettle();
     expect(find.text('Scan QR Code'), findsOneWidget);
@@ -138,7 +147,7 @@ void main() {
 
     expect(find.text('Ready to Receive'), findsOneWidget);
     expect(find.byType(QrCard), findsNothing);
-    // `.first`: the big ring's icon, not the inline "Tap sender's phone" button.
+    // `.first`: the big ring's icon (the sheet has its own NFC icon).
     await tester.tap(find.byIcon(Icons.nfc).first);
     await tester.pumpAndSettle();
     expect(find.text('Scan QR Code'), findsOneWidget);
@@ -151,7 +160,7 @@ void main() {
   });
 
   testWidgets(
-    'an iPhone gets receive options plus a button to start an NFC read (never automatic)',
+    'an iPhone starts an NFC read only once the receive sheet is opened',
     (tester) async {
       final rig = _Rig();
       rig.nfc.canBeTag = false; // reader only
@@ -159,14 +168,14 @@ void main() {
 
       expect(find.text('Ready to Receive'), findsOneWidget);
       expect(find.byType(QrCard), findsNothing);
+      expect(find.text("Tap sender's phone"), findsNothing);
       expect(
         rig.nfc.started,
         isEmpty,
         reason: 'Apple wants NFC sessions user-initiated',
       );
 
-      await tester.tap(find.text("Tap sender's phone"));
-      await tester.pump();
+      await _openSheet(tester);
 
       expect(rig.nfc.started.single.role, NfcRole.reader);
       expect(
@@ -174,28 +183,25 @@ void main() {
         rig.keyPair.accountId,
         reason: 'the request we write to their tag',
       );
+      expect(find.text('Hold near their phone…'), findsOneWidget);
 
       await _leave(tester, rig);
     },
   );
 
   testWidgets(
-    'an Android receiver has a read button too — it just shows the wait, '
-    'since the tag is already presenting',
+    'an Android receiver gets the same tap button in the sheet — it just '
+    'shows the wait, since the tag is already presenting',
     (tester) async {
       final rig = _Rig();
       await _open(tester, rig);
 
-      expect(find.text("Tap sender's phone"), findsOneWidget);
+      expect(find.text("Tap sender's phone"), findsNothing);
       expect(rig.nfc.started.single.role, NfcRole.tag);
 
-      await tester.tap(find.text("Tap sender's phone"));
-      await tester.pump();
+      await _openSheet(tester);
 
-      expect(
-        find.text('Hold near their phone…'),
-        findsOneWidget,
-      );
+      expect(find.text('Hold near their phone…'), findsOneWidget);
       expect(
         rig.nfc.started,
         hasLength(1),
@@ -213,8 +219,7 @@ void main() {
       rig.nfc.canBeTag = false; // reader only
       await _open(tester, rig);
 
-      await tester.tap(find.text("Tap sender's phone"));
-      await tester.pump();
+      await _openSheet(tester);
       expect(find.text('Hold near their phone…'), findsOneWidget);
 
       await tester.pump(const Duration(seconds: 30));
@@ -239,8 +244,7 @@ void main() {
       rig.nfc.startError = StateError('NFC is off');
       await _open(tester, rig);
 
-      await tester.tap(find.text("Tap sender's phone"));
-      await tester.pump();
+      await _openSheet(tester);
 
       expect(find.text("Tap sender's phone"), findsOneWidget);
       expect(
@@ -366,6 +370,32 @@ void main() {
     await _leave(tester, rig);
   });
 
+  testWidgets('a tap that lands while the receive sheet is open closes it', (
+    tester,
+  ) async {
+    final rig = _Rig();
+    await _open(tester, rig);
+    final nonce = _container(
+      tester,
+    ).read(receiveSessionProvider).request!.nonce!;
+
+    await _openSheet(tester);
+    expect(find.text('Receive payment'), findsOneWidget);
+
+    rig.nfc.receive(
+      ChequeHandoff(chequeId: _chequeId, from: testSender, nonce: nonce).toUri(),
+    );
+    await tester.pump();
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 400));
+
+    expect(find.text('Receive payment'), findsNothing);
+    expect(rig.chequeApi.claimed, [_chequeId]);
+    expect(find.text('Payment received'), findsOneWidget);
+
+    await _leave(tester, rig);
+  });
+
   testWidgets('a cheque already waiting is listed and claimable by hand', (
     tester,
   ) async {
@@ -406,7 +436,7 @@ void main() {
     final nonce = _container(
       tester,
     ).read(receiveSessionProvider).request!.nonce!;
-    // `.first`: the big ring's icon, not the inline "Tap sender's phone" button.
+    // `.first`: the big ring's icon (the sheet has its own NFC icon).
     await tester.tap(find.byIcon(Icons.nfc).first);
     await tester.pumpAndSettle();
     final manual = find.widgetWithText(

@@ -83,7 +83,7 @@ func (s *Service) simulator() stellarx.Simulator {
 			return stellarx.SimulationResult{}, err
 		}
 		if !res.Success {
-			return stellarx.SimulationResult{}, fmt.Errorf("simulation failed: %s", res.Error)
+			return stellarx.SimulationResult{}, fmt.Errorf("%w: %s", errSimulationFailed, res.Error)
 		}
 		return stellarx.SimulationResult{TransactionDataXDR: res.TransactionDataXDR, AuthXDR: res.AuthXDR}, nil
 	}
@@ -833,6 +833,7 @@ var (
 	errBadRequest          = errors.New(ErrBadRequest)
 	errChainUnavailable    = errors.New(ErrChainUnavailable)
 	errAccountNotFunded    = errors.New(ErrAccountNotFunded)
+	errSimulationFailed    = errors.New(ErrSimulationFailed)
 )
 
 // requestIDPattern bounds the receiver-chosen request id: it is stored and

@@ -4,6 +4,7 @@ import 'package:go_router/go_router.dart';
 
 import '../../core/theme/app_colors.dart';
 import '../../state/activity_providers.dart';
+import '../../state/home_providers.dart';
 import '../../state/sync_providers.dart';
 import 'widgets/action_tile.dart';
 import 'widgets/balance_card.dart';
@@ -19,7 +20,13 @@ class HomePage extends ConsumerWidget {
     final pendingClaims = ref.watch(pendingClaimsProvider);
 
     return RefreshIndicator(
-      onRefresh: () => ref.read(syncProvider.notifier).refresh(),
+      onRefresh: () async {
+        // Balances come straight from Horizon, not /sync, so a pull has to
+        // re-read them explicitly — otherwise money that arrived on chain
+        // keeps showing the old figure until the app is restarted.
+        ref.invalidate(balancesProvider);
+        await ref.read(syncProvider.notifier).refresh();
+      },
       child: ListView(
         padding: const EdgeInsets.only(top: 4, bottom: 24),
         children: [

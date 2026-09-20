@@ -16,6 +16,7 @@ import 'package:stellar_flutter_sdk/stellar_flutter_sdk.dart' show KeyPair;
 
 import '../../data/stellar/offline_payment_builder.dart';
 import '../../state/core_providers.dart';
+import '../../state/home_providers.dart';
 import '../../state/offline_providers.dart';
 import '../../state/signing_overlay_provider.dart';
 import '../../state/sync_providers.dart';
@@ -158,6 +159,7 @@ class _SendPageState extends ConsumerState<SendPage> {
         await chequeApi.preauth(created.chequeId, signedEntry);
 
         await ref.read(syncProvider.notifier).refresh();
+        ref.invalidate(balancesProvider);
         handoff = _OnlineHandoff(ChequeHandoff(
           chequeId: created.chequeId,
           from: keyPair.accountId,
@@ -484,8 +486,10 @@ class _SendPageState extends ConsumerState<SendPage> {
                   style: Theme.of(context).textTheme.titleLarge,
                 ),
                 const SizedBox(height: 4),
-                SizedBox(
-                  width: 230,
+                // Wide enough that the sentence breaks in two even lines
+                // rather than leaving a lone word on a third one.
+                ConstrainedBox(
+                  constraints: const BoxConstraints(maxWidth: 280),
                   child: Text(
                     canSend
                         ? 'Your phone signs on this device, then hands the payment over.'
@@ -500,9 +504,14 @@ class _SendPageState extends ConsumerState<SendPage> {
         ],
         const SizedBox(height: 20),
         Center(
-          child: Text(
-            'Secure on-device signing · recoverable if unclaimed after 7 days.',
-            style: TextStyle(fontSize: 12, color: c.muted),
+          child: FittedBox(
+            fit: BoxFit.scaleDown,
+            child: Text(
+              'Secure on-device signing · recoverable if unclaimed after 7 days.',
+              maxLines: 1,
+              softWrap: false,
+              style: TextStyle(fontSize: 12, color: c.muted),
+            ),
           ),
         ),
       ],

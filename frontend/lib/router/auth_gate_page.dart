@@ -4,6 +4,7 @@ import 'package:go_router/go_router.dart';
 
 import '../core/theme/app_colors.dart';
 import '../state/auth_providers.dart';
+import '../state/home_providers.dart';
 import '../state/sync_providers.dart';
 
 /// SEP-10 login (if not already authenticated) followed by an
@@ -37,6 +38,9 @@ class _AuthGatePageState extends ConsumerState<AuthGatePage> {
         if (result.hasError) throw result.error!;
       }
       await ref.read(syncProvider.notifier).refresh();
+      // The wallet was unlocked before this login ran, so the first
+      // balance read can predate the friendbot fund the login just did.
+      ref.invalidate(balancesProvider);
       final syncResult = ref.read(syncProvider);
       if (syncResult.hasError) throw syncResult.error!;
       if (mounted) context.go('/home');

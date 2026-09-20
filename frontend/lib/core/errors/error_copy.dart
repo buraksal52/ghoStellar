@@ -24,6 +24,9 @@ class ErrorCopy {
     'cheque.not_found': 'That cheque could not be found.',
     'cheque.account_not_funded':
         "Your wallet has no XLM yet — it needs a small test balance first. Fund it from Settings.",
+    'cheque.simulation_failed':
+        'The network rejected this. Check that USDC is set up on your wallet and that you have enough USDC.',
+    'cheque.bad_request': 'That request could not be processed. Please check it and try again.',
     'pool.withdraw_locked':
         'Your pool balance isn\'t withdrawable yet — deposits lock for a period after each deposit.',
     'chain.rpc_unavailable':
