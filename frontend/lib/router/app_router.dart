@@ -2,7 +2,6 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
 import '../features/anchor/anchor_deposit_withdraw_page.dart';
-import '../features/anchor/anchor_webview_page.dart';
 import '../features/anchor/trustline_setup_page.dart';
 import '../features/activity/activity_page.dart';
 import '../features/home/home_page.dart';
@@ -75,13 +74,6 @@ final routerProvider = Provider<GoRouter>((ref) {
             path: '/anchor/trustline',
             pageBuilder: (context, state) =>
                 softPage(state: state, slide: true, child: const TrustlineSetupPage()),
-          ),
-          GoRoute(
-            path: '/anchor/webview',
-            pageBuilder: (context, state) {
-              final args = state.extra as AnchorWebviewArgs;
-              return softPage(state: state, slide: true, child: AnchorWebviewPage(args: args));
-            },
           ),
           GoRoute(
             path: '/activity',

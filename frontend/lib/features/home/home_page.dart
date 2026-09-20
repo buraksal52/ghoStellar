@@ -66,6 +66,16 @@ class HomePage extends ConsumerWidget {
                   onTap: () => context.push('/pool'),
                 ),
               ),
+              const SizedBox(width: 10),
+              Expanded(
+                child: ActionTile(
+                  icon: Icons.account_balance_rounded,
+                  label: 'Bank',
+                  background: c.tilePool,
+                  iconColor: c.tilePoolIcon,
+                  onTap: () => context.push('/anchor'),
+                ),
+              ),
             ],
           ),
           if (pendingClaims.isNotEmpty) ...[

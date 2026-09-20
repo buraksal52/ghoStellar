@@ -271,6 +271,36 @@ func (h *Handler) TrustlineXDR(w http.ResponseWriter, r *http.Request) {
 	httpx.WriteData(w, http.StatusOK, map[string]string{"trustlineXdr": xdrStr})
 }
 
+type withdrawPaymentRequest struct {
+	Destination string `json:"destination"`
+	MemoType    string `json:"memoType"`
+	Memo        string `json:"memo"`
+	Amount      string `json:"amount"`
+}
+
+func (h *Handler) WithdrawPaymentXDR(w http.ResponseWriter, r *http.Request) {
+	address, ok := callerAddress(r)
+	if !ok {
+		httpx.WriteError(w, http.StatusUnauthorized, "auth.invalid_token", "missing bearer claims", nil)
+		return
+	}
+	if err := h.svc.checkID(r.PathValue("id")); err != nil {
+		writeAnchorError(w, err)
+		return
+	}
+	var req withdrawPaymentRequest
+	if err := json.NewDecoder(io.LimitReader(r.Body, 1<<16)).Decode(&req); err != nil {
+		httpx.WriteError(w, http.StatusBadRequest, ErrBadRequest, "destination and amount are required", nil)
+		return
+	}
+	xdrStr, err := h.svc.WithdrawPaymentXDR(r.Context(), address, req.Destination, req.MemoType, req.Memo, req.Amount)
+	if err != nil {
+		writeAnchorError(w, err)
+		return
+	}
+	httpx.WriteData(w, http.StatusOK, map[string]string{"paymentXdr": xdrStr})
+}
+
 type confirmTrustlineRequest struct {
 	LedgerSeq int64 `json:"ledgerSeq"`
 }
@@ -293,6 +323,11 @@ func (h *Handler) ConfirmTrustline(w http.ResponseWriter, r *http.Request) {
 	httpx.WriteData(w, http.StatusOK, map[string]bool{"confirmed": true})
 }
 
+func isAnchorAuthError(err error) bool {
+	var ae *anchorAuthError
+	return errors.As(err, &ae)
+}
+
 func writeAnchorError(w http.ResponseWriter, err error) {
 	code, status := ErrUpstreamFailed, http.StatusBadGateway
 	switch {
@@ -308,6 +343,12 @@ func writeAnchorError(w http.ResponseWriter, err error) {
 		code, status = ErrChainUnavailable, http.StatusBadGateway
 	case errors.Is(err, errTrustlineMissing):
 		code, status = ErrTrustlineMissing, http.StatusUnprocessableEntity
+	case errors.Is(err, errBadRequest):
+		code, status = ErrBadRequest, http.StatusBadRequest
+	case isAnchorAuthError(err):
+		// 403, not 401: the app's ApiClient treats any 401 as ITS OWN
+		// session expiring and would wipe the user's tokens.
+		code, status = ErrTokenRejected, http.StatusForbidden
 	case strings.Contains(err.Error(), ErrTomlUnavailable):
 		code, status = ErrTomlUnavailable, http.StatusBadGateway
 	}

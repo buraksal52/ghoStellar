@@ -1,5 +1,6 @@
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../core/errors/api_error.dart';
 import '../data/api/models/anchor_models.dart';
 import 'core_providers.dart';
 import 'wallet_providers.dart';
@@ -34,8 +35,34 @@ class AnchorSessionNotifier extends Notifier<String?> {
   }
 
   void clear() => state = null;
+
+  /// Runs [call] with the anchor JWT, logging in first when there is none
+  /// and once more when the anchor rejects an expired token. The JWT lives
+  /// only in memory, so a long-idle session must recover without the user
+  /// noticing. Retries exactly once — never loops.
+  Future<T> withToken<T>(String anchorId, Future<T> Function(String token) call) async {
+    Future<String> ensure() async {
+      if (state == null) await login(anchorId);
+      return state!;
+    }
+
+    try {
+      return await call(await ensure());
+    } on ApiException catch (e) {
+      if (e.code != 'anchor.token_rejected') rethrow;
+      clear();
+      return await call(await ensure());
+    }
+  }
 }
 
 final anchorSessionProvider = NotifierProvider<AnchorSessionNotifier, String?>(
   AnchorSessionNotifier.new,
 );
+
+/// The backend's ledger of this wallet's anchor transactions, newest first.
+final anchorTransactionsProvider = FutureProvider.autoDispose<List<AnchorTransaction>>((ref) async {
+  final anchor = ref.watch(primaryAnchorProvider);
+  if (anchor == null) return const [];
+  return ref.watch(anchorApiProvider).transactions(anchor.id);
+});

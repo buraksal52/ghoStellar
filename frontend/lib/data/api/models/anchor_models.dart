@@ -10,7 +10,9 @@ abstract class AnchorInfo with _$AnchorInfo {
     required String domain,
     required String signingKey,
     required String webAuthEndpoint,
-    required String transferServer24,
+    // Omitted by the backend when the anchor publishes no SEP-24 server
+    // (the TR anchor is SEP-6 only), so it must not be required.
+    @Default('') String transferServer24,
     required String assetCode,
     required String assetIssuer,
   }) = _AnchorInfo;

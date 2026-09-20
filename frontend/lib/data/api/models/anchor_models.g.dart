@@ -11,7 +11,7 @@ _AnchorInfo _$AnchorInfoFromJson(Map<String, dynamic> json) => _AnchorInfo(
   domain: json['domain'] as String,
   signingKey: json['signingKey'] as String,
   webAuthEndpoint: json['webAuthEndpoint'] as String,
-  transferServer24: json['transferServer24'] as String,
+  transferServer24: json['transferServer24'] as String? ?? '',
   assetCode: json['assetCode'] as String,
   assetIssuer: json['assetIssuer'] as String,
 );

@@ -198,6 +198,9 @@ func (c *Client) ProxyJSON(ctx context.Context, method, base, path, rawQuery, be
 	if err != nil {
 		return nil, err
 	}
+	if resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusForbidden {
+		return nil, &anchorAuthError{status: resp.StatusCode, body: string(responseBody)}
+	}
 	if resp.StatusCode >= 400 {
 		return nil, fmt.Errorf("%s: anchor returned %d: %s", ErrUpstreamFailed, resp.StatusCode, string(responseBody))
 	}
@@ -249,6 +252,18 @@ func (c *Client) postJSON(ctx context.Context, u, bearer string, payload []byte,
 		return fmt.Errorf("%s: anchor returned %d: %s", ErrUpstreamFailed, resp.StatusCode, string(body))
 	}
 	return json.Unmarshal(body, out)
+}
+
+// anchorAuthError marks an anchor rejecting the caller's SEP-10 JWT
+// (expired or invalid). It gets its own API code so the app can silently
+// re-run the SEP-10 login instead of string-matching an upstream body.
+type anchorAuthError struct {
+	status int
+	body   string
+}
+
+func (e *anchorAuthError) Error() string {
+	return fmt.Sprintf("%s: anchor returned %d: %s", ErrUpstreamFailed, e.status, e.body)
 }
 
 func requireHTTPS(u *url.URL) error {

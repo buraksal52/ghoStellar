@@ -21,4 +21,5 @@ func RegisterRoutes(mux *http.ServeMux, h *Handler) {
 	mux.HandleFunc("GET /anchors/{id}/transactions", h.Transactions)
 	mux.HandleFunc("POST /anchors/{id}/trustline-xdr", h.TrustlineXDR)
 	mux.HandleFunc("POST /anchors/{id}/trustline-confirm", h.ConfirmTrustline)
+	mux.HandleFunc("POST /anchors/{id}/withdraw-payment-xdr", h.WithdrawPaymentXDR)
 }

@@ -6,6 +6,7 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"sync"
 	"testing"
 
@@ -230,6 +231,126 @@ func TestTrustlineXDR_NoIssuerConfigured(t *testing.T) {
 	svc := newServiceWithRepo(cfg, newFakeRepo(), NewClient(http.DefaultClient), &portstest.FakeChain{}, discardLogger())
 	if _, err := svc.TrustlineXDR(context.Background(), "GADDR"); err == nil {
 		t.Fatal("expected an error when no asset issuer is configured")
+	}
+}
+
+func withdrawTestService(t *testing.T) (*Service, Config, string) {
+	t.Helper()
+	sender, err := keypair.Random()
+	if err != nil {
+		t.Fatal(err)
+	}
+	chain := &portstest.FakeChain{
+		GetAccountFunc: func(ctx context.Context, address string) (ports.AccountInfo, error) {
+			return ports.AccountInfo{Address: address, Sequence: 5, Exists: true}, nil
+		},
+	}
+	cfg := testConfig(testAnchorDomain, testIssuer(t))
+	return newServiceWithRepo(cfg, newFakeRepo(), NewClient(http.DefaultClient), chain, discardLogger()), cfg, sender.Address()
+}
+
+func TestWithdrawPaymentXDR_BuildsPaymentWithMemo(t *testing.T) {
+	svc, cfg, owner := withdrawTestService(t)
+	treasury := testIssuer(t)
+
+	xdrStr, err := svc.WithdrawPaymentXDR(context.Background(), owner, treasury, "id", "12345", "5")
+	if err != nil {
+		t.Fatalf("WithdrawPaymentXDR: %v", err)
+	}
+	genericTx, err := txnbuild.TransactionFromXDR(xdrStr)
+	if err != nil {
+		t.Fatalf("decode payment XDR: %v", err)
+	}
+	tx, ok := genericTx.Transaction()
+	if !ok {
+		t.Fatal("expected a simple transaction")
+	}
+	if tx.SourceAccount().AccountID != owner {
+		t.Errorf("source account = %q, want %q", tx.SourceAccount().AccountID, owner)
+	}
+	if got, ok := tx.Memo().(txnbuild.MemoID); !ok || uint64(got) != 12345 {
+		t.Errorf("memo = %#v, want MemoID(12345)", tx.Memo())
+	}
+	ops := tx.Operations()
+	if len(ops) != 1 {
+		t.Fatalf("got %d operations, want 1", len(ops))
+	}
+	pay, ok := ops[0].(*txnbuild.Payment)
+	if !ok {
+		t.Fatalf("operation is %T, want *txnbuild.Payment", ops[0])
+	}
+	if pay.Destination != treasury {
+		t.Errorf("destination = %q, want %q", pay.Destination, treasury)
+	}
+	if pay.Amount != "5.0000000" {
+		t.Errorf("amount = %q, want 5.0000000", pay.Amount)
+	}
+	if code, issuer := pay.Asset.GetCode(), pay.Asset.GetIssuer(); code != cfg.AssetCode || issuer != cfg.AssetIssuer {
+		t.Errorf("asset = %s/%s, want %s/%s", code, issuer, cfg.AssetCode, cfg.AssetIssuer)
+	}
+}
+
+func TestWithdrawPaymentXDR_TextAndNoMemo(t *testing.T) {
+	svc, _, owner := withdrawTestService(t)
+	treasury := testIssuer(t)
+
+	for _, tc := range []struct{ name, memoType, memo string }{
+		{"text", "text", "ref-42"},
+		{"none", "", ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if _, err := svc.WithdrawPaymentXDR(context.Background(), owner, treasury, tc.memoType, tc.memo, "1.5"); err != nil {
+				t.Fatalf("WithdrawPaymentXDR: %v", err)
+			}
+		})
+	}
+}
+
+func TestWithdrawPaymentXDR_RejectsBadInput(t *testing.T) {
+	svc, _, owner := withdrawTestService(t)
+	treasury := testIssuer(t)
+
+	for _, tc := range []struct{ name, dest, memoType, memo, amount string }{
+		{"bad destination", "not-an-address", "id", "1", "5"},
+		{"contract destination", "CDD7FWHQIAF2Z57CMZUO5BT4TY4VTIZKXLYD4WKQ7HDLO5IQOYU6V3ID", "id", "1", "5"},
+		{"zero amount", treasury, "id", "1", "0"},
+		{"negative amount", treasury, "id", "1", "-1"},
+		{"too many decimals", treasury, "id", "1", "1.00000001"},
+		{"scientific notation", treasury, "id", "1", "1e3"},
+		{"non-numeric id memo", treasury, "id", "abc", "5"},
+		{"oversized text memo", treasury, "text", "this memo is far longer than 28 bytes", "5"},
+		{"unknown memo type", treasury, "hash", "abcd", "5"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			_, err := svc.WithdrawPaymentXDR(context.Background(), owner, tc.dest, tc.memoType, tc.memo, tc.amount)
+			if !errors.Is(err, errBadRequest) {
+				t.Fatalf("got %v, want errBadRequest", err)
+			}
+		})
+	}
+}
+
+func TestWithdrawPaymentXDR_NoIssuerConfigured(t *testing.T) {
+	svc, _, owner := withdrawTestService(t)
+	svc.cfg.AssetIssuer = ""
+	if _, err := svc.WithdrawPaymentXDR(context.Background(), owner, testIssuer(t), "id", "1", "5"); err == nil {
+		t.Fatal("expected an error when no asset issuer is configured")
+	}
+}
+
+// TestStartInteractive_NoSEP24ServerFailsReadably pins the fix for the app
+// calling a SEP-24 path the TR mock anchor never published: the failure must
+// name the missing endpoint, not surface requireHTTPS on a schemeless URL.
+func TestStartInteractive_NoSEP24ServerFailsReadably(t *testing.T) {
+	client := tomlServer(t, `SIGNING_KEY="GSIGNINGKEY"`) // no TRANSFER_SERVER_0024
+	cfg := testConfig(testAnchorDomain, testIssuer(t))
+	repo := newFakeRepo()
+	repo.trustlines["GADDR/"+cfg.AssetCode+"/"+cfg.AssetIssuer] = "active"
+	svc := newServiceWithRepo(cfg, repo, client, &portstest.FakeChain{}, discardLogger())
+
+	_, _, err := svc.StartDeposit(context.Background(), testAnchorID, "anchor-jwt", "GADDR")
+	if err == nil || !strings.Contains(err.Error(), "no SEP-24 transfer server") {
+		t.Fatalf("got %v, want an error naming the missing SEP-24 server", err)
 	}
 }
 

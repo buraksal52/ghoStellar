@@ -91,6 +91,31 @@ func TestClient_ProxyJSON_NonJSONResponseRejected(t *testing.T) {
 	}
 }
 
+// TestClient_ProxyJSON_AuthRejectionIsDistinct pins the contract the app's
+// silent SEP-10 re-login depends on: an anchor 401/403 (expired JWT) must be
+// distinguishable from any other upstream failure.
+func TestClient_ProxyJSON_AuthRejectionIsDistinct(t *testing.T) {
+	for _, status := range []int{http.StatusUnauthorized, http.StatusForbidden} {
+		srv, hc := newTLSTestServer(t, func(w http.ResponseWriter, r *http.Request) {
+			w.WriteHeader(status)
+			w.Write([]byte(`{"type":"authentication_required"}`))
+		})
+		_, err := NewClient(hc).ProxyJSON(t.Context(), "GET", srv.URL, "/x", "", "tok", "", nil)
+		if !isAnchorAuthError(err) {
+			t.Errorf("status %d: got %v, want an anchorAuthError", status, err)
+		}
+	}
+
+	srv, hc := newTLSTestServer(t, func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusBadRequest)
+		w.Write([]byte(`{"error":"bad"}`))
+	})
+	_, err := NewClient(hc).ProxyJSON(t.Context(), "GET", srv.URL, "/x", "", "tok", "", nil)
+	if err == nil || isAnchorAuthError(err) {
+		t.Errorf("a 400 must stay a plain upstream failure, got %v", err)
+	}
+}
+
 func TestClient_ProxyJSON_UpstreamErrorStatusPropagated(t *testing.T) {
 	srv, hc := newTLSTestServer(t, func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusBadRequest)

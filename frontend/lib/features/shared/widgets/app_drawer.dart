@@ -14,6 +14,7 @@ class AppDrawer extends StatelessWidget {
       (Icons.north_rounded, 'Send', '/send'),
       (Icons.south_rounded, 'Receive', '/receive'),
       (Icons.pool_rounded, 'Pool', '/pool'),
+      (Icons.account_balance_rounded, 'Bank', '/anchor'),
       (Icons.bar_chart_rounded, 'Activity', '/activity'),
       (Icons.settings_rounded, 'Settings', '/settings'),
     ];

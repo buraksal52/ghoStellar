@@ -7,11 +7,14 @@ import (
 	"fmt"
 	"log/slog"
 	"net/url"
+	"strconv"
 	"sync"
 
 	"github.com/stellar/go-stellar-sdk/txnbuild"
 
 	"github.com/local-payment/backend/pkg/dbx"
+	"github.com/local-payment/backend/pkg/money"
+	"github.com/local-payment/backend/pkg/stellarx"
 	"github.com/local-payment/backend/ports"
 )
 
@@ -228,6 +231,12 @@ func (s *Service) startInteractive(ctx context.Context, id, kind, anchorToken, s
 	if err != nil {
 		return "", "", err
 	}
+	// An anchor that publishes no SEP-24 server (the TR mock anchor is
+	// SEP-6 only) would otherwise fail deep inside requireHTTPS on the
+	// schemeless "/transactions/..." URL; fail here with a readable reason.
+	if info.TransferServer24 == "" {
+		return "", "", fmt.Errorf("%s: anchor publishes no SEP-24 transfer server; use the SEP-6 endpoints", ErrUpstreamFailed)
+	}
 	txID, interactiveURL, err := s.client.SEP24Interactive(ctx, info.TransferServer24, kind, anchorToken, info.AssetCode, stellarAddress)
 	if err != nil {
 		return "", "", err
@@ -308,6 +317,76 @@ func (s *Service) TrustlineXDR(ctx context.Context, owner string) (string, error
 	return tx.Base64()
 }
 
+// WithdrawPaymentXDR builds the unsigned payment a SEP-6 withdraw needs: the
+// user sends the anchor's asset to the anchor's account with the memo the
+// anchor returned from GET /withdraw. Like TrustlineXDR the backend never
+// signs — the device signs and pay-tx-service submits.
+func (s *Service) WithdrawPaymentXDR(ctx context.Context, owner, destination, memoType, memo, amountStr string) (string, error) {
+	if s.cfg.AssetIssuer == "" {
+		return "", fmt.Errorf("%s: anchor asset issuer not configured", ErrUpstreamFailed)
+	}
+	if !stellarx.IsValidAccountAddress(destination) {
+		return "", fmt.Errorf("%w: destination is not a valid Stellar account", errBadRequest)
+	}
+	amount, err := money.ParseAmount(amountStr, money.AssetID{Code: s.cfg.AssetCode, Issuer: s.cfg.AssetIssuer}, s.cfg.Decimals)
+	if err != nil {
+		return "", fmt.Errorf("%w: %v", errBadRequest, err)
+	}
+	if amount.Raw.Sign() <= 0 {
+		return "", fmt.Errorf("%w: amount must be positive", errBadRequest)
+	}
+	txMemo, err := withdrawMemo(memoType, memo)
+	if err != nil {
+		return "", err
+	}
+	account, err := s.chain.GetAccount(ctx, owner)
+	if err != nil {
+		return "", fmt.Errorf("%w: %v", errChainUnavailable, err)
+	}
+	op := &txnbuild.Payment{
+		Destination:   destination,
+		Amount:        amount.String(),
+		Asset:         txnbuild.CreditAsset{Code: s.cfg.AssetCode, Issuer: s.cfg.AssetIssuer},
+		SourceAccount: owner,
+	}
+	tx, err := txnbuild.NewTransaction(txnbuild.TransactionParams{
+		SourceAccount:        &txnbuild.SimpleAccount{AccountID: owner, Sequence: account.Sequence},
+		IncrementSequenceNum: true,
+		Operations:           []txnbuild.Operation{op},
+		Memo:                 txMemo,
+		BaseFee:              txnbuild.MinBaseFee,
+		Preconditions:        txnbuild.Preconditions{TimeBounds: txnbuild.NewTimeout(300)},
+	})
+	if err != nil {
+		return "", fmt.Errorf("anchor: build withdraw payment tx: %w", err)
+	}
+	return tx.Base64()
+}
+
+// withdrawMemo maps the SEP-6 memo_type/memo pair to a transaction memo. An
+// anchor that returns no memo at all is valid (the account alone identifies
+// the user), so an empty memo yields no memo.
+func withdrawMemo(memoType, memo string) (txnbuild.Memo, error) {
+	if memo == "" {
+		return nil, nil
+	}
+	switch memoType {
+	case "id":
+		id, err := strconv.ParseUint(memo, 10, 64)
+		if err != nil {
+			return nil, fmt.Errorf("%w: memo_type id needs an unsigned integer memo", errBadRequest)
+		}
+		return txnbuild.MemoID(id), nil
+	case "text":
+		if len(memo) > 28 {
+			return nil, fmt.Errorf("%w: text memo exceeds 28 bytes", errBadRequest)
+		}
+		return txnbuild.MemoText(memo), nil
+	default:
+		return nil, fmt.Errorf("%w: unsupported memo_type %q", errBadRequest, memoType)
+	}
+}
+
 // ConfirmTrustline records that a change_trust op has been submitted
 // successfully — called by the client after pay-tx-service confirms it.
 func (s *Service) ConfirmTrustline(ctx context.Context, owner string, ledgerSeq int64) error {
@@ -323,4 +402,5 @@ var (
 	errAuthRequired     = errors.New(ErrAuthRequired)
 	errChainUnavailable = errors.New(ErrChainUnavailable)
 	errTrustlineMissing = errors.New(ErrTrustlineMissing)
+	errBadRequest       = errors.New(ErrBadRequest)
 )

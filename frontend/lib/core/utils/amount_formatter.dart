@@ -29,6 +29,19 @@ class AmountFormatter {
     return s;
   }
 
+  /// Inverse of [fromRaw] for a plain (ungrouped) decimal string: "1.5" with
+  /// 7 decimals -> "15000000". Returns null when [decimal] is not a
+  /// well-formed non-negative decimal or has more fractional digits than
+  /// [decimals] — never rounds or truncates. String math only.
+  static String? toRaw(String decimal, int decimals) {
+    final m = RegExp(r'^(\d+)(?:\.(\d+))?$').firstMatch(decimal);
+    if (m == null) return null;
+    final frac = m.group(2) ?? '';
+    if (frac.length > decimals) return null;
+    final digits = (m.group(1)! + frac.padRight(decimals, '0')).replaceFirst(RegExp(r'^0+(?=\d)'), '');
+    return digits;
+  }
+
   static String _group(String whole) {
     final buffer = StringBuffer();
     for (var i = 0; i < whole.length; i++) {

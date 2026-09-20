@@ -33,6 +33,7 @@ class ErrorCopy {
     'anchor.not_allowed': 'This anchor is not available.',
     'anchor.toml_unavailable': 'Could not reach the anchor right now.',
     'anchor.auth_required': 'Please connect to the anchor first.',
+    'anchor.token_rejected': 'Your bank session expired — please try again.',
     'anchor.upstream_failed': 'The anchor could not complete this request.',
     'anchor.bad_request': 'That request to the anchor was invalid.',
     'anchor.db_not_ready': 'Service is starting up — try again in a moment.',

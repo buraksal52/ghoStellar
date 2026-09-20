@@ -15,7 +15,9 @@ T _$identity<T>(T value) => value;
 /// @nodoc
 mixin _$AnchorInfo {
 
- String get id; String get domain; String get signingKey; String get webAuthEndpoint; String get transferServer24; String get assetCode; String get assetIssuer;
+ String get id; String get domain; String get signingKey; String get webAuthEndpoint;// Omitted by the backend when the anchor publishes no SEP-24 server
+// (the TR anchor is SEP-6 only), so it must not be required.
+ String get transferServer24; String get assetCode; String get assetIssuer;
 /// Create a copy of AnchorInfo
 /// with the given fields replaced by the non-null parameter values.
 @JsonKey(includeFromJson: false, includeToJson: false)
@@ -215,14 +217,16 @@ return $default(_that.id,_that.domain,_that.signingKey,_that.webAuthEndpoint,_th
 @JsonSerializable()
 
 class _AnchorInfo implements AnchorInfo {
-  const _AnchorInfo({required this.id, required this.domain, required this.signingKey, required this.webAuthEndpoint, required this.transferServer24, required this.assetCode, required this.assetIssuer});
+  const _AnchorInfo({required this.id, required this.domain, required this.signingKey, required this.webAuthEndpoint, this.transferServer24 = '', required this.assetCode, required this.assetIssuer});
   factory _AnchorInfo.fromJson(Map<String, dynamic> json) => _$AnchorInfoFromJson(json);
 
 @override final  String id;
 @override final  String domain;
 @override final  String signingKey;
 @override final  String webAuthEndpoint;
-@override final  String transferServer24;
+// Omitted by the backend when the anchor publishes no SEP-24 server
+// (the TR anchor is SEP-6 only), so it must not be required.
+@override@JsonKey() final  String transferServer24;
 @override final  String assetCode;
 @override final  String assetIssuer;
 
