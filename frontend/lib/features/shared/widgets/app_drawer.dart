@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 
 import '../../../core/theme/app_colors.dart';
+import 'ghostellar_mascot.dart';
 
 class AppDrawer extends StatelessWidget {
   const AppDrawer({super.key});
@@ -29,7 +30,22 @@ class AppDrawer extends StatelessWidget {
               Row(
                 mainAxisAlignment: MainAxisAlignment.spaceBetween,
                 children: [
-                  Text('ghoStellar', style: Theme.of(context).textTheme.titleLarge),
+                  Expanded(
+                    child: Row(
+                      children: [
+                        const ExcludeSemantics(child: GhostellarMascot(size: 36)),
+                        const SizedBox(width: 8),
+                        Flexible(
+                          child: Text(
+                            'ghoStellar',
+                            style: Theme.of(context).textTheme.titleLarge,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
                   IconButton(
                     icon: Icon(Icons.close, color: c.text),
                     onPressed: () => Navigator.of(context).pop(),

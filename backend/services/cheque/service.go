@@ -555,6 +555,18 @@ func (s *Service) PoolDepositXDR(ctx context.Context, owner, amountStr string) (
 	if !ownerAccount.Exists {
 		return "", errAccountNotFunded
 	}
+	if s.cfg.AssetCode != "native" && owner != s.cfg.AssetIssuer {
+		trustline, err := s.chain.GetTrustline(ctx, owner, s.cfg.AssetCode, s.cfg.AssetIssuer)
+		if err != nil {
+			return "", fmt.Errorf("%w: %v", errChainUnavailable, err)
+		}
+		if !trustline.Exists {
+			return "", errSenderNoTrustline
+		}
+	}
+	if owner != s.cfg.AssetIssuer && !hasSufficientBalance(ownerAccount, s.cfg.AssetCode, s.cfg.AssetIssuer, amount.Raw, s.cfg.Decimals) {
+		return "", errInsufficientBalance
+	}
 	depositArgs, err := scArgs(scAddr(owner), scAddr(s.cfg.TokenContractID), scI128(amount.Raw))
 	if err != nil {
 		return "", err
@@ -822,6 +834,7 @@ var (
 	errAlreadyActive       = errors.New(ErrAlreadyActive)
 	errInvalidReceiver     = errors.New(ErrInvalidReceiver)
 	errReceiverNoTrustline = errors.New(ErrReceiverNoTrustline)
+	errSenderNoTrustline   = errors.New(ErrSenderNoTrustline)
 	errSelfTransfer        = errors.New(ErrSelfTransfer)
 	errRequestUsed         = errors.New(ErrRequestUsed)
 	errInvalidRequestID    = errors.New(ErrInvalidRequestID)

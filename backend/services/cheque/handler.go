@@ -315,6 +315,8 @@ func writeChequeError(w http.ResponseWriter, err error) {
 		code, status = ErrAlreadyActive, http.StatusConflict
 	case errors.Is(err, errInvalidReceiver):
 		code, status = ErrInvalidReceiver, http.StatusBadRequest
+	case errors.Is(err, errSenderNoTrustline):
+		code, status = ErrSenderNoTrustline, http.StatusUnprocessableEntity
 	case errors.Is(err, errReceiverNoTrustline):
 		code, status = ErrReceiverNoTrustline, http.StatusUnprocessableEntity
 	case errors.Is(err, errSelfTransfer):

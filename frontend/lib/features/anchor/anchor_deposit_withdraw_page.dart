@@ -6,6 +6,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import 'package:uuid/uuid.dart';
 
+import '../../core/config/pay_asset.dart';
 import '../../core/errors/api_error.dart';
 import '../../core/errors/error_copy.dart';
 import '../../core/theme/app_colors.dart';

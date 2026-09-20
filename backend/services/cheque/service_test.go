@@ -749,3 +749,54 @@ func TestCreateCheque_RequestIDBoundaryLength(t *testing.T) {
 		t.Fatalf("64-char id should be accepted: %v", err)
 	}
 }
+
+func TestPoolDepositXDR_Preflight(t *testing.T) {
+	for _, tc := range []struct {
+		name      string
+		trustline bool
+		lookupErr error
+		amount    string
+		want      error
+	}{
+		{"missing trustline", false, nil, "25", errSenderNoTrustline},
+		{"lookup unavailable", false, errors.New("offline"), "25", errChainUnavailable},
+		{"insufficient token balance", true, nil, "1001", errInsufficientBalance},
+		{"funded token balance", true, nil, "25", nil},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			chain := fundedChain(t, 1)
+			chain.GetTrustlineFunc = func(ctx context.Context, address, code, issuer string) (ports.TrustlineInfo, error) {
+				if address != testSender || code != testAssetCode || issuer != testAssetIssuer {
+					t.Fatal("preflight checked the wrong account or asset")
+				}
+				return ports.TrustlineInfo{Exists: tc.trustline}, tc.lookupErr
+			}
+			svc := newServiceWithRepo(testConfig(), newFakeRepo(), chain)
+			_, err := svc.PoolDepositXDR(context.Background(), testSender, tc.amount)
+			if !errors.Is(err, tc.want) {
+				t.Fatalf("got %v, want %v", err, tc.want)
+			}
+			if tc.want != nil && chain.SimulateTransactionCalls != 0 {
+				t.Fatal("invalid deposit reached simulation")
+			}
+		})
+	}
+}
+
+func TestPoolDepositXDR_NativeDoesNotRequireTrustline(t *testing.T) {
+	cfg := testConfig()
+	cfg.AssetCode, cfg.AssetIssuer = "native", ""
+	chain := fundedChain(t, 1)
+	chain.GetAccountFunc = func(ctx context.Context, address string) (ports.AccountInfo, error) {
+		return ports.AccountInfo{Exists: true, Address: address, Sequence: 1,
+			Balances: []ports.Balance{{AssetCode: "native", Balance: "100"}}}, nil
+	}
+	chain.GetTrustlineFunc = func(context.Context, string, string, string) (ports.TrustlineInfo, error) {
+		t.Fatal("native asset must not require a trustline")
+		return ports.TrustlineInfo{}, nil
+	}
+	svc := newServiceWithRepo(cfg, newFakeRepo(), chain)
+	if _, err := svc.PoolDepositXDR(context.Background(), testSender, "25"); err != nil {
+		t.Fatal(err)
+	}
+}

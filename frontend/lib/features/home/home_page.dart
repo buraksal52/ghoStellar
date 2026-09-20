@@ -98,10 +98,16 @@ class HomePage extends ConsumerWidget {
           Row(
             mainAxisAlignment: MainAxisAlignment.spaceBetween,
             children: [
-              Text('Recent activity', style: Theme.of(context).textTheme.titleMedium),
+              Text(
+                'Recent activity',
+                style: Theme.of(context).textTheme.titleMedium,
+              ),
               TextButton(
                 onPressed: () => context.push('/activity'),
-                child: Text('See all', style: TextStyle(color: c.info, fontSize: 13)),
+                child: Text(
+                  'See all',
+                  style: TextStyle(color: c.info, fontSize: 13),
+                ),
               ),
             ],
           ),
@@ -109,14 +115,18 @@ class HomePage extends ConsumerWidget {
             builder: (context, ref, _) {
               final items = ref.watch(activityItemsProvider);
               return items.when(
-                data: (list) => RecentActivityList(items: list.take(3).toList()),
+                data: (list) =>
+                    RecentActivityList(items: list.take(3).toList()),
                 loading: () => const Padding(
                   padding: EdgeInsets.all(24),
                   child: Center(child: CircularProgressIndicator()),
                 ),
                 error: (e, _) => Padding(
                   padding: const EdgeInsets.all(16),
-                  child: Text('Could not load activity.', style: TextStyle(color: c.muted)),
+                  child: Text(
+                    'Could not load activity.',
+                    style: TextStyle(color: c.muted),
+                  ),
                 ),
               );
             },

@@ -3,6 +3,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
 import '../core/theme/app_colors.dart';
+import '../features/shared/widgets/startup_loading_screen.dart';
 import '../state/auth_providers.dart';
 import '../state/home_providers.dart';
 import '../state/sync_providers.dart';
@@ -51,47 +52,46 @@ class _AuthGatePageState extends ConsumerState<AuthGatePage> {
 
   @override
   Widget build(BuildContext context) {
+    if (_error == null) return const StartupLoadingScreen();
+
     final c = context.colors;
     return Scaffold(
       body: Center(
-        child: _error == null
-            ? const CircularProgressIndicator()
-            : Padding(
-                padding: const EdgeInsets.all(32),
-                child: Column(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    Icon(Icons.wifi_off, color: c.negative, size: 40),
-                    const SizedBox(height: 16),
-                    Text(
-                      'Could not connect. Check your connection and try again.',
-                      textAlign: TextAlign.center,
-                      style: Theme.of(context).textTheme.bodyMedium,
-                    ),
-                    const SizedBox(height: 12),
-                    // The catch-all above also swallows non-network failures
-                    // (e.g. a response that fails to parse), so surface the
-                    // real cause.
-                    SelectableText(
-                      _error!,
-                      textAlign: TextAlign.center,
-                      style: Theme.of(context)
-                          .textTheme
-                          .bodySmall
-                          ?.copyWith(color: c.negative),
-                    ),
-                    const SizedBox(height: 20),
-                    ElevatedButton(
-                      onPressed: _run,
-                      style: ElevatedButton.styleFrom(
-                        backgroundColor: c.primary,
-                        foregroundColor: c.primaryText,
-                      ),
-                      child: const Text('Retry'),
-                    ),
-                  ],
-                ),
+        child: Padding(
+          padding: const EdgeInsets.all(32),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Icon(Icons.wifi_off, color: c.negative, size: 40),
+              const SizedBox(height: 16),
+              Text(
+                'Could not connect. Check your connection and try again.',
+                textAlign: TextAlign.center,
+                style: Theme.of(context).textTheme.bodyMedium,
               ),
+              const SizedBox(height: 12),
+              // The catch-all above also swallows non-network failures
+              // (e.g. a response that fails to parse), so surface the
+              // real cause.
+              SelectableText(
+                _error!,
+                textAlign: TextAlign.center,
+                style: Theme.of(
+                  context,
+                ).textTheme.bodySmall?.copyWith(color: c.negative),
+              ),
+              const SizedBox(height: 20),
+              ElevatedButton(
+                onPressed: _run,
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: c.primary,
+                  foregroundColor: c.primaryText,
+                ),
+                child: const Text('Retry'),
+              ),
+            ],
+          ),
+        ),
       ),
     );
   }

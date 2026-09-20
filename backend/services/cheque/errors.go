@@ -3,6 +3,7 @@ package cheque
 // Error codes match the plan's "Hata kodları" list and the p2p doc's case
 // catalog (A1-A6, F3, H2, D5) one-to-one.
 const (
+	ErrSenderNoTrustline     = "cheque.sender_no_trustline"
 	ErrInsufficientBalance   = "cheque.insufficient_balance"  // A1
 	ErrAlreadyActive         = "cheque.already_active"        // A3
 	ErrInvalidReceiver       = "cheque.invalid_receiver"      // A4

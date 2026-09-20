@@ -13,8 +13,12 @@ class ErrorCopy {
   static Map<String, String> get _messages {
     final asset = PayAsset.configured.label;
     return {
+      'cheque.sender_no_trustline':
+          'Set up $asset in your wallet, then add funds before depositing.',
+      'tx.pending':
+          'Stellar has not confirmed this transaction yet. Check its status before trying again.',
       'cheque.insufficient_balance':
-          'You don\'t have enough balance to send this cheque.',
+          'You don\'t have enough balance for this transaction.',
       'cheque.already_active':
           'You already have an active cheque to this recipient.',
       'cheque.invalid_receiver': 'That recipient address doesn\'t look right.',

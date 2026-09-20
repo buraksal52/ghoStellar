@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
+import '../features/shared/widgets/startup_loading_screen.dart';
 import '../state/core_providers.dart';
 import '../state/wallet_providers.dart';
 
@@ -25,22 +26,26 @@ class _SplashPageState extends ConsumerState<SplashPage> {
   }
 
   Future<void> _bootstrap() async {
+    if (!mounted) return;
+    // Run the minimum display time alongside wallet loading.
+    final minimumDisplay = Future<void>.delayed(const Duration(seconds: 2));
     final store = ref.read(secureWalletStoreProvider);
     final secretSeed = await store.readSecretSeed();
+    if (!mounted) return;
     if (secretSeed == null) {
+      await minimumDisplay;
       if (mounted) context.go('/onboarding');
       return;
     }
     final signing = ref.read(stellarSigningServiceProvider);
     final keyPair = signing.keypairFromSecretSeed(secretSeed);
     ref.read(walletProvider.notifier).unlock(keyPair);
+    await minimumDisplay;
     if (mounted) context.go('/auth-gate');
   }
 
   @override
   Widget build(BuildContext context) {
-    return const Scaffold(
-      body: Center(child: CircularProgressIndicator()),
-    );
+    return const StartupLoadingScreen();
   }
 }

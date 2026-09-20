@@ -4,6 +4,7 @@ import 'package:go_router/go_router.dart';
 import 'package:uuid/uuid.dart';
 
 import '../../core/config/pay_asset.dart';
+import '../../core/errors/api_error.dart';
 import '../../core/theme/app_colors.dart';
 import '../../core/utils/amount_formatter.dart';
 import '../../data/api/models/cheque_models.dart';
@@ -43,9 +44,22 @@ class _PoolPageState extends ConsumerState<PoolPage> {
   bool _isDeposit = true;
   final _amountController = TextEditingController();
 
+  String get _amount => _amountController.text.trim().replaceAll(',', '.');
+
+  bool get _validAmount {
+    final raw = AmountFormatter.toRaw(_amount, _decimals(ref.read(syncProvider).value?.pool));
+    return raw != null && BigInt.parse(raw) > BigInt.zero;
+  }
+
+  @override
+  void dispose() {
+    _amountController.dispose();
+    super.dispose();
+  }
+
   Future<void> _submit() async {
-    final amount = _amountController.text.trim();
-    if (!AmountFormatter.isValidPositiveDecimal(amount)) return;
+    final amount = _amount;
+    if (!_validAmount) return;
 
     final keyPair = ref.read(walletProvider).keyPair;
     if (keyPair == null) return;
@@ -63,12 +77,18 @@ class _PoolPageState extends ConsumerState<PoolPage> {
       report(SigningStep.signing);
       final signed = signing.signTransactionXdr(xdr, keyPair);
       report(SigningStep.submitting);
-      await txApi.submit(
+      final result = await txApi.submit(
         idempotencyKey: const Uuid().v4(),
         purpose: _isDeposit ? 'pool_deposit' : 'pool_withdraw',
         kind: TxKind.soroban,
         xdr: signed,
       );
+      if (!result.successful) {
+        throw ApiException(
+          code: result.resultCode == 'PENDING' ? 'tx.pending' : 'tx.submit_failed',
+          message: result.resultCode ?? 'transaction failed',
+        );
+      }
       report(SigningStep.confirming);
       if (_isDeposit) {
         final ledgerSeq = ref.read(syncProvider).value?.ledgerSeq ?? 0;
@@ -146,7 +166,7 @@ class _PoolPageState extends ConsumerState<PoolPage> {
     final synced = ref.watch(syncProvider).value;
     final pool = synced?.pool;
     final balances = ref.watch(balancesProvider).value;
-    final amountText = _amountController.text.trim();
+    final amountText = _amount;
     final blocker = _blocker(
       balances: balances,
       trustlineReady: synced?.trustlineReady,
@@ -196,7 +216,7 @@ class _PoolPageState extends ConsumerState<PoolPage> {
                   children: [
                     Icon(Icons.schedule, size: 14, color: c.muted),
                     const SizedBox(width: 8),
-                    Text('Withdrawable in $_poolLockDays days', style: TextStyle(fontSize: 13, color: c.textSecondary)),
+                    Flexible(child: Text((BigInt.tryParse(pool?.amountRaw ?? '0') ?? BigInt.zero) > BigInt.zero ? 'Withdrawals lock for $_poolLockDays days after deposit' : 'No funds in pool', style: TextStyle(fontSize: 13, color: c.textSecondary))),
                   ],
                 ),
               ),
@@ -251,6 +271,7 @@ class _PoolPageState extends ConsumerState<PoolPage> {
                         hintText: '0.00',
                       ),
                       onChanged: (_) => setState(() {}),
+                      onTapOutside: (_) => FocusScope.of(context).unfocus(),
                     ),
                   ),
                   Text(PayAsset.configured.label, style: TextStyle(fontSize: 15, color: c.info)),
@@ -286,7 +307,7 @@ class _PoolPageState extends ConsumerState<PoolPage> {
         SizedBox(
           height: 52,
           child: ElevatedButton(
-            onPressed: blocker == null && AmountFormatter.isValidPositiveDecimal(amountText) ? _submit : null,
+            onPressed: blocker == null && _validAmount ? _submit : null,
             style: ElevatedButton.styleFrom(
               backgroundColor: c.primary,
               foregroundColor: c.primaryText,

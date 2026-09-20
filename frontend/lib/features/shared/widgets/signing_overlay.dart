@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../../core/theme/app_colors.dart';
@@ -76,6 +77,20 @@ class SigningOverlay extends ConsumerWidget {
                     textAlign: TextAlign.center,
                     style: Theme.of(context).textTheme.bodyMedium,
                   ),
+                  if (overlay.errorDetails != null)
+                    TextButton.icon(
+                      icon: const Icon(Icons.copy, size: 16),
+                      label: const Text('Copy error details'),
+                      onPressed: () async {
+                        await Clipboard.setData(
+                            ClipboardData(text: overlay.errorDetails!));
+                        if (context.mounted) {
+                          ScaffoldMessenger.maybeOf(context)?.showSnackBar(
+                            const SnackBar(content: Text('Error details copied')),
+                          );
+                        }
+                      },
+                    ),
                   const SizedBox(height: 18),
                   SizedBox(
                     width: double.infinity,

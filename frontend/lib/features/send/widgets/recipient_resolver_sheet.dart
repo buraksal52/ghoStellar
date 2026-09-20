@@ -46,6 +46,7 @@ class _RecipientResolverSheetState
   bool _scanningNfc = false;
   bool _scanningQr = false;
   bool _showQr = false;
+  bool _accepted = false;
   final _manualController = TextEditingController();
   String? _scanError;
   String? _manualError;
@@ -74,6 +75,7 @@ class _RecipientResolverSheetState
   /// Turns whatever was read/typed into a request we're willing to pay, or a
   /// message saying why not. Returns null on success (after popping).
   String? _accept(String? raw) {
+    if (!mounted || _accepted) return null;
     final request = PaymentRequest.tryParse(raw);
     if (request == null) {
       return "That isn't a payment request or Stellar address.";
@@ -87,6 +89,9 @@ class _RecipientResolverSheetState
             ref.read(offlineSpentRequestIdsProvider).contains(nonce))) {
       return 'You already paid this request.';
     }
+    _accepted = true;
+    _nfcTimeout?.cancel();
+    _peerSub?.cancel();
     Navigator.of(context).pop(request);
     return null;
   }

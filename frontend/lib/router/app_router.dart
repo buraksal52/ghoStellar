@@ -44,7 +44,9 @@ final routerProvider = Provider<GoRouter>((ref) {
       ),
       GoRoute(
         path: '/auth-gate',
-        pageBuilder: (context, state) => softPage(state: state, child: const AuthGatePage()),
+        // Keep startup branding visible while restore hands off to login/sync.
+        pageBuilder: (context, state) =>
+            NoTransitionPage(key: state.pageKey, child: const AuthGatePage()),
       ),
       ShellRoute(
         builder: (context, state, child) => AppShell(child: child),

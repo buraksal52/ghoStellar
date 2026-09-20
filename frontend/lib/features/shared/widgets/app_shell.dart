@@ -15,6 +15,7 @@ import '../../../state/sync_providers.dart';
 import '../../../state/wallet_providers.dart';
 import '../starter_funds_action.dart';
 import 'app_drawer.dart';
+import 'ghostellar_mascot.dart';
 import 'signing_overlay.dart';
 
 const _titles = {
@@ -171,7 +172,17 @@ class _AppShellState extends ConsumerState<AppShell> with WidgetsBindingObserver
           // widths would slide sideways while switching; keep them start-aligned.
           layoutBuilder: (current, previous) =>
               Stack(alignment: Alignment.centerLeft, children: [...previous, ?current]),
-          child: Text(title, key: ValueKey(title)),
+          child: title == 'ghoStellar'
+              ? Row(
+                  key: ValueKey(title),
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    const ExcludeSemantics(child: GhostellarMascot(size: 36)),
+                    const SizedBox(width: 8),
+                    Flexible(child: Text(title, maxLines: 1, overflow: TextOverflow.ellipsis)),
+                  ],
+                )
+              : Text(title, key: ValueKey(title)),
         ),
         actions: [
           IconButton(
