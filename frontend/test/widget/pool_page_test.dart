@@ -21,7 +21,7 @@ Widget _app({
     overrides: <Override>[
       walletProvider.overrideWith(() => UnlockedWallet(KeyPair.random())),
       horizonReadServiceProvider.overrideWithValue(
-        FakeHorizonReadService([balances ?? FakeHorizonReadService.fundedBalances(other: {'USDC': '25.5000000'})]),
+        FakeHorizonReadService([balances ?? FakeHorizonReadService.fundedBalances(native: '25.5000000')]),
       ),
       syncProvider.overrideWith(
         () => FakeSyncNotifier(const [], trustlineReady: trustlineReady, poolAmountRaw: poolAmountRaw),
@@ -43,16 +43,15 @@ Future<void> _settle(WidgetTester tester) async {
 ElevatedButton _submitButton(WidgetTester tester) => tester.widget<ElevatedButton>(find.byType(ElevatedButton));
 
 void main() {
-  testWidgets('labels everything in USDC and shows the USDC balance, not the XLM fee balance', (tester) async {
+  testWidgets('labels everything in XLM, the app\'s one asset', (tester) async {
     await tester.pumpWidget(_app());
     await _settle(tester);
 
-    expect(find.text('Available: 25.5 USDC'), findsOneWidget);
-    expect(find.text('XLM'), findsNothing);
-    expect(find.text('USDC'), findsWidgets);
+    expect(find.text('Available: 25.5 XLM'), findsOneWidget);
+    expect(find.text('XLM'), findsWidgets);
   });
 
-  testWidgets('a deposit within the USDC balance is allowed', (tester) async {
+  testWidgets('a deposit within the balance is allowed', (tester) async {
     await tester.pumpWidget(_app());
     await _settle(tester);
 
@@ -60,30 +59,18 @@ void main() {
     await tester.pump();
 
     expect(_submitButton(tester).onPressed, isNotNull);
-    expect(find.textContaining('Not enough USDC'), findsNothing);
+    expect(find.textContaining('Not enough XLM'), findsNothing);
   });
 
-  testWidgets('a wallet with XLM but no USDC is told why it cannot deposit', (tester) async {
-    await tester.pumpWidget(_app(balances: FakeHorizonReadService.fundedBalances()));
+  testWidgets('a wallet with no funds is told why it cannot deposit', (tester) async {
+    await tester.pumpWidget(_app(balances: FakeHorizonReadService.fundedBalances(native: '0.0000000')));
     await _settle(tester);
 
     await tester.enterText(find.byType(TextField), '10');
     await tester.pump();
 
-    expect(find.textContaining('You have no USDC yet'), findsOneWidget);
-    expect(find.text('Add funds →'), findsOneWidget);
-    expect(_submitButton(tester).onPressed, isNull);
-  });
-
-  testWidgets('without a USDC trustline the user is sent to set it up first', (tester) async {
-    await tester.pumpWidget(_app(trustlineReady: false));
-    await _settle(tester);
-
-    expect(find.text('Set up USDC before using the pool.'), findsOneWidget);
-    expect(find.text('Set up USDC →'), findsOneWidget);
-
-    await tester.enterText(find.byType(TextField), '1');
-    await tester.pump();
+    expect(find.text('You have no funds yet. Get test funds from Settings first.'), findsOneWidget);
+    expect(find.text('Open Settings →'), findsOneWidget);
     expect(_submitButton(tester).onPressed, isNull);
   });
 
@@ -95,14 +82,14 @@ void main() {
     expect(find.text('Open Settings →'), findsOneWidget);
   });
 
-  testWidgets('depositing more than the USDC balance is blocked with the balance in the message', (tester) async {
+  testWidgets('depositing more than the balance is blocked with the balance in the message', (tester) async {
     await tester.pumpWidget(_app());
     await _settle(tester);
 
     await tester.enterText(find.byType(TextField), '25.5000001');
     await tester.pump();
 
-    expect(find.text('Not enough USDC — you have 25.5.'), findsOneWidget);
+    expect(find.text('Not enough XLM — you have 25.5.'), findsOneWidget);
     expect(_submitButton(tester).onPressed, isNull);
 
     await tester.enterText(find.byType(TextField), '25.5');
@@ -111,13 +98,13 @@ void main() {
   });
 
   testWidgets('withdraw is checked against the pool balance and shows it as the available amount', (tester) async {
-    await tester.pumpWidget(_app(poolAmountRaw: '100000000')); // 10 USDC in the pool
+    await tester.pumpWidget(_app(poolAmountRaw: '100000000')); // 10 XLM in the pool
     await _settle(tester);
 
     await tester.tap(find.text('Withdraw').first);
     await tester.pump();
 
-    expect(find.text('In pool: 10 USDC'), findsOneWidget);
+    expect(find.text('In pool: 10 XLM'), findsOneWidget);
 
     await tester.enterText(find.byType(TextField), '10.5');
     await tester.pump();

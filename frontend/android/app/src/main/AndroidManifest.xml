@@ -35,6 +35,15 @@
             android:name="flutterEmbedding"
             android:value="2" />
 
+        <!-- Impeller's Vulkan backend (Flutter 3.32) stalls on some Mali/MediaTek
+             devices under Android 16: SurfaceFlinger stops releasing buffers, the
+             log fills with "BLASTBufferQueue: Already acquired max frames" and the
+             UI freezes. Fall back to the Skia GL renderer until Flutter is
+             upgraded; remove this once a newer engine is verified on device. -->
+        <meta-data
+            android:name="io.flutter.embedding.android.EnableImpeller"
+            android:value="false" />
+
         <!-- Host Card Emulation service: broadcasts our own Stellar address
              to a nearby phone's NFC reader when "Ready to Receive" is
              active. See NfcService/HceService for the handshake protocol. -->

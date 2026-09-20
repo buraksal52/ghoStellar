@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
+import '../../core/config/pay_asset.dart';
 import '../../core/theme/app_colors.dart';
 import '../../state/activity_providers.dart';
 import '../../state/anchor_providers.dart';
@@ -78,16 +79,21 @@ class HomePage extends ConsumerWidget {
                   onTap: () => context.push('/pool'),
                 ),
               ),
-              const SizedBox(width: 10),
-              Expanded(
-                child: ActionTile(
-                  icon: Icons.account_balance_rounded,
-                  label: 'Bank',
-                  background: c.tilePool,
-                  iconColor: c.tilePoolIcon,
-                  onTap: () => context.push('/anchor'),
+              // The bank ramp trades fiat for the app's asset; it needs an
+              // issued asset (SEP-6/24), so it has nothing to do for a native
+              // deployment.
+              if (!PayAsset.configured.isNative) ...[
+                const SizedBox(width: 10),
+                Expanded(
+                  child: ActionTile(
+                    icon: Icons.account_balance_rounded,
+                    label: 'Bank',
+                    background: c.tilePool,
+                    iconColor: c.tilePoolIcon,
+                    onTap: () => context.push('/anchor'),
+                  ),
                 ),
-              ),
+              ],
             ],
           ),
           if (pendingClaims.isNotEmpty) ...[

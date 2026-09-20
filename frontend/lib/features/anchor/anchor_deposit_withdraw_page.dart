@@ -336,6 +336,11 @@ class _AnchorDepositWithdrawPageState extends ConsumerState<AnchorDepositWithdra
   @override
   Widget build(BuildContext context) {
     final c = context.colors;
+    // The bank ramp trades fiat for the app's asset via SEP-6/24, which needs
+    // an issued asset — there's nothing to ramp into/out of for native XLM.
+    // Reaching this page at all requires a link (app_drawer, home_page), and
+    // those are hidden for a native deployment; this only guards a direct
+    // deep link into it.
     final anchor = ref.watch(primaryAnchorProvider);
     final trustlineReady = ref.watch(syncProvider).value?.trustlineReady ?? false;
     final active = _active;

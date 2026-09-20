@@ -1,6 +1,7 @@
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:uuid/uuid.dart';
 
+import '../core/config/pay_asset.dart';
 import '../core/errors/api_error.dart';
 import '../data/api/models/tx_models.dart';
 import 'anchor_providers.dart';
@@ -12,9 +13,13 @@ import 'wallet_providers.dart';
 
 final trustlineSetupProvider = Provider((ref) => TrustlineSetup(ref));
 
-/// Opens the USDC trustline: unsigned XDR from the backend → signed on this
-/// device → submitted by pay-tx-service → confirmed against the chain. Shared
-/// by the "Set up USDC" screen and the one-tap starter-funds flow.
+/// Opens the app's asset trustline: unsigned XDR from the backend → signed on
+/// this device → submitted by pay-tx-service → confirmed against the chain.
+/// Shared by the "Set up" screen and the one-tap starter-funds flow.
+///
+/// Native XLM needs no trustline — every account already "holds" it — so both
+/// methods are no-ops for a native deployment; nothing links here in that
+/// case, but callers don't have to check first.
 class TrustlineSetup {
   TrustlineSetup(this._ref);
   final Ref _ref;
@@ -22,6 +27,7 @@ class TrustlineSetup {
   /// Throws [ApiException] on any failure (callers surface it, e.g. through
   /// the signing overlay). [report] is the overlay's step callback, if any.
   Future<void> run({void Function(SigningStep step)? report}) async {
+    if (PayAsset.configured.isNative) return;
     // `primaryAnchorProvider` is only read here, never watched, so nothing has
     // necessarily loaded the anchor list yet — await it rather than failing.
     final anchor = _ref.read(primaryAnchorProvider) ?? (await _ref.read(anchorsProvider.future)).firstOrNull;
@@ -56,6 +62,7 @@ class TrustlineSetup {
   /// check it and record it, then refresh what depends on it. The backend
   /// answers `anchor.trustline_missing` if it isn't there.
   Future<void> confirm() async {
+    if (PayAsset.configured.isNative) return;
     final anchor = _ref.read(primaryAnchorProvider) ?? (await _ref.read(anchorsProvider.future)).firstOrNull;
     if (anchor == null) {
       throw ApiException(code: 'anchor.not_allowed', message: 'anchor not loaded');

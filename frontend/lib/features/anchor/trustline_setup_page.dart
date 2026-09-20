@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
+import '../../core/config/pay_asset.dart';
 import '../../core/theme/app_colors.dart';
 import '../../state/signing_overlay_provider.dart';
 import '../../state/trustline_setup.dart';
@@ -38,12 +39,12 @@ class TrustlineSetupPage extends ConsumerWidget {
               child: Icon(Icons.shield_outlined, color: c.info, size: 22),
             ),
             const SizedBox(height: 14),
-            Text('Set up USDC', style: Theme.of(context).textTheme.headlineMedium),
+            Text('Set up ${PayAsset.configured.label}', style: Theme.of(context).textTheme.headlineMedium),
             const SizedBox(height: 8),
             SizedBox(
               width: 280,
               child: Text(
-                'USDC must be enabled on your Stellar account before it can be held or received.',
+                '${PayAsset.configured.label} must be enabled on your Stellar account before it can be held or received.',
                 textAlign: TextAlign.center,
                 style: TextStyle(fontSize: 14, height: 1.5, color: c.textSecondary),
               ),

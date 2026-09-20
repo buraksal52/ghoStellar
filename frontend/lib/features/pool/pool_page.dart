@@ -113,11 +113,17 @@ class _PoolPageState extends ConsumerState<PoolPage> {
       final raw = AmountFormatter.toRaw(balances.payAsset, _decimals(pool));
       limit = raw == null ? null : BigInt.tryParse(raw);
       if (limit == BigInt.zero) {
-        return _Blocker(
-          'You have no ${PayAsset.configured.label} yet. Add funds with a TRY bank deposit.',
-          'Add funds',
-          '/anchor',
-        );
+        return balances.payAssetIsNative
+            ? const _Blocker(
+                'You have no funds yet. Get test funds from Settings first.',
+                'Open Settings',
+                '/settings',
+              )
+            : _Blocker(
+                'You have no ${PayAsset.configured.label} yet. Add funds with a TRY bank deposit.',
+                'Add funds',
+                '/anchor',
+              );
       }
       shortage = 'Not enough ${PayAsset.configured.label} — you have ${AmountFormatter.trimTrailingZeros(balances.payAsset)}.';
     } else {

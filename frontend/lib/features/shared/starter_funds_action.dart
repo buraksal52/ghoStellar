@@ -20,7 +20,7 @@ Future<bool> runStarterFunds(WidgetRef ref) async {
   );
   if (result == null) return false;
 
-  final added = result.usdcAdded;
+  final added = result.added;
   overlay.setStep(
     SigningStep.done,
     label: added == null
