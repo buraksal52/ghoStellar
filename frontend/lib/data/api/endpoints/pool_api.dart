@@ -20,6 +20,6 @@ class PoolApi {
         body: {'amount': amount, 'ledgerSeq': ledgerSeq},
       );
 
-  Future<void> confirmWithdraw(String amount) =>
+  Future<void> confirmWithdraw({required String amount}) =>
       _client.post('/pool/confirm-withdraw', body: {'amount': amount});
 }

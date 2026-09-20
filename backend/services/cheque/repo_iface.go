@@ -19,6 +19,11 @@ type chequeRepo interface {
 	GetPool(ctx context.Context, owner string) (PoolDeposit, bool, error)
 	RecordDeposit(ctx context.Context, owner, amountRaw string, decimals uint8, ledgerSeq int64) error
 	RecordWithdraw(ctx context.Context, owner, amountRaw string) error
+	// SetPoolAmount overwrites the cache's amount_raw/decimals with a
+	// chain-derived value (Sync's self-heal — see reconcilePoolWithChain).
+	// Unlike RecordDeposit/RecordWithdraw this is an authoritative
+	// overwrite, not a delta.
+	SetPoolAmount(ctx context.Context, owner, amountRaw string, decimals uint8) error
 	InsertAudit(ctx context.Context, actor, action string, details any) error
 }
 

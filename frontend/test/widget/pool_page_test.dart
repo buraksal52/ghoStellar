@@ -1,8 +1,11 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_riverpod/misc.dart' show Override;
 import 'package:flutter_test/flutter_test.dart';
 import 'package:ghostellar_app/core/theme/app_colors.dart';
+import 'package:ghostellar_app/data/api/models/cheque_models.dart';
 import 'package:ghostellar_app/data/stellar/horizon_read_service.dart';
 import 'package:ghostellar_app/features/pool/pool_page.dart';
 import 'package:ghostellar_app/state/core_providers.dart';
@@ -11,6 +14,16 @@ import 'package:ghostellar_app/state/wallet_providers.dart';
 import 'package:stellar_flutter_sdk/stellar_flutter_sdk.dart';
 
 import '../support/fakes.dart';
+
+/// A SyncNotifier whose `build()` never resolves until the test completes
+/// it — lets a test see the widget in the same "pool balance not loaded
+/// yet" state `_blocker` guards against.
+class _DelayedSync extends SyncNotifier {
+  final completer = Completer<SyncResponse>();
+
+  @override
+  Future<SyncResponse> build() => completer.future;
+}
 
 Widget _app({
   AccountBalances? balances,
@@ -129,5 +142,53 @@ void main() {
     await tester.pump();
 
     expect(find.text('You have nothing in the pool to withdraw yet.'), findsOneWidget);
+  });
+
+  testWidgets('withdraw is blocked, not silently allowed, while the pool balance is still loading', (tester) async {
+    final sync = _DelayedSync();
+    await tester.pumpWidget(ProviderScope(
+      overrides: <Override>[
+        walletProvider.overrideWith(() => UnlockedWallet(KeyPair.random())),
+        horizonReadServiceProvider.overrideWithValue(
+          FakeHorizonReadService([FakeHorizonReadService.fundedBalances(native: '25.5000000')]),
+        ),
+        syncProvider.overrideWith(() => sync),
+      ],
+      child: MaterialApp(
+        theme: ThemeData(extensions: [AppColors.light]),
+        home: const Scaffold(body: PoolPage()),
+      ),
+    ));
+    // One pump: the wallet balance resolves, the pool sync deliberately
+    // does not — pool == null the way it looks before the first /sync
+    // response ever lands.
+    await tester.pump();
+    await tester.pump();
+
+    await tester.tap(find.text('Withdraw').first);
+    await tester.pump();
+
+    expect(find.text('Your pool balance is still loading — try again in a moment.'), findsOneWidget);
+    expect(_submitButton(tester).onPressed, isNull);
+
+    sync.completer.complete(syncResponse(const []));
+  });
+
+  testWidgets('withdraw is blocked when there is not enough native XLM left to pay the network fee', (tester) async {
+    await tester.pumpWidget(_app(
+      balances: FakeHorizonReadService.fundedBalances(native: '1.0000000'), // below the 1.5 XLM headroom
+      poolAmountRaw: '100000000', // 10 XLM in the pool — plenty to withdraw from
+    ));
+    await _settle(tester);
+
+    await tester.tap(find.text('Withdraw').first);
+    await tester.pump();
+
+    await tester.enterText(find.byType(TextField), '5');
+    await tester.pump();
+
+    expect(find.text('You need a little XLM in your wallet to cover the network fee.'), findsOneWidget);
+    expect(find.text('Open Settings →'), findsOneWidget);
+    expect(_submitButton(tester).onPressed, isNull);
   });
 }

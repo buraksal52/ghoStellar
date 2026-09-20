@@ -12,22 +12,34 @@ import 'wallet_providers.dart';
 /// No built-in retry: Riverpod 3 would otherwise keep a failed read "loading"
 /// through a long back-off, so callers awaiting it (the starter-funds flow) and
 /// the Home card's own "Tap to retry" would both wait on it for a minute.
+/// A successful submission can precede Horizon's updated account snapshot —
+/// [balancesProvider] schedules one reconcile at [_firstReconcile] and, if
+/// something is still watching then, a second at [_secondReconcile]. Two
+/// shorter attempts (rather than the previous single 5s one) bracket
+/// Stellar's ~5s ledger close time from both sides, so a read that lands
+/// exactly on that boundary still gets a second chance instead of leaving a
+/// stale balance on screen until the next manual refresh.
+const _firstReconcile = Duration(seconds: 3);
+const _secondReconcile = Duration(seconds: 6);
+
 final balancesProvider = FutureProvider.autoDispose<AccountBalances>((ref) async {
   final publicKey = ref.watch(walletProvider).publicKey;
   if (publicKey == null) return AccountBalances.notFunded;
   final horizon = ref.watch(horizonReadServiceProvider);
-  // A successful submission can precede Horizon's updated account snapshot.
-  // Keep reconciling while the balance is observed instead of caching that
-  // first, possibly stale, response until the next manual refresh. Schedule
-  // after completion so slow reads never overlap. Dispose cancels the timer
-  // when leaving the screen or switching wallets.
-  Timer? refreshTimer;
-  ref.onDispose(() => refreshTimer?.cancel());
+  // Dispose cancels these timers when leaving the screen or switching
+  // wallets — a build with no listener left has nothing to reconcile.
+  Timer? firstTimer;
+  Timer? secondTimer;
+  ref.onDispose(() {
+    firstTimer?.cancel();
+    secondTimer?.cancel();
+  });
   try {
     return await horizon.fetchBalances(publicKey);
   } finally {
     if (ref.mounted) {
-      refreshTimer = Timer(const Duration(seconds: 5), ref.invalidateSelf);
+      firstTimer = Timer(_firstReconcile, ref.invalidateSelf);
+      secondTimer = Timer(_secondReconcile, ref.invalidateSelf);
     }
   }
 }, retry: (_, _) => null);

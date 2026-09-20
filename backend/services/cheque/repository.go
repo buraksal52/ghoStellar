@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -159,8 +160,19 @@ func (r *Repository) Transition(ctx context.Context, id string, from, to State, 
 	return tx.Commit(ctx)
 }
 
-// ListForAddress returns every non-terminal cheque where address is either
-// party — what /sync reports.
+// ListActiveForAddress returns every cheque where address is either party —
+// active AND terminal, newest-updated first. This is /sync's only source of
+// cheque history for the Activity feed (there is no separate history
+// endpoint or local log for cheques, unlike pool events), so a terminal
+// cheque (KAPANDI/IADE_EDILDI/HUKUMSUZ/KARSILIKSIZ) must still come back
+// here — it used to be excluded, which made a completed send/receive
+// disappear from both parties' history within seconds of AcknowledgeReceipt
+// moving it to KAPANDI. `pendingClaimsProvider` on the client already
+// filters this same list down to the three claimable states client-side, so
+// returning terminal rows too doesn't affect that.
+//
+// Bounded by LIMIT rather than a time window: simpler, and 200 is already
+// far more than the Activity feed shows at once.
 func (r *Repository) ListActiveForAddress(ctx context.Context, address string) ([]Cheque, error) {
 	rows, err := r.pool.Query(ctx, `
 		SELECT id, sender_address, receiver_address, token_contract, amount_raw::text, decimals,
@@ -168,8 +180,8 @@ func (r *Repository) ListActiveForAddress(ctx context.Context, address string) (
 		       coalesce(request_id,'')
 		FROM pay.cheques
 		WHERE (sender_address = $1 OR receiver_address = $1)
-		  AND state NOT IN ('KAPANDI', 'IADE_EDILDI', 'HUKUMSUZ', 'KARSILIKSIZ')
-		ORDER BY created_at DESC
+		ORDER BY updated_at DESC
+		LIMIT 200
 	`, address)
 	if err != nil {
 		return nil, err
@@ -261,15 +273,42 @@ func (r *Repository) RecordDeposit(ctx context.Context, owner, amountRaw string,
 	return err
 }
 
-// RecordWithdraw debits the cache row. The amount_raw >= $2 guard stops the
-// cache from ever going negative on a double-recorded or out-of-order
-// withdraw confirm — the contract is still the actual balance authority
-// (D6), this only keeps the read-side cache from lying to /sync.
+// RecordWithdraw debits the cache row. GREATEST(...,0) stops the cache from
+// ever going negative on a double-recorded or out-of-order withdraw confirm
+// — the contract is still the actual balance authority (D6), and Sync's
+// reconcilePoolWithChain is what actually corrects a cache that has drifted
+// from it; this only keeps a single UPDATE from producing a negative value
+// in between. Unlike the old `amount_raw >= $2` guard, this always affects
+// exactly one row (when the owner has one) so a caller can tell "no such
+// pool row" apart from "cache already drifted low" via RowsAffected.
 func (r *Repository) RecordWithdraw(ctx context.Context, owner, amountRaw string) error {
-	_, err := r.pool.Exec(ctx, `
-		UPDATE pay.pool_deposits SET amount_raw = amount_raw - $2, updated_at = now()
-		WHERE owner_address = $1 AND amount_raw >= $2
+	tag, err := r.pool.Exec(ctx, `
+		UPDATE pay.pool_deposits SET amount_raw = GREATEST(amount_raw - $2, 0), updated_at = now()
+		WHERE owner_address = $1
 	`, owner, amountRaw)
+	if err != nil {
+		return err
+	}
+	if tag.RowsAffected() == 0 {
+		return fmt.Errorf("%w: no pool row for owner", ErrNotFoundInRepo)
+	}
+	return nil
+}
+
+// SetPoolAmount overwrites the cache row with a chain-derived value (Sync's
+// self-heal, see reconcilePoolWithChain) — an authoritative overwrite, not a
+// delta like RecordDeposit/RecordWithdraw. Upserts because the contract may
+// have a pool record for an owner whose cache row was never written (e.g.
+// a deposit confirm that never landed).
+func (r *Repository) SetPoolAmount(ctx context.Context, owner, amountRaw string, decimals uint8) error {
+	_, err := r.pool.Exec(ctx, `
+		INSERT INTO pay.pool_deposits (owner_address, amount_raw, decimals, ledger_seq)
+		VALUES ($1, $2, $3, 0)
+		ON CONFLICT (owner_address) DO UPDATE SET
+			amount_raw = EXCLUDED.amount_raw,
+			decimals = EXCLUDED.decimals,
+			updated_at = now()
+	`, owner, amountRaw, decimals)
 	return err
 }
 

@@ -63,6 +63,14 @@ abstract class PoolDeposit with _$PoolDeposit {
     required int decimals,
     int? lastDepositLedger,
     required String updatedAt,
+    // SERVICE.md #1's independent cross-check against the contract's own
+    // get_pool (backend/services/cheque/model.go's PoolDeposit.ChainVerified):
+    // null = not checked, true/false = matched/mismatched. A definite
+    // mismatch is corrected server-side before this is serialized (Sync's
+    // reconcilePoolWithChain), so `false` here means the correction itself
+    // failed — worth a soft "still checking" note rather than trusting the
+    // amount above outright.
+    bool? chainVerified,
   }) = _PoolDeposit;
 
   factory PoolDeposit.fromJson(Map<String, dynamic> json) =>

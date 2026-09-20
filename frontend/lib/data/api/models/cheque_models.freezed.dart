@@ -315,7 +315,14 @@ as String,
 /// @nodoc
 mixin _$PoolDeposit {
 
- String get ownerAddress; String get amountRaw; int get decimals; int? get lastDepositLedger; String get updatedAt;
+ String get ownerAddress; String get amountRaw; int get decimals; int? get lastDepositLedger; String get updatedAt;// SERVICE.md #1's independent cross-check against the contract's own
+// get_pool (backend/services/cheque/model.go's PoolDeposit.ChainVerified):
+// null = not checked, true/false = matched/mismatched. A definite
+// mismatch is corrected server-side before this is serialized (Sync's
+// reconcilePoolWithChain), so `false` here means the correction itself
+// failed — worth a soft "still checking" note rather than trusting the
+// amount above outright.
+ bool? get chainVerified;
 /// Create a copy of PoolDeposit
 /// with the given fields replaced by the non-null parameter values.
 @JsonKey(includeFromJson: false, includeToJson: false)
@@ -328,16 +335,16 @@ $PoolDepositCopyWith<PoolDeposit> get copyWith => _$PoolDepositCopyWithImpl<Pool
 
 @override
 bool operator ==(Object other) {
-  return identical(this, other) || (other.runtimeType == runtimeType&&other is PoolDeposit&&(identical(other.ownerAddress, ownerAddress) || other.ownerAddress == ownerAddress)&&(identical(other.amountRaw, amountRaw) || other.amountRaw == amountRaw)&&(identical(other.decimals, decimals) || other.decimals == decimals)&&(identical(other.lastDepositLedger, lastDepositLedger) || other.lastDepositLedger == lastDepositLedger)&&(identical(other.updatedAt, updatedAt) || other.updatedAt == updatedAt));
+  return identical(this, other) || (other.runtimeType == runtimeType&&other is PoolDeposit&&(identical(other.ownerAddress, ownerAddress) || other.ownerAddress == ownerAddress)&&(identical(other.amountRaw, amountRaw) || other.amountRaw == amountRaw)&&(identical(other.decimals, decimals) || other.decimals == decimals)&&(identical(other.lastDepositLedger, lastDepositLedger) || other.lastDepositLedger == lastDepositLedger)&&(identical(other.updatedAt, updatedAt) || other.updatedAt == updatedAt)&&(identical(other.chainVerified, chainVerified) || other.chainVerified == chainVerified));
 }
 
 @JsonKey(includeFromJson: false, includeToJson: false)
 @override
-int get hashCode => Object.hash(runtimeType,ownerAddress,amountRaw,decimals,lastDepositLedger,updatedAt);
+int get hashCode => Object.hash(runtimeType,ownerAddress,amountRaw,decimals,lastDepositLedger,updatedAt,chainVerified);
 
 @override
 String toString() {
-  return 'PoolDeposit(ownerAddress: $ownerAddress, amountRaw: $amountRaw, decimals: $decimals, lastDepositLedger: $lastDepositLedger, updatedAt: $updatedAt)';
+  return 'PoolDeposit(ownerAddress: $ownerAddress, amountRaw: $amountRaw, decimals: $decimals, lastDepositLedger: $lastDepositLedger, updatedAt: $updatedAt, chainVerified: $chainVerified)';
 }
 
 
@@ -348,7 +355,7 @@ abstract mixin class $PoolDepositCopyWith<$Res>  {
   factory $PoolDepositCopyWith(PoolDeposit value, $Res Function(PoolDeposit) _then) = _$PoolDepositCopyWithImpl;
 @useResult
 $Res call({
- String ownerAddress, String amountRaw, int decimals, int? lastDepositLedger, String updatedAt
+ String ownerAddress, String amountRaw, int decimals, int? lastDepositLedger, String updatedAt, bool? chainVerified
 });
 
 
@@ -365,14 +372,15 @@ class _$PoolDepositCopyWithImpl<$Res>
 
 /// Create a copy of PoolDeposit
 /// with the given fields replaced by the non-null parameter values.
-@pragma('vm:prefer-inline') @override $Res call({Object? ownerAddress = null,Object? amountRaw = null,Object? decimals = null,Object? lastDepositLedger = freezed,Object? updatedAt = null,}) {
+@pragma('vm:prefer-inline') @override $Res call({Object? ownerAddress = null,Object? amountRaw = null,Object? decimals = null,Object? lastDepositLedger = freezed,Object? updatedAt = null,Object? chainVerified = freezed,}) {
   return _then(_self.copyWith(
 ownerAddress: null == ownerAddress ? _self.ownerAddress : ownerAddress // ignore: cast_nullable_to_non_nullable
 as String,amountRaw: null == amountRaw ? _self.amountRaw : amountRaw // ignore: cast_nullable_to_non_nullable
 as String,decimals: null == decimals ? _self.decimals : decimals // ignore: cast_nullable_to_non_nullable
 as int,lastDepositLedger: freezed == lastDepositLedger ? _self.lastDepositLedger : lastDepositLedger // ignore: cast_nullable_to_non_nullable
 as int?,updatedAt: null == updatedAt ? _self.updatedAt : updatedAt // ignore: cast_nullable_to_non_nullable
-as String,
+as String,chainVerified: freezed == chainVerified ? _self.chainVerified : chainVerified // ignore: cast_nullable_to_non_nullable
+as bool?,
   ));
 }
 
@@ -457,10 +465,10 @@ return $default(_that);case _:
 /// }
 /// ```
 
-@optionalTypeArgs TResult maybeWhen<TResult extends Object?>(TResult Function( String ownerAddress,  String amountRaw,  int decimals,  int? lastDepositLedger,  String updatedAt)?  $default,{required TResult orElse(),}) {final _that = this;
+@optionalTypeArgs TResult maybeWhen<TResult extends Object?>(TResult Function( String ownerAddress,  String amountRaw,  int decimals,  int? lastDepositLedger,  String updatedAt,  bool? chainVerified)?  $default,{required TResult orElse(),}) {final _that = this;
 switch (_that) {
 case _PoolDeposit() when $default != null:
-return $default(_that.ownerAddress,_that.amountRaw,_that.decimals,_that.lastDepositLedger,_that.updatedAt);case _:
+return $default(_that.ownerAddress,_that.amountRaw,_that.decimals,_that.lastDepositLedger,_that.updatedAt,_that.chainVerified);case _:
   return orElse();
 
 }
@@ -478,10 +486,10 @@ return $default(_that.ownerAddress,_that.amountRaw,_that.decimals,_that.lastDepo
 /// }
 /// ```
 
-@optionalTypeArgs TResult when<TResult extends Object?>(TResult Function( String ownerAddress,  String amountRaw,  int decimals,  int? lastDepositLedger,  String updatedAt)  $default,) {final _that = this;
+@optionalTypeArgs TResult when<TResult extends Object?>(TResult Function( String ownerAddress,  String amountRaw,  int decimals,  int? lastDepositLedger,  String updatedAt,  bool? chainVerified)  $default,) {final _that = this;
 switch (_that) {
 case _PoolDeposit():
-return $default(_that.ownerAddress,_that.amountRaw,_that.decimals,_that.lastDepositLedger,_that.updatedAt);case _:
+return $default(_that.ownerAddress,_that.amountRaw,_that.decimals,_that.lastDepositLedger,_that.updatedAt,_that.chainVerified);case _:
   throw StateError('Unexpected subclass');
 
 }
@@ -498,10 +506,10 @@ return $default(_that.ownerAddress,_that.amountRaw,_that.decimals,_that.lastDepo
 /// }
 /// ```
 
-@optionalTypeArgs TResult? whenOrNull<TResult extends Object?>(TResult? Function( String ownerAddress,  String amountRaw,  int decimals,  int? lastDepositLedger,  String updatedAt)?  $default,) {final _that = this;
+@optionalTypeArgs TResult? whenOrNull<TResult extends Object?>(TResult? Function( String ownerAddress,  String amountRaw,  int decimals,  int? lastDepositLedger,  String updatedAt,  bool? chainVerified)?  $default,) {final _that = this;
 switch (_that) {
 case _PoolDeposit() when $default != null:
-return $default(_that.ownerAddress,_that.amountRaw,_that.decimals,_that.lastDepositLedger,_that.updatedAt);case _:
+return $default(_that.ownerAddress,_that.amountRaw,_that.decimals,_that.lastDepositLedger,_that.updatedAt,_that.chainVerified);case _:
   return null;
 
 }
@@ -513,7 +521,7 @@ return $default(_that.ownerAddress,_that.amountRaw,_that.decimals,_that.lastDepo
 @JsonSerializable()
 
 class _PoolDeposit implements PoolDeposit {
-  const _PoolDeposit({required this.ownerAddress, required this.amountRaw, required this.decimals, this.lastDepositLedger, required this.updatedAt});
+  const _PoolDeposit({required this.ownerAddress, required this.amountRaw, required this.decimals, this.lastDepositLedger, required this.updatedAt, this.chainVerified});
   factory _PoolDeposit.fromJson(Map<String, dynamic> json) => _$PoolDepositFromJson(json);
 
 @override final  String ownerAddress;
@@ -521,6 +529,14 @@ class _PoolDeposit implements PoolDeposit {
 @override final  int decimals;
 @override final  int? lastDepositLedger;
 @override final  String updatedAt;
+// SERVICE.md #1's independent cross-check against the contract's own
+// get_pool (backend/services/cheque/model.go's PoolDeposit.ChainVerified):
+// null = not checked, true/false = matched/mismatched. A definite
+// mismatch is corrected server-side before this is serialized (Sync's
+// reconcilePoolWithChain), so `false` here means the correction itself
+// failed — worth a soft "still checking" note rather than trusting the
+// amount above outright.
+@override final  bool? chainVerified;
 
 /// Create a copy of PoolDeposit
 /// with the given fields replaced by the non-null parameter values.
@@ -535,16 +551,16 @@ Map<String, dynamic> toJson() {
 
 @override
 bool operator ==(Object other) {
-  return identical(this, other) || (other.runtimeType == runtimeType&&other is _PoolDeposit&&(identical(other.ownerAddress, ownerAddress) || other.ownerAddress == ownerAddress)&&(identical(other.amountRaw, amountRaw) || other.amountRaw == amountRaw)&&(identical(other.decimals, decimals) || other.decimals == decimals)&&(identical(other.lastDepositLedger, lastDepositLedger) || other.lastDepositLedger == lastDepositLedger)&&(identical(other.updatedAt, updatedAt) || other.updatedAt == updatedAt));
+  return identical(this, other) || (other.runtimeType == runtimeType&&other is _PoolDeposit&&(identical(other.ownerAddress, ownerAddress) || other.ownerAddress == ownerAddress)&&(identical(other.amountRaw, amountRaw) || other.amountRaw == amountRaw)&&(identical(other.decimals, decimals) || other.decimals == decimals)&&(identical(other.lastDepositLedger, lastDepositLedger) || other.lastDepositLedger == lastDepositLedger)&&(identical(other.updatedAt, updatedAt) || other.updatedAt == updatedAt)&&(identical(other.chainVerified, chainVerified) || other.chainVerified == chainVerified));
 }
 
 @JsonKey(includeFromJson: false, includeToJson: false)
 @override
-int get hashCode => Object.hash(runtimeType,ownerAddress,amountRaw,decimals,lastDepositLedger,updatedAt);
+int get hashCode => Object.hash(runtimeType,ownerAddress,amountRaw,decimals,lastDepositLedger,updatedAt,chainVerified);
 
 @override
 String toString() {
-  return 'PoolDeposit(ownerAddress: $ownerAddress, amountRaw: $amountRaw, decimals: $decimals, lastDepositLedger: $lastDepositLedger, updatedAt: $updatedAt)';
+  return 'PoolDeposit(ownerAddress: $ownerAddress, amountRaw: $amountRaw, decimals: $decimals, lastDepositLedger: $lastDepositLedger, updatedAt: $updatedAt, chainVerified: $chainVerified)';
 }
 
 
@@ -555,7 +571,7 @@ abstract mixin class _$PoolDepositCopyWith<$Res> implements $PoolDepositCopyWith
   factory _$PoolDepositCopyWith(_PoolDeposit value, $Res Function(_PoolDeposit) _then) = __$PoolDepositCopyWithImpl;
 @override @useResult
 $Res call({
- String ownerAddress, String amountRaw, int decimals, int? lastDepositLedger, String updatedAt
+ String ownerAddress, String amountRaw, int decimals, int? lastDepositLedger, String updatedAt, bool? chainVerified
 });
 
 
@@ -572,14 +588,15 @@ class __$PoolDepositCopyWithImpl<$Res>
 
 /// Create a copy of PoolDeposit
 /// with the given fields replaced by the non-null parameter values.
-@override @pragma('vm:prefer-inline') $Res call({Object? ownerAddress = null,Object? amountRaw = null,Object? decimals = null,Object? lastDepositLedger = freezed,Object? updatedAt = null,}) {
+@override @pragma('vm:prefer-inline') $Res call({Object? ownerAddress = null,Object? amountRaw = null,Object? decimals = null,Object? lastDepositLedger = freezed,Object? updatedAt = null,Object? chainVerified = freezed,}) {
   return _then(_PoolDeposit(
 ownerAddress: null == ownerAddress ? _self.ownerAddress : ownerAddress // ignore: cast_nullable_to_non_nullable
 as String,amountRaw: null == amountRaw ? _self.amountRaw : amountRaw // ignore: cast_nullable_to_non_nullable
 as String,decimals: null == decimals ? _self.decimals : decimals // ignore: cast_nullable_to_non_nullable
 as int,lastDepositLedger: freezed == lastDepositLedger ? _self.lastDepositLedger : lastDepositLedger // ignore: cast_nullable_to_non_nullable
 as int?,updatedAt: null == updatedAt ? _self.updatedAt : updatedAt // ignore: cast_nullable_to_non_nullable
-as String,
+as String,chainVerified: freezed == chainVerified ? _self.chainVerified : chainVerified // ignore: cast_nullable_to_non_nullable
+as bool?,
   ));
 }
 

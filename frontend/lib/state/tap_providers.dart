@@ -291,9 +291,22 @@ class ReceiveSessionNotifier extends Notifier<ReceiveSessionState> {
     return true;
   }
 
+  /// How many times [claim] retries a transient failure (the sender's lock
+  /// transaction still confirming — `cheque.not_funded`/`tx.pending`, see
+  /// [classifyClaimFailure]) before giving up and showing it as an error.
+  /// 5 attempts, 3s apart: long enough to ride out a normal Stellar/Soroban
+  /// confirmation without a person watching the overlay for tens of seconds
+  /// on the very first try.
+  static const _claimRetries = 5;
+  static const _claimRetryDelay = Duration(seconds: 3);
+
   /// Claims [chequeId] with the signing overlay showing progress and any
   /// error — used by the session's happy path and the manual "Claim" button,
-  /// where a person is watching. Returns false on failure.
+  /// where a person is watching. A retryable failure (the lock transaction
+  /// is still confirming on chain) is retried a few times with the overlay
+  /// showing a waiting state, instead of surfacing the raw transient error
+  /// on the first attempt the way a permanent failure is. Returns false on
+  /// failure.
   Future<bool> claim(String chequeId) async {
     final overlay = ref.read(signingOverlayProvider.notifier);
     final ok = await overlay.run<bool>((report) async {
@@ -304,8 +317,18 @@ class ReceiveSessionNotifier extends Notifier<ReceiveSessionState> {
       if (keyPair == null) {
         throw ApiException(code: 'auth.invalid_token', message: 'wallet is locked');
       }
-      await performClaim(ref, keyPair, chequeId, onStep: report);
-      return true;
+      for (var attempt = 1; ; attempt++) {
+        try {
+          await performClaim(ref, keyPair, chequeId, onStep: report);
+          return true;
+        } catch (e) {
+          if (attempt >= _claimRetries || classifyClaimFailure(e) != ClaimOutcome.retryLater) {
+            rethrow;
+          }
+          report(SigningStep.confirming);
+          await Future<void>.delayed(_claimRetryDelay);
+        }
+      }
     });
     return ok ?? false;
   }

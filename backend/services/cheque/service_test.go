@@ -93,7 +93,13 @@ func fundedChain(t *testing.T, sequence int64) *portstest.FakeChain {
 				Address:  address,
 				Sequence: sequence,
 				Exists:   true,
-				Balances: []ports.Balance{{AssetCode: testAssetCode, AssetIssuer: testAssetIssuer, Balance: "1000.0000000"}},
+				Balances: []ports.Balance{
+					{AssetCode: testAssetCode, AssetIssuer: testAssetIssuer, Balance: "1000.0000000"},
+					// A funded Stellar account always carries a native balance;
+					// well above nativeReserveHeadroomRaw so fundedChain models a
+					// wallet with enough XLM to pay its own transaction fees.
+					{AssetCode: "native", Balance: "100.0000000"},
+				},
 			}, nil
 		},
 		GetTrustlineFunc: func(ctx context.Context, address, code, issuer string) (ports.TrustlineInfo, error) {
@@ -652,6 +658,221 @@ func TestPoolWithdrawXDR_ImmediatelyAfterDeposit(t *testing.T) {
 	}
 }
 
+// poolRecordResultXDR builds a get_pool simulateTransaction ResultXDR the
+// way pay-escrow's PoolRecord is documented to encode (token, amount,
+// last_deposit_at — see pkg/stellarx/chequerecord_test.go's
+// TestDecodePoolRecord_RoundTrip and chequeRecordResultXDR above, which this
+// mirrors for the pool package's own tests).
+func poolRecordResultXDR(t *testing.T, token string, amountRaw *big.Int) string {
+	t.Helper()
+	sym := func(s string) xdr.ScVal {
+		v, err := stellarx.ScSymbol(s)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return v
+	}
+	tokenSc, err := stellarx.ScAddress(token)
+	if err != nil {
+		t.Fatal(err)
+	}
+	amountSc, err := stellarx.ScI128(amountRaw)
+	if err != nil {
+		t.Fatal(err)
+	}
+	lastDepositSc, err := stellarx.ScUint64(0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	entries := xdr.ScMap{
+		{Key: sym("token"), Val: tokenSc},
+		{Key: sym("amount"), Val: amountSc},
+		{Key: sym("last_deposit_at"), Val: lastDepositSc},
+	}
+	record, err := xdr.NewScVal(xdr.ScValTypeScvMap, &entries)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resultXDR, err := xdr.MarshalBase64(record)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return resultXDR
+}
+
+// poolChainChain wires a fundedChain whose SimulateTransaction always
+// answers a get_pool call with poolAmountRaw (present) or, for
+// poolAmountRaw == nil, Option::None — the withdraw invocation itself is
+// never actually reached in these tests because they exercise
+// PoolWithdrawXDR's pre-checks, which return before simulation.
+func poolChainChain(t *testing.T, poolAmountRaw *big.Int) *portstest.FakeChain {
+	t.Helper()
+	chain := fundedChain(t, 1)
+	chain.SimulateTransactionFunc = func(ctx context.Context, unsignedXDR string) (ports.SimulateResult, error) {
+		if poolAmountRaw == nil {
+			none := xdr.ScVal{Type: xdr.ScValTypeScvVoid}
+			resultXDR, err := xdr.MarshalBase64(none)
+			if err != nil {
+				t.Fatal(err)
+			}
+			return ports.SimulateResult{Success: true, TransactionDataXDR: emptySorobanData(t), ResultXDR: resultXDR}, nil
+		}
+		return ports.SimulateResult{
+			Success:            true,
+			TransactionDataXDR: emptySorobanData(t),
+			ResultXDR:          poolRecordResultXDR(t, testTokenID, poolAmountRaw),
+		}, nil
+	}
+	return chain
+}
+
+// TestPoolWithdrawXDR_ChainBalanceBelowRequestedIsRejected is the regression
+// test for the "The network rejected this" pool withdraw bug: when the
+// contract's own get_pool shows less than the requested amount, the request
+// must be refused up front with errInsufficientBalance, not left to reach
+// the contract and fail as an opaque errSimulationFailed.
+func TestPoolWithdrawXDR_ChainBalanceBelowRequestedIsRejected(t *testing.T) {
+	chain := poolChainChain(t, big.NewInt(5_000_000)) // 0.5, less than the 10 requested
+	svc := newServiceWithRepo(testConfig(), newFakeRepo(), chain)
+
+	_, err := svc.PoolWithdrawXDR(context.Background(), testSender, "10")
+	if !errors.Is(err, errInsufficientBalance) {
+		t.Fatalf("got %v, want errInsufficientBalance", err)
+	}
+}
+
+// TestPoolWithdrawXDR_NoChainPoolRecordIsRejected covers the same failure
+// mode when the contract has no pool record for owner at all (Option::None).
+func TestPoolWithdrawXDR_NoChainPoolRecordIsRejected(t *testing.T) {
+	chain := poolChainChain(t, nil)
+	svc := newServiceWithRepo(testConfig(), newFakeRepo(), chain)
+
+	_, err := svc.PoolWithdrawXDR(context.Background(), testSender, "10")
+	if !errors.Is(err, errInsufficientBalance) {
+		t.Fatalf("got %v, want errInsufficientBalance", err)
+	}
+}
+
+// TestPoolWithdrawXDR_ChainUnreadableFallsBackToSimulation pins today's
+// behavior when chainPoolRecord can't get an answer (RPC hiccup, decode
+// failure): the pre-check must not guess, and control falls through to the
+// contract's own simulation — same as before this fix.
+func TestPoolWithdrawXDR_ChainUnreadableFallsBackToSimulation(t *testing.T) {
+	chain := fundedChain(t, 1) // default fixture: Success:true, ResultXDR == "" (ok=false)
+	svc := newServiceWithRepo(testConfig(), newFakeRepo(), chain)
+
+	if _, err := svc.PoolWithdrawXDR(context.Background(), testSender, "10"); err != nil {
+		t.Fatalf("expected fallback to simulation to succeed, got %v", err)
+	}
+}
+
+// TestPoolWithdrawXDR_InsufficientNativeFeeHeadroomRejected is the
+// withdraw-side twin of TestPoolDepositXDR_NativeReservesBaseBalance: a
+// wallet with too little native XLM left to pay its own transaction fee
+// must be refused with the specific errInsufficientFee, not left to fail
+// the transaction opaquely.
+func TestPoolWithdrawXDR_InsufficientNativeFeeHeadroomRejected(t *testing.T) {
+	chain := poolChainChain(t, big.NewInt(1_000_000_000)) // plenty in the pool
+	chain.GetAccountFunc = func(ctx context.Context, address string) (ports.AccountInfo, error) {
+		return ports.AccountInfo{
+			Address: address, Sequence: 1, Exists: true,
+			Balances: []ports.Balance{
+				{AssetCode: testAssetCode, AssetIssuer: testAssetIssuer, Balance: "1000.0000000"},
+				{AssetCode: "native", Balance: "1.0000000"}, // below the 1.5 XLM headroom
+			},
+		}, nil
+	}
+	svc := newServiceWithRepo(testConfig(), newFakeRepo(), chain)
+
+	_, err := svc.PoolWithdrawXDR(context.Background(), testSender, "10")
+	if !errors.Is(err, errInsufficientFee) {
+		t.Fatalf("got %v, want errInsufficientFee", err)
+	}
+}
+
+// TestPoolWithdrawXDR_IssuedAssetNoTrustlineRejected is the withdraw-side
+// twin of the deposit trustline preflight: the contract's withdraw transfers
+// contract -> owner, so a missing trustline must be caught the same way
+// deposit's sender-side transfer already is.
+func TestPoolWithdrawXDR_IssuedAssetNoTrustlineRejected(t *testing.T) {
+	chain := poolChainChain(t, big.NewInt(1_000_000_000))
+	chain.GetTrustlineFunc = func(context.Context, string, string, string) (ports.TrustlineInfo, error) {
+		return ports.TrustlineInfo{Exists: false}, nil
+	}
+	svc := newServiceWithRepo(testConfig(), newFakeRepo(), chain)
+
+	_, err := svc.PoolWithdrawXDR(context.Background(), testSender, "10")
+	if !errors.Is(err, errSenderNoTrustline) {
+		t.Fatalf("got %v, want errSenderNoTrustline", err)
+	}
+}
+
+// TestSync_RepairsPoolCacheFromChain is the self-heal regression test: when
+// the cache disagrees with the contract's own get_pool, Sync corrects the
+// cache row in place (reconcilePoolWithChain) instead of continuing to
+// offer an amount the contract will reject.
+func TestSync_RepairsPoolCacheFromChain(t *testing.T) {
+	repo := newFakeRepo()
+	if err := repo.RecordDeposit(context.Background(), testSender, "100000000", testDecimals, 1); err != nil {
+		t.Fatalf("seed RecordDeposit: %v", err)
+	}
+	chain := poolChainChain(t, big.NewInt(30_000_000)) // chain says 3, cache says 10
+	svc := newServiceWithRepo(testConfig(), repo, chain)
+
+	view, err := svc.Sync(context.Background(), testSender)
+	if err != nil {
+		t.Fatalf("Sync: %v", err)
+	}
+	if view.Pool.AmountRaw != "30000000" {
+		t.Errorf("Sync Pool.AmountRaw = %q, want %q (repaired from chain)", view.Pool.AmountRaw, "30000000")
+	}
+	if view.Pool.ChainVerified == nil || !*view.Pool.ChainVerified {
+		t.Error("Pool.ChainVerified should be true after a successful repair")
+	}
+	pool, _, err := repo.GetPool(context.Background(), testSender)
+	if err != nil {
+		t.Fatalf("GetPool: %v", err)
+	}
+	if pool.AmountRaw != "30000000" {
+		t.Errorf("repo AmountRaw = %q, want %q (cache actually corrected)", pool.AmountRaw, "30000000")
+	}
+}
+
+// TestSync_ChainUnreadableLeavesPoolCacheAlone pins today's behavior when
+// the chain can't be read: the cache must never be guessed at, only
+// corrected from a definite decoded answer.
+func TestSync_ChainUnreadableLeavesPoolCacheAlone(t *testing.T) {
+	repo := newFakeRepo()
+	if err := repo.RecordDeposit(context.Background(), testSender, "100000000", testDecimals, 1); err != nil {
+		t.Fatalf("seed RecordDeposit: %v", err)
+	}
+	svc := newServiceWithRepo(testConfig(), repo, fundedChain(t, 1)) // default fixture: ok=false
+
+	view, err := svc.Sync(context.Background(), testSender)
+	if err != nil {
+		t.Fatalf("Sync: %v", err)
+	}
+	if view.Pool.AmountRaw != "100000000" {
+		t.Errorf("Sync Pool.AmountRaw = %q, want unchanged %q", view.Pool.AmountRaw, "100000000")
+	}
+	if view.Pool.ChainVerified != nil {
+		t.Error("Pool.ChainVerified should be nil (couldn't check), not a guessed answer")
+	}
+}
+
+// TestConfirmPoolWithdraw_CacheMissDoesNotFailTheCall is the regression test
+// for the sessizce no-op bug turned into an ordinary 200: an on-chain
+// withdraw already succeeded by the time this is called, so a cache row
+// that's missing or already drained further than amountStr must not be
+// surfaced to the caller as an error — reconcilePoolWithChain's job (via the
+// next Sync), not ConfirmPoolWithdraw's, is to correct the cache.
+func TestConfirmPoolWithdraw_CacheMissDoesNotFailTheCall(t *testing.T) {
+	svc := newServiceWithRepo(testConfig(), newFakeRepo(), fundedChain(t, 1))
+	if err := svc.ConfirmPoolWithdraw(context.Background(), testSender, "10"); err != nil {
+		t.Fatalf("ConfirmPoolWithdraw with no pool row: got %v, want nil", err)
+	}
+}
+
 // TestConfirmPoolDeposit_ParsesDecimalAmount is Fix 1's regression test: the
 // amount confirmed here MUST go through money.ParseAmount and be scaled by
 // decimals before it reaches the repo, exactly like PoolDepositXDR's own
@@ -725,6 +946,47 @@ func TestSync_ReturnsActiveChequesAndPool(t *testing.T) {
 	// never empty or a client-guessed default.
 	if view.NetworkPassphrase != testPassphrase {
 		t.Errorf("NetworkPassphrase = %q, want %q", view.NetworkPassphrase, testPassphrase)
+	}
+}
+
+// TestSync_IncludesTerminalChequesButSkipsTheirChainVerification is the
+// regression test for the Activity feed report: a completed cheque used to
+// be excluded from /sync entirely (ListActiveForAddress's old terminal-state
+// filter), which made a finished send/receive disappear from both parties'
+// history within seconds. It must still come back — but, since its state
+// can never change again, without spending a chain simulate call re-verifying it.
+func TestSync_IncludesTerminalChequesButSkipsTheirChainVerification(t *testing.T) {
+	// Baseline: an empty-pool, no-cheques Sync still calls SimulateTransaction
+	// once for the pool side's own chain reconciliation (a sibling feature,
+	// not under test here) — so the terminal-cheque case below must be
+	// compared against this baseline, not against zero.
+	baselineChain := fundedChain(t, 1)
+	baselineSvc := newServiceWithRepo(testConfig(), newFakeRepo(), baselineChain)
+	if _, err := baselineSvc.Sync(context.Background(), testReceiver); err != nil {
+		t.Fatalf("baseline Sync: %v", err)
+	}
+
+	repo := newFakeRepo()
+	seedCheque(t, repo, StateKapandi)
+	chain := fundedChain(t, 1)
+	svc := newServiceWithRepo(testConfig(), repo, chain)
+
+	view, err := svc.Sync(context.Background(), testReceiver)
+	if err != nil {
+		t.Fatalf("Sync: %v", err)
+	}
+	if len(view.Cheques) != 1 {
+		t.Fatalf("got %d cheques, want 1 (terminal cheque must still be returned)", len(view.Cheques))
+	}
+	if view.Cheques[0].State != StateKapandi {
+		t.Errorf("state = %v, want %v", view.Cheques[0].State, StateKapandi)
+	}
+	if view.Cheques[0].ChainVerified != nil {
+		t.Error("ChainVerified should stay nil for a terminal cheque — it was never checked")
+	}
+	if chain.SimulateTransactionCalls != baselineChain.SimulateTransactionCalls {
+		t.Errorf("SimulateTransactionCalls = %d, want %d (same as the no-cheques baseline — a terminal cheque must never be re-verified)",
+			chain.SimulateTransactionCalls, baselineChain.SimulateTransactionCalls)
 	}
 }
 

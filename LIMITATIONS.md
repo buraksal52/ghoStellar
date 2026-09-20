@@ -316,7 +316,7 @@ gösterilir ve alıcı yeni bir talep üretmek zorunda kalır. Kapatma yolu:
 `pay.idempotency_keys` mekanizması `/tx/submit`'e özel, cheque yaratmaya
 genişletilmedi).
 
-## 23. Çevrimdışı ödeme sequence çakışmasını yalnızca Horizon yakalar
+## 23. [Kapatıldı] Çevrimdışı ödeme sequence çakışması artık sonsuz döngüye girmiyor
 
 `frontend/lib/data/stellar/offline_account_cache.dart`'taki
 `OfflineAccountSnapshot`, son online anın fotoğrafıdır. Aynı hesaptan
@@ -325,14 +325,34 @@ bir çek/havuz işlemiyle) sequence numarası ilerlerse, o snapshot üzerine
 inşa edilmiş bir çevrimdışı ödeme `POST /tx/submit`'e ulaştığında
 `tx_bad_seq` ile reddedilir — istemci bunu yalnızca ağa çıktığında öğrenir,
 offline'ken önceden kestiremez (D6 gereği zaten böyle olması beklenir:
-nihai doğruluk zincirde). `pay-tx-service` bu senaryo için özel bir hata
-kodu ayırmıyor, genel `tx.submit_failed` + Horizon `resultCode`'u
-(`ErrorCopy._submitResultMessages['tx_bad_seq']`) kullanıcıya "hesabınız
-imzalama sırasında değişti, tekrar deneyin" olarak gösteriliyor — bu
-mesaj çevrimdışı ödeme bağlamında biraz yanıltıcı (kullanıcı hiçbir şeyi
-kendisi imzalamamış olabilir, ikinci bir cihaz/oturum sequence'ı
-ilerletmiş olabilir). Kapatma yolu: `offline_payment` amaçlı
-gönderimlerde bu koda özel bir metin.
+nihai doğruluk zincirde).
+
+Kapatıldı: bu, aynı imzalı bayt dizisi için **kalıcı** bir ret — sequence
+imzanın içine gömülü olduğundan yeniden denemek asla işe yaramaz — ama
+`frontend/lib/state/offline_providers.dart`'taki `retryAll`, `tx_bad_seq`'i
+(ve aynı gerekçeyle `tx_too_late`'i) terminal saymıyordu; öğe kuyrukta
+sonsuza dek, her 15 saniyede bir, asla başaramayacak şekilde kalıyordu —
+üstelik bu döngüde `offlineQueueErrorProvider`'a hiçbir açıklama
+yazılmıyordu (yalnızca terminal kod dalı `lastError` set ediyordu), yani
+Home'daki "waiting" banner'ı hiçbir gerekçe göstermeden sonsuza dek
+asılı kalıyordu. Artık `tx_bad_seq`/`tx_too_late` özel olarak tanınıyor,
+kuyruktan düşürülüyor ve çevrimdışı bağlama uygun kendi metnini gösteriyor
+("your account changed on chain before it reached the network" —
+`ErrorCopy._submitResultMessages['tx_bad_seq']`in "imzalama sırasında
+değiştiniz" ifadesi burada yanıltıcıydı, kullanıcı hiçbir şey imzalamamış
+olabilir). Diğer `tx.submit_failed` nedenleri (`tx_insufficient_balance`,
+`tx_bad_auth`, `tx_failed`) gerçekten geçici olabileceğinden retryable
+kalmaya devam ediyor, ama artık her turda `lastError` set ediliyor —
+"terminal değilse sessiz kal" davranışı kaldırıldı.
+
+İlişkili: `PendingOfflinePaymentsNotifier`/`PendingHandoffsNotifier`
+(`offline_providers.dart`/`inbox_providers.dart`), arka planda bir
+`Timer.periodic` tutmalarına rağmen Riverpod 3'ün varsayılan
+auto-dispose'una karşı `ref.keepAlive()` çağırmıyordu — yalnızca
+`home_page.dart` bu provider'ları `watch` ediyor, başka hiçbir ekran
+etmiyor. Artık ikisi de `keepAlive()` çağırıyor, yani retry döngüsü
+kullanıcı Send/Receive/Pool/Settings'te kalsa bile çalışmaya devam
+ediyor.
 
 ## 24. Yeni hesaplar friendbot ile otomatik fonlanıyor (yalnızca testnet)
 
@@ -501,3 +521,43 @@ sessizce hiçbir şey yapmıyor, imzalama overlay'inde görünür bir hata
 gösteriyor (`tap_providers.dart`); Soroban `PENDING` sonucu artık hemen
 `confirmClaim` çağırmıyor, bir sonraki deneme zincirden doğrulasın diye
 kuyrukta bırakılıyor (`claim_core.dart`).
+
+## 28. [Kapatıldı] Tamamlanmış çekler Activity feed'inden kayboluyordu
+
+`backend/services/cheque/repository.go`'daki `ListActiveForAddress`, adı
+üstüne rağmen `/sync`'in **tek** çek kaynağıydı (havuz olaylarının aksine
+çekler için ayrı bir yerel geçmiş günlüğü yok, `frontend/lib/data/storage/
+local_activity_log.dart`'ın kendi doc yorumu bunu doğruluyor). Sorgu terminal
+durumları (`KAPANDI`/`IADE_EDILDI`/`HUKUMSUZ`/`KARSILIKSIZ`) baştan
+dışlıyordu — bir çek `claim` + `ack` ile saniyeler içinde `KAPANDI`'ya
+geçtiği için, tamamlanmış her gönderim/tahsilat hem gönderen hem alıcı için
+`frontend/lib/state/activity_providers.dart`'taki `activityItemsProvider`'dan
+(dolayısıyla Activity ekranı ve Home'daki "Recent activity"den) kayboluyordu.
+İstemci tarafı bu duruma zaten hazırdı —
+`frontend/lib/features/activity/widgets/activity_item.dart`'taki
+`ActivityItem.fromCheque` terminal durumların hepsi için görüntüleme dalı
+taşıyordu ("Completed", "Refunded", "Failed"), yalnızca backend onları hiç
+göndermiyordu.
+
+Kapatıldı: `ListActiveForAddress` artık adres için **tüm** çekleri (aktif +
+terminal) `updated_at DESC` sırayla, 200 satırla sınırlı döndürüyor —
+`pendingClaimsProvider`'ın (sync_providers.dart) zaten yalnızca üç spesifik
+durumu istemci tarafında filtrelediği göz önüne alınırsa güvenli bir
+genişletme. `Sync()`'teki zincir çapraz doğrulama döngüsü (madde 1) artık
+yalnızca terminal OLMAYAN çekler için çalışıyor (`State.IsTerminal()`) —
+terminal bir çekin durumu bir daha değişmeyeceğinden onu her `/sync`
+çağrısında yeniden simüle etmek hem gereksizdi hem de geçmiş büyüdükçe RPC
+yükünü artıracaktı; terminal çekler için `ChainVerified` `nil` kalıyor
+(istemci bu alanı görüntülemede zaten kullanmıyor).
+
+İlişkili, küçük bir sertleştirme: `frontend/lib/state/home_providers.dart`'taki
+`balancesProvider`'ın kendi kendini düzeltme zamanlayıcısı (bir işlemden
+hemen sonra Horizon'un henüz güncellenmemiş olma ihtimaline karşı) tek bir
+5 saniyelik denemeden, 3sn ve 6sn'de olmak üzere iki denemeye çıkarıldı —
+Stellar'ın ~5sn'lik ledger kapanma süresinin tam sınırında kalan bir okumanın
+ikinci bir şansı olsun diye ("bakiye bazen güncellenmiyor" raporunun bir
+parçası). Bu, kullanıcı işlemden hemen sonra Home dışında bir ekranda kalıp
+`balancesProvider`'ın hiç izlenmediği (autoDispose + `invalidate`'in no-op
+geçtiği) senaryoyu çözmüyor — o durumda kullanıcı Home'a döndüğünde zaten
+taze bir okuma tetikleniyor, yalnızca o okumanın kendisi zincir gecikmesiyle
+yarışabiliyordu; bu maddenin kapattığı tam olarak bu yarış.

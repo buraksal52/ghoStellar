@@ -236,6 +236,7 @@ func TestWriteChequeError_Mapping(t *testing.T) {
 		{errBadRequest, http.StatusBadRequest, ErrBadRequest},
 		{errAccountNotFunded, http.StatusUnprocessableEntity, ErrAccountNotFunded},
 		{fmt.Errorf("stellarx: simulate: %w: HostError", errSimulationFailed), http.StatusUnprocessableEntity, ErrSimulationFailed},
+		{errInsufficientFee, http.StatusUnprocessableEntity, ErrInsufficientFee},
 	}
 	for _, tc := range tests {
 		t.Run(tc.wantCode, func(t *testing.T) {

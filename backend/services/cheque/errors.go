@@ -40,4 +40,10 @@ const (
 	// never landed (network blip right after a successful on-chain claim)
 	// can recognize its own past success instead of retrying forever.
 	ErrAlreadyClaimed = "cheque.already_claimed"
+	// ErrInsufficientFee: the caller's native XLM balance doesn't leave
+	// nativeReserveHeadroomRaw spendable, so they have nothing left to pay
+	// a transaction's own network fee/reserve with — distinct from
+	// ErrInsufficientBalance, which is about the *pay* asset amount being
+	// moved. Currently only returned by PoolWithdrawXDR.
+	ErrInsufficientFee = "cheque.insufficient_fee"
 )

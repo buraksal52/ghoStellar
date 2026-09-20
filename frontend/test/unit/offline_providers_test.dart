@@ -254,6 +254,53 @@ void main() {
       expect(await container.read(pendingOfflinePaymentsProvider.notifier).future, isEmpty);
     });
 
+    // Regression test for the "internet comes back but the queue never
+    // moves" report: a signed offline payment's sequence number is fixed
+    // at build time, so tx_bad_seq (another transaction from this account
+    // already advanced past it) can never clear up no matter how many
+    // times this exact envelope is retried.
+    test('tx_bad_seq is permanently dead — dropped with a clear reason, not retried forever', () async {
+      final rig = _Rig();
+      rig.txApi.submitError = ApiException(code: 'tx.submit_failed', message: 'tx_bad_seq', httpStatus: 400);
+      final container = rig.build();
+      addTearDown(rig.dispose);
+
+      await container.read(pendingOfflinePaymentsProvider.notifier).add(_payment('n1'));
+
+      expect(await container.read(pendingOfflinePaymentsProvider.notifier).future, isEmpty);
+      expect(
+        container.read(offlineQueueErrorProvider),
+        contains('could no longer be sent'),
+      );
+    });
+
+    test('tx_too_late is permanently dead — dropped, not retried forever', () async {
+      final rig = _Rig();
+      rig.txApi.submitError = ApiException(code: 'tx.submit_failed', message: 'tx_too_late', httpStatus: 400);
+      final container = rig.build();
+      addTearDown(rig.dispose);
+
+      await container.read(pendingOfflinePaymentsProvider.notifier).add(_payment('n1'));
+
+      expect(await container.read(pendingOfflinePaymentsProvider.notifier).future, isEmpty);
+    });
+
+    // A tx.submit_failed reason that ISN'T tx_bad_seq/tx_too_late (e.g. a
+    // funding shortfall) can plausibly clear up before the 24h window this
+    // queue tracks — it must keep retrying, unlike the two codes above.
+    test('a retryable tx.submit_failed keeps the item AND surfaces why — no more silent "waiting"', () async {
+      final rig = _Rig();
+      rig.txApi.submitError =
+          ApiException(code: 'tx.submit_failed', message: 'tx_insufficient_balance', httpStatus: 400);
+      final container = rig.build();
+      addTearDown(rig.dispose);
+
+      await container.read(pendingOfflinePaymentsProvider.notifier).add(_payment('n1'));
+
+      expect(await container.read(pendingOfflinePaymentsProvider.notifier).future, hasLength(1));
+      expect(container.read(offlineQueueErrorProvider), isNotNull);
+    });
+
     test('adding the same nonce twice does not submit it twice', () async {
       final rig = _Rig();
       rig.txApi.submitError = StateError('offline');

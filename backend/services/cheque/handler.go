@@ -311,6 +311,8 @@ func writeChequeError(w http.ResponseWriter, err error) {
 		code, status = ErrDBNotReady, http.StatusServiceUnavailable
 	case errors.Is(err, errInsufficientBalance):
 		code, status = ErrInsufficientBalance, http.StatusUnprocessableEntity
+	case errors.Is(err, errInsufficientFee):
+		code, status = ErrInsufficientFee, http.StatusUnprocessableEntity
 	case errors.Is(err, errAlreadyActive):
 		code, status = ErrAlreadyActive, http.StatusConflict
 	case errors.Is(err, errInvalidReceiver):

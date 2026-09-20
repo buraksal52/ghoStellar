@@ -561,9 +561,17 @@ func (s *Service) Sync(ctx context.Context, address string) (SyncView, error) {
 	callerAccount, err := s.chain.GetAccount(ctx, address)
 	if err == nil {
 		for i := range cheques {
+			// A terminal cheque's state will never change again — verifying
+			// it against the chain on every /sync call is both pointless
+			// and, now that ListActiveForAddress returns full history
+			// (not just active cheques) for the Activity feed, a real RPC
+			// cost that grows with an account's lifetime cheque count.
+			if cheques[i].State.IsTerminal() {
+				continue
+			}
 			cheques[i].ChainVerified = s.verifyChequeOnChain(ctx, cheques[i], callerAccount.Sequence)
 		}
-		pool.ChainVerified = s.verifyPoolOnChain(ctx, address, pool, callerAccount.Sequence)
+		pool = s.reconcilePoolWithChain(ctx, repo, address, pool, callerAccount.Sequence)
 	}
 
 	return SyncView{
@@ -617,7 +625,13 @@ func (s *Service) PoolDepositXDR(ctx context.Context, owner, amountStr string) (
 }
 
 // PoolWithdrawXDR builds the unsigned withdraw transaction. Pool funds are
-// withdrawable at any time; balance and authorization remain contract-checked.
+// withdrawable at any time; the contract remains the final balance
+// authority (D6), but the checks below mirror PoolDepositXDR's so the
+// common failure modes (no trustline, no fee headroom, more than the pool
+// actually holds on chain) come back as a specific, actionable error
+// instead of a bare simulation failure — see the plan's "Cache/zincir
+// ayrışması" note for why a chain-side get_pool call, not the local cache,
+// is what's checked here.
 func (s *Service) PoolWithdrawXDR(ctx context.Context, owner, amountStr string) (string, error) {
 	amount, err := money.ParseAmount(amountStr, s.asset(), s.cfg.Decimals)
 	if err != nil || amount.Raw.Sign() <= 0 {
@@ -629,6 +643,23 @@ func (s *Service) PoolWithdrawXDR(ctx context.Context, owner, amountStr string) 
 	}
 	if !ownerAccount.Exists {
 		return "", errAccountNotFunded
+	}
+	if s.cfg.AssetCode != "native" && owner != s.cfg.AssetIssuer {
+		trustline, err := s.chain.GetTrustline(ctx, owner, s.cfg.AssetCode, s.cfg.AssetIssuer)
+		if err != nil {
+			return "", fmt.Errorf("%w: %v", errChainUnavailable, err)
+		}
+		if !trustline.Exists {
+			return "", errSenderNoTrustline
+		}
+	}
+	if !hasNativeFeeHeadroom(ownerAccount) {
+		return "", errInsufficientFee
+	}
+	if record, present, ok := s.chainPoolRecord(ctx, owner, ownerAccount.Sequence); ok {
+		if !present || record.Amount.Cmp(amount.Raw) < 0 {
+			return "", errInsufficientBalance
+		}
 	}
 	withdrawArgs, err := scArgs(scAddr(owner), scI128(amount.Raw))
 	if err != nil {
@@ -659,6 +690,15 @@ func (s *Service) ConfirmPoolDeposit(ctx context.Context, owner, amountStr strin
 	return repo.RecordDeposit(ctx, owner, amount.Raw.String(), s.cfg.Decimals, ledgerSeq)
 }
 
+// ConfirmPoolWithdraw records a confirmed on-chain withdraw against the read
+// cache. A missing/already-drained cache row (RecordWithdraw's
+// ErrNotFoundInRepo — a cache that had already drifted below the amount
+// just withdrawn) is deliberately NOT surfaced to the caller as an error:
+// the withdraw already succeeded on chain by the time this is called, so
+// telling the user it failed would be wrong. It's audited instead, and the
+// cache actually gets corrected on the next Sync (reconcilePoolWithChain),
+// which is the trusted-authority path (D6) — this cache write is only a
+// fast path for the common case.
 func (s *Service) ConfirmPoolWithdraw(ctx context.Context, owner, amountStr string) error {
 	repo, err := s.repos()
 	if err != nil {
@@ -668,7 +708,15 @@ func (s *Service) ConfirmPoolWithdraw(ctx context.Context, owner, amountStr stri
 	if err != nil || amount.Raw.Sign() <= 0 {
 		return errInvalidAmount
 	}
-	return repo.RecordWithdraw(ctx, owner, amount.Raw.String())
+	if err := repo.RecordWithdraw(ctx, owner, amount.Raw.String()); err != nil {
+		if errors.Is(err, ErrNotFoundInRepo) {
+			s.audit(ctx, repo, owner, "pool.withdraw_confirm_cache_miss", map[string]string{"amount": amount.Raw.String()})
+			return nil
+		}
+		return err
+	}
+	s.audit(ctx, repo, owner, "pool.withdrawn", map[string]string{"amount": amount.Raw.String()})
+	return nil
 }
 
 // ---- SERVICE.md #1: chain cross-verification ---------------------------
@@ -723,47 +771,85 @@ func (s *Service) verifyChequeOnChain(ctx context.Context, c Cheque, callerSeque
 	return &matched
 }
 
-// verifyPoolOnChain is verifyChequeOnChain's pool counterpart, cross-
-// checking get_pool's amount against the local cache's amount_raw — the
-// one thing pool.deposit/withdraw's confirm-* endpoints are trusted to
-// keep honest without independent verification today.
-func (s *Service) verifyPoolOnChain(ctx context.Context, owner string, pool PoolDeposit, callerSequence int64) *bool {
+// chainPoolRecord simulates the contract's own get_pool for owner and
+// decodes the result. ok=false means "couldn't check" (a transient RPC
+// hiccup, or an unverified ScVal encoding) — never treated as "no pool on
+// chain", which is a decoded answer (present=false) in its own right. This
+// is chainChequeRecord's pool counterpart, shared by reconcilePoolWithChain
+// (read-side cross-check and self-heal) and PoolWithdrawXDR (write-side
+// pre-check).
+func (s *Service) chainPoolRecord(ctx context.Context, owner string, callerSequence int64) (record stellarx.PoolRecordView, present, ok bool) {
 	ownerArg, err := scAddr(owner)()
 	if err != nil {
-		return nil
+		return stellarx.PoolRecordView{}, false, false
 	}
 	op, err := stellarx.InvokeContract(s.cfg.EscrowContractID, owner, "get_pool", ownerArg)
 	if err != nil {
-		return nil
+		return stellarx.PoolRecordView{}, false, false
 	}
 	xdrStr, err := stellarx.AssembleInvocation(ctx, s.simulator(), s.cfg.NetworkPassphrase, owner, callerSequence, op)
 	if err != nil {
-		return nil
+		return stellarx.PoolRecordView{}, false, false
 	}
 	result, err := s.chain.SimulateTransaction(ctx, xdrStr)
 	if err != nil || !result.Success || result.ResultXDR == "" {
-		return nil
+		return stellarx.PoolRecordView{}, false, false
 	}
 	var resultVal xdr.ScVal
 	if err := xdr.SafeUnmarshalBase64(result.ResultXDR, &resultVal); err != nil {
-		return nil
+		return stellarx.PoolRecordView{}, false, false
 	}
-	record, present, err := stellarx.DecodePoolRecord(resultVal)
+	record, present, err = stellarx.DecodePoolRecord(resultVal)
 	if err != nil {
-		return nil
+		return stellarx.PoolRecordView{}, false, false
 	}
-	localAmount, ok := new(big.Int).SetString(pool.AmountRaw, 10)
+	return record, present, true
+}
+
+// reconcilePoolWithChain is verifyChequeOnChain's pool counterpart — but
+// where verifyChequeOnChain only compares and reports, this also corrects:
+// when the contract's own get_pool (the balance authority, D6) disagrees
+// with the cache /sync is about to serve, this corrects the cache row in
+// place and returns the corrected view — so a stale cache (a missed
+// confirm-withdraw,
+// a redeployed contract, a double-recorded confirm) heals itself on the next
+// /sync instead of quietly offering an amount the contract will reject
+// ("the network rejected this" — see PoolWithdrawXDR's pre-checks, which hit
+// the same failure mode from the write side). A "couldn't check" (ok=false)
+// answer never touches the cache; only a decoded, definite mismatch does.
+func (s *Service) reconcilePoolWithChain(ctx context.Context, repo chequeRepo, owner string, pool PoolDeposit, callerSequence int64) PoolDeposit {
+	record, present, ok := s.chainPoolRecord(ctx, owner, callerSequence)
 	if !ok {
-		return nil
+		pool.ChainVerified = nil
+		return pool
 	}
-	var matched bool
-	switch {
-	case !present:
-		matched = localAmount.Sign() == 0
-	default:
-		matched = record.Amount.Cmp(localAmount) == 0
+	chainAmount := big.NewInt(0)
+	if present {
+		chainAmount = record.Amount
 	}
-	return &matched
+	localAmount, parseOK := new(big.Int).SetString(pool.AmountRaw, 10)
+	if parseOK && chainAmount.Cmp(localAmount) == 0 {
+		matched := true
+		pool.ChainVerified = &matched
+		return pool
+	}
+	decimals := pool.Decimals
+	if decimals == 0 {
+		decimals = s.cfg.Decimals
+	}
+	if err := repo.SetPoolAmount(ctx, owner, chainAmount.String(), decimals); err != nil {
+		// Couldn't write the correction — serve the (known stale) cached
+		// view rather than a value this call never actually persisted;
+		// ChainVerified stays nil ("couldn't check") since what's about to
+		// be returned still doesn't match the chain.
+		pool.ChainVerified = nil
+		return pool
+	}
+	pool.AmountRaw = chainAmount.String()
+	pool.Decimals = decimals
+	matched := true
+	pool.ChainVerified = &matched
+	return pool
 }
 
 // chequeStateMatchesChain maps the contract's coarse ChequeState (or its
@@ -805,6 +891,29 @@ func chequeStateMatchesChain(local State, present bool, chainState string) bool 
 // person already saw before submitting. Not applied to an issued asset,
 // which carries no comparable reserve of its own.
 var nativeReserveHeadroomRaw = big.NewInt(15_000_000)
+
+// hasNativeFeeHeadroom reports whether acc's native XLM balance leaves at
+// least nativeReserveHeadroomRaw spendable — the same figure
+// hasSufficientBalance nets out of a native deposit, applied here to the
+// fee/reserve every submitted transaction needs regardless of which asset
+// it moves. PoolWithdrawXDR pre-checks this because a withdraw's token
+// transfer runs on the *pay* asset but the transaction itself is still paid
+// for in XLM: a wallet that deposited its entire native balance into the
+// pool has nothing left to pay a withdraw transaction's own fee, and
+// without this check that only shows up as a bare simulation failure.
+func hasNativeFeeHeadroom(acc ports.AccountInfo) bool {
+	for _, b := range acc.Balances {
+		if b.AssetCode != "native" {
+			continue
+		}
+		bal, err := money.ParseAmount(b.Balance, money.AssetID{Code: "native"}, 7)
+		if err != nil {
+			return false
+		}
+		return new(big.Int).Sub(bal.Raw, nativeReserveHeadroomRaw).Sign() >= 0
+	}
+	return false
+}
 
 func hasSufficientBalance(acc ports.AccountInfo, assetCode, assetIssuer string, amount *big.Int, decimals uint8) bool {
 	for _, b := range acc.Balances {
@@ -895,6 +1004,7 @@ var (
 	errSimulationFailed    = errors.New(ErrSimulationFailed)
 	errNotFunded           = errors.New(ErrNotFunded)
 	errAlreadyClaimed      = errors.New(ErrAlreadyClaimed)
+	errInsufficientFee     = errors.New(ErrInsufficientFee)
 )
 
 // requestIDPattern bounds the receiver-chosen request id: it is stored and

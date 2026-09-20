@@ -111,6 +111,13 @@ class PendingOfflinePaymentsNotifier extends AsyncNotifier<List<PendingOfflinePa
 
   @override
   Future<List<PendingOfflinePayment>> build() async {
+    // This notifier's whole point is a background retry loop that keeps
+    // running regardless of which screen is on top — Riverpod 3 defaults
+    // every provider to auto-dispose, which would tear down (and cancel
+    // the Timer of) this one the moment its last watcher (only
+    // `home_page.dart`) unmounts, silently stopping retries on Send/
+    // Receive/Pool/Settings.
+    ref.keepAlive();
     ref.onDispose(() => _timer?.cancel());
     final items = await ref.read(offlinePaymentStoreProvider).readQueue();
     if (items.isNotEmpty) _scheduleRetry();
@@ -153,11 +160,18 @@ class PendingOfflinePaymentsNotifier extends AsyncNotifier<List<PendingOfflinePa
           await _submit(p);
           changed = true; // Reached the network (or was already there) — drop it.
         } on ApiException catch (e) {
-          if (_terminalSubmitCodes.contains(e.code)) {
+          if (_terminalSubmitCodes.contains(e.code) || _isPermanentlyDead(e)) {
             changed = true; // Can never succeed — drop it.
-            lastError = ErrorCopy.forException(e);
+            lastError = _isPermanentlyDead(e)
+                ? _staleAccountMessage
+                : ErrorCopy.forException(e);
           } else {
             remaining.add(p); // Still offline/unreachable — keep it.
+            // Surfaced even though this attempt keeps retrying: a silent
+            // "waiting" banner that never explains why looked exactly like
+            // a permanent hang (SERVICE.md #23's report) even when it was
+            // still legitimately trying.
+            lastError = ErrorCopy.forException(e);
           }
         } catch (e) {
           remaining.add(p);
@@ -177,6 +191,21 @@ class PendingOfflinePaymentsNotifier extends AsyncNotifier<List<PendingOfflinePa
 
   bool _isExpired(PendingOfflinePayment p) =>
       ref.read(clockProvider)().isAfter(p.receivedAt.add(OfflinePaymentBuilder.validity));
+
+  /// Whether [e] is a Horizon result code that can never become true for
+  /// THIS specific signed envelope, no matter how many times it's retried
+  /// (SERVICE.md #23): the sequence number and time bounds are baked into
+  /// the signature at build time. `tx_bad_seq` means some other transaction
+  /// from this account (on this device or another) has already advanced
+  /// the account past the sequence this payment was signed against —
+  /// nothing about resubmitting the same bytes can fix that. `tx_too_late`
+  /// is the network's own clock agreeing with (or catching an edge case
+  /// [_isExpired]'s local estimate missed on) the same fixed TimeBounds.
+  /// Every other `tx.submit_failed` reason (funding, auth, generic) can
+  /// plausibly clear up before the 24h window this queue tracks, so those
+  /// keep retrying.
+  bool _isPermanentlyDead(ApiException e) =>
+      e.code == 'tx.submit_failed' && _permanentlyDeadResultCodes.contains(e.message);
 
   Future<void> _submit(PendingOfflinePayment p) async {
     final networkPassphrase = ref.read(networkPassphraseProvider);
@@ -202,6 +231,20 @@ class PendingOfflinePaymentsNotifier extends AsyncNotifier<List<PendingOfflinePa
 const _terminalSubmitCodes = {
   'tx.bad_request',
 };
+
+/// See `_isPermanentlyDead`'s doc comment.
+const _permanentlyDeadResultCodes = {
+  'tx_bad_seq',
+  'tx_too_late',
+};
+
+/// Deliberately not `ErrorCopy._submitResultMessages['tx_bad_seq']`
+/// ("Your account changed while signing. Please try again.") — that wording
+/// assumes the person is actively signing right now, which is wrong here:
+/// an offline payment can go stale hours later, from a completely
+/// unrelated transaction on this device or another one.
+const _staleAccountMessage =
+    'This offline payment could no longer be sent — your account changed on chain before it reached the network.';
 
 String _hex(List<int> bytes) => bytes.map((b) => b.toRadixString(16).padLeft(2, '0')).join();
 

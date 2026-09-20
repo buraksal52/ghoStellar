@@ -34,7 +34,7 @@ class _Pool extends Fake implements PoolApi {
   }
 
   @override
-  Future<void> confirmWithdraw(String amount) async {
+  Future<void> confirmWithdraw({required String amount}) async {
     confirmed.add('withdraw');
   }
 }

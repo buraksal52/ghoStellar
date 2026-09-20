@@ -44,6 +44,8 @@ class ErrorCopy {
           "Your wallet isn't set up yet — get test funds from Settings first.",
       'cheque.simulation_failed':
           'The network rejected this. Check that $asset is set up on your wallet and that you have enough $asset.',
+      'cheque.insufficient_fee':
+          'You need a little XLM in your wallet to cover the network fee — get test funds from Settings.',
       'cheque.bad_request': 'That request could not be processed. Please check it and try again.',
       'chain.rpc_unavailable':
           'The Stellar network is temporarily unavailable. Try again shortly.',

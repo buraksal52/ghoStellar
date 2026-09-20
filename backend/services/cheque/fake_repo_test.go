@@ -2,8 +2,8 @@ package cheque
 
 import (
 	"context"
-	"errors"
 	"math/big"
+	"strings"
 	"time"
 )
 
@@ -136,10 +136,9 @@ func (f *fakeRepo) ListActiveForAddress(ctx context.Context, address string) ([]
 		return nil, err
 	}
 	var out []Cheque
+	// Mirrors the real Repository: full history (active AND terminal), not
+	// just active cheques — see ListActiveForAddress's doc comment.
 	for _, c := range f.cheques {
-		if c.State.IsTerminal() {
-			continue
-		}
 		if c.SenderAddress == address || c.ReceiverAddress == address {
 			out = append(out, c)
 		}
@@ -194,9 +193,24 @@ func (f *fakeRepo) RecordWithdraw(ctx context.Context, owner, amountRaw string) 
 	}
 	p, ok := f.pools[owner]
 	if !ok {
-		return errors.New("fakeRepo: no pool row for owner")
+		return ErrNotFoundInRepo
 	}
 	p.AmountRaw = subDecimalStrings(p.AmountRaw, amountRaw)
+	if strings.HasPrefix(p.AmountRaw, "-") {
+		p.AmountRaw = "0"
+	}
+	f.pools[owner] = p
+	return nil
+}
+
+func (f *fakeRepo) SetPoolAmount(ctx context.Context, owner, amountRaw string, decimals uint8) error {
+	if err := f.err("SetPoolAmount"); err != nil {
+		return err
+	}
+	p := f.pools[owner]
+	p.OwnerAddress = owner
+	p.AmountRaw = amountRaw
+	p.Decimals = decimals
 	f.pools[owner] = p
 	return nil
 }

@@ -24,6 +24,11 @@ class PendingHandoffsNotifier extends AsyncNotifier<List<PendingHandoff>> {
 
   @override
   Future<List<PendingHandoff>> build() async {
+    // Same reasoning as `PendingOfflinePaymentsNotifier.build()`
+    // (`offline_providers.dart`): this notifier's Timer must survive
+    // regardless of which screen is on top, not just while something
+    // happens to be watching it.
+    ref.keepAlive();
     ref.onDispose(() => _timer?.cancel());
     final items = await ref.read(handoffInboxStoreProvider).readAll();
     if (items.isNotEmpty) _scheduleRetry();

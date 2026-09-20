@@ -57,6 +57,7 @@ _PoolDeposit _$PoolDepositFromJson(Map<String, dynamic> json) => _PoolDeposit(
   decimals: (json['decimals'] as num).toInt(),
   lastDepositLedger: (json['lastDepositLedger'] as num?)?.toInt(),
   updatedAt: json['updatedAt'] as String,
+  chainVerified: json['chainVerified'] as bool?,
 );
 
 Map<String, dynamic> _$PoolDepositToJson(_PoolDeposit instance) =>
@@ -66,6 +67,7 @@ Map<String, dynamic> _$PoolDepositToJson(_PoolDeposit instance) =>
       'decimals': instance.decimals,
       'lastDepositLedger': instance.lastDepositLedger,
       'updatedAt': instance.updatedAt,
+      'chainVerified': instance.chainVerified,
     };
 
 _SyncResponse _$SyncResponseFromJson(Map<String, dynamic> json) =>

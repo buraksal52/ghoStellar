@@ -95,7 +95,7 @@ class _PoolPageState extends ConsumerState<PoolPage> {
         final ledgerSeq = ref.read(syncProvider).value?.ledgerSeq ?? 0;
         await poolApi.confirmDeposit(amount: amount, ledgerSeq: ledgerSeq);
       } else {
-        await poolApi.confirmWithdraw(amount);
+        await poolApi.confirmWithdraw(amount: amount);
       }
       await log.append(LocalActivityEvent(
         kind: _isDeposit ? 'pool_deposit' : 'pool_withdraw',
@@ -165,7 +165,23 @@ class _PoolPageState extends ConsumerState<PoolPage> {
       shortage =
           'Not enough ${PayAsset.configured.label} — you have ${AmountFormatter.trimTrailingZeros(AmountFormatter.fromRaw(limit.toString(), _decimals(pool)))}.';
     } else {
-      limit = pool == null ? null : BigInt.tryParse(pool.amountRaw);
+      // Unlike deposit, this is never allowed to fall through with a null
+      // limit: a withdraw the backend will actually reject (no pool balance
+      // loaded yet, or too little native XLM left to pay the withdraw
+      // transaction's own fee — the fee-side twin of `_depositLimitRaw`'s
+      // reserve headroom) must be caught here, or the person only finds out
+      // from a bare simulation failure.
+      if (pool == null) {
+        return const _Blocker('Your pool balance is still loading — try again in a moment.');
+      }
+      if (!_hasFeeHeadroom(balances)) {
+        return const _Blocker(
+          'You need a little XLM in your wallet to cover the network fee.',
+          'Open Settings',
+          '/settings',
+        );
+      }
+      limit = _withdrawLimitRaw(pool);
       if (limit == BigInt.zero) return const _Blocker('You have nothing in the pool to withdraw yet.');
       shortage = 'That is more than your pool balance.';
     }
@@ -174,6 +190,28 @@ class _PoolPageState extends ConsumerState<PoolPage> {
     final typed = typedRaw == null ? null : BigInt.tryParse(typedRaw);
     if (limit != null && typed != null && typed > limit) return _Blocker(shortage);
     return null;
+  }
+
+  /// The largest withdrawal the backend will actually accept, in raw units
+  /// — the pool cache's own amount. `_blocker` never calls this before
+  /// confirming `pool` is non-null; the null case is handled directly there.
+  BigInt? _withdrawLimitRaw(PoolDeposit pool) => BigInt.tryParse(pool.amountRaw);
+
+  /// Whether balances leaves enough native XLM spendable to cover a
+  /// transaction's own network fee — mirrors the backend's
+  /// `hasNativeFeeHeadroom` (`backend/services/cheque/service.go`). Only
+  /// withdraw needs this as a stand-alone check: deposit's own headroom
+  /// math (`_depositLimitRaw`) already nets the same reserve out of what it
+  /// offers to deposit for the native asset, but a withdraw moves the pool
+  /// asset while the fee is always paid in native XLM (`balances.native`)
+  /// regardless of which asset is configured — so this must be checked even
+  /// when the pool asset itself isn't native.
+  bool _hasFeeHeadroom(AccountBalances balances) {
+    final nativeRaw = AmountFormatter.toRaw(balances.native, 7);
+    if (nativeRaw == null) return false;
+    final native = BigInt.tryParse(nativeRaw);
+    if (native == null) return false;
+    return native - _nativeReserveHeadroomRaw >= BigInt.zero;
   }
 
   int _decimals(PoolDeposit? pool) => pool?.decimals ?? 7;
@@ -198,6 +236,11 @@ class _PoolPageState extends ConsumerState<PoolPage> {
                 AmountFormatter.fromRaw(_depositLimitRaw(balances, _decimals(pool))?.toString() ?? '0', _decimals(pool)),
               ))
         : (pool == null ? '—' : AmountFormatter.trimTrailingZeros(AmountFormatter.fromRaw(pool.amountRaw, pool.decimals)));
+    // A definite chain/cache mismatch is corrected server-side before /sync
+    // serializes it (Sync's reconcilePoolWithChain) — chainVerified == false
+    // only happens if that correction itself failed, so this is a rare,
+    // soft "still checking" note rather than a routine state.
+    final showUnverifiedNote = !_isDeposit && pool?.chainVerified == false;
 
     return ListView(
       children: [
@@ -310,6 +353,13 @@ class _PoolPageState extends ConsumerState<PoolPage> {
                   style: TextStyle(fontSize: 12, color: c.muted),
                 ),
               ),
+              if (showUnverifiedNote) ...[
+                const SizedBox(height: 6),
+                Text(
+                  'Checking this balance against the network…',
+                  style: TextStyle(fontSize: 11, color: c.muted, fontStyle: FontStyle.italic),
+                ),
+              ],
             ],
           ),
         ),
