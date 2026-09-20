@@ -301,22 +301,15 @@ func (h *Handler) WithdrawPaymentXDR(w http.ResponseWriter, r *http.Request) {
 	httpx.WriteData(w, http.StatusOK, map[string]string{"paymentXdr": xdrStr})
 }
 
-type confirmTrustlineRequest struct {
-	LedgerSeq int64 `json:"ledgerSeq"`
-}
-
+// ConfirmTrustline takes no body: the service verifies the trustline against
+// the chain itself.
 func (h *Handler) ConfirmTrustline(w http.ResponseWriter, r *http.Request) {
 	address, ok := callerAddress(r)
 	if !ok {
 		httpx.WriteError(w, http.StatusUnauthorized, "auth.invalid_token", "missing bearer claims", nil)
 		return
 	}
-	var req confirmTrustlineRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		httpx.WriteError(w, http.StatusBadRequest, ErrBadRequest, "ledgerSeq is required", nil)
-		return
-	}
-	if err := h.svc.ConfirmTrustline(r.Context(), address, req.LedgerSeq); err != nil {
+	if err := h.svc.ConfirmTrustline(r.Context(), address); err != nil {
 		writeAnchorError(w, err)
 		return
 	}

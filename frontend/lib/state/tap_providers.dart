@@ -7,6 +7,7 @@ import '../core/payments/payment_uri.dart';
 import '../core/utils/amount_formatter.dart';
 import '../data/api/models/cheque_models.dart';
 import '../data/api/models/tx_models.dart';
+import '../data/nfc/nfc_service.dart';
 import 'core_providers.dart';
 import 'signing_overlay_provider.dart';
 import 'sync_providers.dart';
@@ -15,19 +16,24 @@ import 'wallet_providers.dart';
 /// Wall clock behind an override point, so expiry logic is testable.
 final clockProvider = Provider<DateTime Function()>((ref) => DateTime.now);
 
-/// Request nonces this device has already paid, for the lifetime of the app
-/// process. A QR that is scanned twice (or a double tap) must not write two
-/// cheques. Marked when the cheque is actually created — not when a request
-/// is merely scanned — so backing out of a send doesn't burn the code.
-class UsedNoncesNotifier extends Notifier<Set<String>> {
-  @override
-  Set<String> build() => const {};
-
-  void add(String nonce) => state = {...state, nonce};
-}
-
-final usedNoncesProvider =
-    NotifierProvider<UsedNoncesNotifier, Set<String>>(UsedNoncesNotifier.new);
+/// Payment-request ids the server already holds a cheque of mine for, read
+/// from the same `/sync` the rest of the app polls — so "you already paid
+/// this" survives an app restart and a second device, unlike an in-memory
+/// set.
+///
+/// A best-effort *pre*-check only: `/sync` lists non-terminal cheques, so a
+/// request whose cheque has already closed, or one a different sender paid,
+/// isn't visible here. The authority is the server's unique index — a second
+/// `POST /cheques` for the same request answers `cheque.request_used`.
+final paidRequestIdsProvider = Provider<Set<String>>((ref) {
+  final sync = ref.watch(syncProvider).value;
+  final me = ref.watch(walletProvider).publicKey;
+  if (sync == null || me == null) return const {};
+  return {
+    for (final c in sync.cheques)
+      if (c.senderAddress == me && c.requestId != null) c.requestId!,
+  };
+});
 
 enum ReceivePhase {
   /// No session (page just opened or left).
@@ -62,15 +68,20 @@ class ReceiveSessionState {
 
 /// The receiver's half of a tap/scan payment.
 ///
-/// 1. Offer a [PaymentRequest] over NFC (Android HCE) and as a QR.
+/// 1. Offer a [PaymentRequest] over NFC and as a QR. An Android receiver is
+///    the tag and starts presenting at once; an iPhone can only read, so it
+///    waits for the user to start a read ([beginNfcRead]) — Apple wants NFC
+///    sessions user-initiated.
 /// 2. Once a sender picks it up, the money still has to be locked on chain
 ///    by *their* phone. When that's done they hand the cheque id back — over
-///    a second NFC tap or a QR the receiver scans ([acceptHandoff]).
+///    NFC (written to our tag, or read from theirs) or a QR the receiver
+///    scans ([acceptHandoff]). Roles never flip: a tap is a two-way exchange.
 /// 3. Independently, `/sync` is polled the whole time, so a missed tap, a
 ///    QR-only sender, or a lost handoff still ends with the cheque claimed.
 ///
-/// Only cheques that appeared *after* the session started are auto-claimed
-/// (older pending ones stay in the manual list), and each cheque is tried at
+/// Only cheques that answer a request *this session issued* are auto-claimed
+/// (matched by the `requestId` the sender echoed, which the server stores);
+/// anything else pending stays in the manual list. Each cheque is tried at
 /// most once — a failing claim must not retry in a loop, it's left to the
 /// manual "Claim" button.
 class ReceiveSessionNotifier extends Notifier<ReceiveSessionState> {
@@ -80,18 +91,28 @@ class ReceiveSessionNotifier extends Notifier<ReceiveSessionState> {
   /// How long to wait for the sender's chain round trip (create → sign →
   /// submit → confirm) after they picked up the request.
   static const handoffWindow = Duration(minutes: 2);
-  static const _rescanDelay = Duration(milliseconds: 500);
 
   Timer? _poll;
   Timer? _rotate;
-  StreamSubscription<void>? _readSub;
+  Timer? _awaitTimer;
+  StreamSubscription<void>? _deliveredSub;
+  StreamSubscription<String>? _peerSub;
+
+  /// Whether the NFC session for this offer is running (so a rotated request
+  /// only swaps the payload instead of restarting the radio).
+  bool _nfcStarted = false;
+  String? _offerUri;
 
   /// Bumped on every start/stop; async work from an older session checks it
   /// and bails instead of touching the new one.
   int _epoch = 0;
   bool _pollBusy = false;
   String? _amount;
-  Set<String> _baseline = const {};
+
+  /// Every request id this page has offered, including rotated-out ones: a
+  /// sender may have scanned an earlier QR and only now finish paying.
+  /// Kept across restarts of the offer (an amount edit) and cleared on stop.
+  final Set<String> _issuedNonces = {};
   final Set<String> _attempted = {};
 
   @override
@@ -110,21 +131,15 @@ class ReceiveSessionNotifier extends Notifier<ReceiveSessionState> {
     _cancelTimers();
     final epoch = ++_epoch;
     _amount = amount != null && AmountFormatter.isValidPositiveDecimal(amount) ? amount : null;
-    _baseline = const {};
-    _attempted.clear();
+    _nfcStarted = false;
 
     final nfc = ref.read(nfcServiceProvider);
-    if (nfc.isEmulateSupported) {
-      _readSub = nfc.onPayloadRead.listen((_) => _onPeerRead(epoch));
+    if (nfc.isAvailable) {
+      _deliveredSub = nfc.onDelivered.listen((_) => _onPeerRead(epoch));
+      _peerSub = nfc.onPeerPayload.listen((payload) => _onPeerPayload(epoch, payload));
     }
-    // Offer first: the receiver shouldn't stare at an empty screen while
-    // `/sync` loads. Only the polling fallback has to wait for the baseline.
-    await _offer(epoch, me);
-
-    final baseline = await _baselineIds();
-    if (epoch != _epoch) return;
-    _baseline = baseline;
     _poll = Timer.periodic(pollInterval, (_) => _pollOnce(epoch));
+    await _offer(epoch, me);
   }
 
   /// Ends the session and stops every radio. Safe to call after the
@@ -133,17 +148,32 @@ class ReceiveSessionNotifier extends Notifier<ReceiveSessionState> {
     if (!ref.mounted) return;
     _epoch++;
     _cancelTimers();
-    final nfc = ref.read(nfcServiceProvider);
-    unawaited(nfc.cancelScan());
-    unawaited(_safeStopBroadcast());
+    _issuedNonces.clear();
+    _attempted.clear();
+    unawaited(_safeStopNfc());
     state = ReceiveSessionState.idle;
+  }
+
+  /// Starts a one-shot NFC read, for a device that can only be the reader
+  /// (an iPhone): it pulls the other phone's payload and writes our request
+  /// to it in the same tap. Call it for the first tap and again for the
+  /// second (the cheque handoff). A no-op where we are the tag already.
+  Future<void> beginNfcRead() async {
+    final uri = _offerUri;
+    final nfc = ref.read(nfcServiceProvider);
+    if (uri == null || !nfc.canRead || nfc.canBeTag) return;
+    try {
+      await nfc.start(role: NfcRole.reader, offer: uri);
+    } catch (_) {
+      // NFC off/unavailable — the QR of the same request still works.
+    }
   }
 
   /// A cheque id handed over by the sender (NFC or scanned QR). Returns
   /// whether it belonged to this session's request.
   Future<bool> acceptHandoff(ChequeHandoff handoff) async {
-    final request = state.request;
-    if (request == null || handoff.nonce == null || handoff.nonce != request.nonce) return false;
+    final nonce = handoff.nonce;
+    if (nonce == null || !_issuedNonces.contains(nonce)) return false;
     if (state.phase != ReceivePhase.offering && state.phase != ReceivePhase.awaitingCheque) {
       return false;
     }
@@ -193,6 +223,7 @@ class ReceiveSessionNotifier extends Notifier<ReceiveSessionState> {
       nonce: const Uuid().v4(),
       expiresAt: now.add(requestTtl),
     );
+    _issuedNonces.add(request.nonce!);
     state = ReceiveSessionState(phase: ReceivePhase.offering, request: request);
 
     // Rotate rather than dead-end: a request nobody picked up in time is
@@ -202,10 +233,16 @@ class ReceiveSessionNotifier extends Notifier<ReceiveSessionState> {
       if (epoch == _epoch && state.phase == ReceivePhase.offering) _offer(epoch, me);
     });
 
+    _offerUri = request.toUri();
     final nfc = ref.read(nfcServiceProvider);
-    if (nfc.isEmulateSupported) {
+    if (nfc.canBeTag) {
       try {
-        await nfc.startBroadcast(request.toUri());
+        if (_nfcStarted) {
+          await nfc.setOffer(_offerUri);
+        } else {
+          await nfc.start(role: nfc.receiverRole, offer: _offerUri);
+          _nfcStarted = true;
+        }
       } catch (_) {
         // NFC unavailable/disabled — the QR of the same request still works.
       }
@@ -213,41 +250,27 @@ class ReceiveSessionNotifier extends Notifier<ReceiveSessionState> {
   }
 
   void _onPeerRead(int epoch) {
-    // A reader may retry GET DATA; only the first read moves the phase.
+    // A reader may retry; only the first one moves the phase.
     if (epoch != _epoch || state.phase != ReceivePhase.offering) return;
     _rotate?.cancel();
     state = ReceiveSessionState(phase: ReceivePhase.awaitingCheque, request: state.request);
-    unawaited(_awaitHandoff(epoch));
+
+    // Wait a bounded time for the sender's chain round trip, then go back to
+    // offering rather than dead-ending. Polling keeps running and still
+    // catches a cheque that shows up late.
+    _awaitTimer?.cancel();
+    _awaitTimer = Timer(handoffWindow, () {
+      final me = ref.read(walletProvider).publicKey;
+      if (epoch == _epoch && state.phase == ReceivePhase.awaitingCheque && me != null) {
+        _offer(epoch, me);
+      }
+    });
   }
 
-  /// The roles flip: stop being the tag, become the reader, and wait for the
-  /// sender's phone to offer the cheque id.
-  Future<void> _awaitHandoff(int epoch) async {
-    final nfc = ref.read(nfcServiceProvider);
-    await _safeStopBroadcast();
-    if (!nfc.isScanSupported) return; // polling / scanned QR will close it.
-
-    final deadline = ref.read(clockProvider)().add(handoffWindow);
-    while (epoch == _epoch && state.phase == ReceivePhase.awaitingCheque) {
-      final remaining = deadline.difference(ref.read(clockProvider)());
-      if (remaining <= Duration.zero) break;
-
-      final payload = await nfc.startScan(timeout: remaining);
-      if (epoch != _epoch || state.phase != ReceivePhase.awaitingCheque) return;
-      if (payload == null) break;
-
-      final handoff = ChequeHandoff.tryParse(payload);
-      if (handoff != null && await acceptHandoff(handoff)) return;
-      // Something else was in the field; don't spin on it.
-      await Future<void>.delayed(_rescanDelay);
-    }
-
-    // Nothing arrived in time: go back to offering rather than dead-ending.
-    // Polling is still running and will pick the cheque up if it shows late.
-    final me = ref.read(walletProvider).publicKey;
-    if (epoch == _epoch && state.phase == ReceivePhase.awaitingCheque && me != null) {
-      await _offer(epoch, me);
-    }
+  void _onPeerPayload(int epoch, String payload) {
+    if (epoch != _epoch) return;
+    final handoff = ChequeHandoff.tryParse(payload);
+    if (handoff != null) unawaited(acceptHandoff(handoff));
   }
 
   Future<void> _pollOnce(int epoch) async {
@@ -260,11 +283,10 @@ class ReceiveSessionNotifier extends Notifier<ReceiveSessionState> {
       final me = ref.read(walletProvider).publicKey;
       if (me == null) return;
 
-      final request = state.request;
       for (final c in sync.cheques) {
         if (c.receiverAddress != me || c.state != ChequeState.havuzda) continue;
-        if (_baseline.contains(c.id) || _attempted.contains(c.id)) continue;
-        if (!_matchesAmount(c, request?.amount)) continue;
+        final id = c.requestId;
+        if (id == null || !_issuedNonces.contains(id) || _attempted.contains(c.id)) continue;
         await _autoClaim(epoch, c.id);
         break;
       }
@@ -283,8 +305,9 @@ class ReceiveSessionNotifier extends Notifier<ReceiveSessionState> {
     final request = state.request;
     state = ReceiveSessionState(phase: ReceivePhase.claiming, request: request);
     _rotate?.cancel();
-    unawaited(ref.read(nfcServiceProvider).cancelScan());
-    await _safeStopBroadcast();
+    _awaitTimer?.cancel();
+    _nfcStarted = false;
+    await _safeStopNfc();
 
     final ok = await claim(chequeId);
     if (epoch != _epoch) return;
@@ -304,53 +327,25 @@ class ReceiveSessionNotifier extends Notifier<ReceiveSessionState> {
     if (me != null) await _offer(epoch, me);
   }
 
-  /// Claimable cheques that already exist when the session starts — these
-  /// belong in the manual list, not to this session. Waits for the first
-  /// `/sync` if it hasn't landed yet, otherwise an old pending cheque would
-  /// look "new" and be claimed behind the user's back.
-  Future<Set<String>> _baselineIds() async {
-    var sync = ref.read(syncProvider).value;
-    if (sync == null) {
-      try {
-        sync = await ref.read(syncProvider.future);
-      } catch (_) {
-        // /sync failed: nothing to exclude. Worst case an old cheque addressed
-        // to us is claimed a little early.
-      }
-    }
-    return _claimableIds(sync?.cheques ?? const []);
-  }
-
-  Set<String> _claimableIds(List<Cheque> cheques) {
-    final me = ref.read(walletProvider).publicKey;
-    return {
-      for (final c in cheques)
-        if (c.receiverAddress == me && c.state == ChequeState.havuzda) c.id,
-    };
-  }
-
-  /// Compares in raw integer units with string math — an exact request amount
-  /// must equal the cheque exactly, and nothing here touches a double.
-  bool _matchesAmount(Cheque cheque, String? requested) {
-    if (requested == null) return true;
-    return AmountFormatter.toRaw(requested, cheque.decimals) == cheque.amountRaw;
-  }
-
-  Future<void> _safeStopBroadcast() async {
+  Future<void> _safeStopNfc() async {
     try {
-      await ref.read(nfcServiceProvider).stopBroadcast();
+      await ref.read(nfcServiceProvider).stop();
     } catch (_) {
-      // Nothing was being broadcast / NFC unavailable.
+      // Nothing was running / NFC unavailable.
     }
   }
 
   void _cancelTimers() {
     _poll?.cancel();
     _rotate?.cancel();
-    _readSub?.cancel();
+    _awaitTimer?.cancel();
+    _deliveredSub?.cancel();
+    _peerSub?.cancel();
     _poll = null;
     _rotate = null;
-    _readSub = null;
+    _awaitTimer = null;
+    _deliveredSub = null;
+    _peerSub = null;
   }
 }
 

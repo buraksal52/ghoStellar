@@ -14,6 +14,10 @@ class ErrorCopy {
     'cheque.receiver_no_trustline':
         'This recipient hasn\'t set up USDC yet, so they can\'t receive it.',
     'cheque.self_transfer': 'You can\'t send a cheque to yourself.',
+    'cheque.request_used':
+        'That payment request was already paid. Ask for a new one.',
+    'cheque.invalid_request_id': 'That payment request isn\'t valid.',
+    'network.error': 'No connection. Check your internet and try again.',
     'cheque.invalid_amount': 'Enter a valid amount.',
     'cheque.expired': 'This cheque has expired.',
     'cheque.terminal_state': 'This cheque can no longer be acted on.',
@@ -43,5 +47,23 @@ class ErrorCopy {
   static String forCode(String code) =>
       _messages[code] ?? 'Something went wrong. Please try again.';
 
-  static String forException(ApiException e) => forCode(e.code);
+  /// Horizon transaction result codes carried in `tx.submit_failed`'s message
+  /// (see `TxApi.submit`), worded for the user.
+  static const Map<String, String> _submitResultMessages = {
+    'tx_insufficient_balance':
+        'Your account doesn\'t have enough XLM to cover the reserve and network fee.',
+    'tx_failed':
+        'The Stellar network rejected the transaction. Make sure your account has enough XLM for the reserve and fee.',
+    'tx_bad_auth':
+        'The transaction signature was not accepted. Check that the app is on the right Stellar network.',
+    'tx_bad_seq': 'Your account changed while signing. Please try again.',
+  };
+
+  static String forException(ApiException e) {
+    if (e.code == 'tx.submit_failed') {
+      final specific = _submitResultMessages[e.message];
+      if (specific != null) return specific;
+    }
+    return forCode(e.code);
+  }
 }

@@ -8,7 +8,9 @@ const (
 	ErrInvalidReceiver       = "cheque.invalid_receiver"      // A4
 	ErrReceiverNoTrustline   = "cheque.receiver_no_trustline" // A4/F3
 	ErrSelfTransfer          = "cheque.self_transfer"         // A5
-	ErrInvalidAmount         = "cheque.invalid_amount"        // A6
+	ErrRequestUsed           = "cheque.request_used"          // tap/scan: request already answered by a cheque
+	ErrInvalidRequestID      = "cheque.invalid_request_id"
+	ErrInvalidAmount         = "cheque.invalid_amount" // A6
 	ErrExpired               = "cheque.expired"
 	ErrTerminalState         = "cheque.terminal_state"
 	ErrNotFound              = "cheque.not_found"

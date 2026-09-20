@@ -16,6 +16,12 @@
 	<string>6.0</string>
 	<key>CFBundleName</key>
 	<string>ghostellar_app</string>
+	<key>NFCReaderUsageDescription</key>
+	<string>Hold your iPhone near an Android phone to pay or get paid with a tap.</string>
+	<key>com.apple.developer.nfc.readersession.iso7816.select-identifiers</key>
+	<array>
+		<string>F047686F53746C</string>
+	</array>
 	<key>NSCameraUsageDescription</key>
 	<string>The camera scans payment QR codes so you can pay or collect by pointing at another phone.</string>
 	<key>CFBundlePackageType</key>

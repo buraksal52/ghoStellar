@@ -52,6 +52,15 @@ func (f *fakeRepo) CreateReservedCheque(ctx context.Context, c Cheque) error {
 	if err := f.err("CreateReservedCheque"); err != nil {
 		return err
 	}
+	// Mirrors uq_cheques_receiver_request: checked before the reservation,
+	// like the real INSERT order.
+	if c.RequestID != "" {
+		for _, existing := range f.cheques {
+			if existing.ReceiverAddress == c.ReceiverAddress && existing.RequestID == c.RequestID {
+				return ErrRequestUsedInRepo
+			}
+		}
+	}
 	if f.active[c.SenderAddress] {
 		return ErrAlreadyActiveInRepo
 	}

@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -24,6 +25,9 @@ var (
 	// violation (D5/A3) to Service without leaking a pgx/postgres error type.
 	ErrAlreadyActiveInRepo = errors.New("cheque: sender already has an active cheque")
 	ErrNotFoundInRepo      = errors.New("cheque: not found")
+	// ErrRequestUsedInRepo surfaces uq_cheques_receiver_request (migration
+	// 000003): a cheque for this (receiver, requestId) already exists.
+	ErrRequestUsedInRepo   = errors.New("cheque: payment request already used")
 	ErrBadTransitionInRepo = errors.New("cheque: transition already recorded or invalid")
 )
 
@@ -40,10 +44,14 @@ func (r *Repository) CreateReservedCheque(ctx context.Context, c Cheque) error {
 	defer tx.Rollback(ctx)
 
 	_, err = tx.Exec(ctx, `
-		INSERT INTO pay.cheques (id, sender_address, receiver_address, token_contract, amount_raw, decimals, state, expires_at)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
-	`, c.ID, c.SenderAddress, c.ReceiverAddress, c.TokenContract, c.AmountRaw, c.Decimals, c.State, c.ExpiresAt)
+		INSERT INTO pay.cheques (id, sender_address, receiver_address, token_contract, amount_raw, decimals, state, expires_at, request_id)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, NULLIF($9, ''))
+	`, c.ID, c.SenderAddress, c.ReceiverAddress, c.TokenContract, c.AmountRaw, c.Decimals, c.State, c.ExpiresAt, c.RequestID)
 	if err != nil {
+		var pgErr *pgconn.PgError
+		if errors.As(err, &pgErr) && pgErr.Code == "23505" && pgErr.ConstraintName == "uq_cheques_receiver_request" {
+			return ErrRequestUsedInRepo
+		}
 		return err
 	}
 
@@ -70,10 +78,11 @@ func (r *Repository) GetCheque(ctx context.Context, id string) (Cheque, error) {
 	var c Cheque
 	err := r.pool.QueryRow(ctx, `
 		SELECT id, sender_address, receiver_address, token_contract, amount_raw::text, decimals,
-		       state, expires_at, coalesce(lock_tx_hash,''), coalesce(preauth_entry_xdr,''), created_at, updated_at
+		       state, expires_at, coalesce(lock_tx_hash,''), coalesce(preauth_entry_xdr,''), created_at, updated_at,
+		       coalesce(request_id,'')
 		FROM pay.cheques WHERE id = $1
 	`, id).Scan(&c.ID, &c.SenderAddress, &c.ReceiverAddress, &c.TokenContract, &c.AmountRaw, &c.Decimals,
-		&c.State, &c.ExpiresAt, &c.LockTxHash, &c.PreauthEntryXDR, &c.CreatedAt, &c.UpdatedAt)
+		&c.State, &c.ExpiresAt, &c.LockTxHash, &c.PreauthEntryXDR, &c.CreatedAt, &c.UpdatedAt, &c.RequestID)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return Cheque{}, ErrNotFoundInRepo
 	}
@@ -155,7 +164,8 @@ func (r *Repository) Transition(ctx context.Context, id string, from, to State, 
 func (r *Repository) ListActiveForAddress(ctx context.Context, address string) ([]Cheque, error) {
 	rows, err := r.pool.Query(ctx, `
 		SELECT id, sender_address, receiver_address, token_contract, amount_raw::text, decimals,
-		       state, expires_at, coalesce(lock_tx_hash,''), coalesce(preauth_entry_xdr,''), created_at, updated_at
+		       state, expires_at, coalesce(lock_tx_hash,''), coalesce(preauth_entry_xdr,''), created_at, updated_at,
+		       coalesce(request_id,'')
 		FROM pay.cheques
 		WHERE (sender_address = $1 OR receiver_address = $1)
 		  AND state NOT IN ('KAPANDI', 'IADE_EDILDI', 'HUKUMSUZ', 'KARSILIKSIZ')
@@ -172,7 +182,7 @@ func (r *Repository) ListActiveForAddress(ctx context.Context, address string) (
 	for rows.Next() {
 		var c Cheque
 		if err := rows.Scan(&c.ID, &c.SenderAddress, &c.ReceiverAddress, &c.TokenContract, &c.AmountRaw, &c.Decimals,
-			&c.State, &c.ExpiresAt, &c.LockTxHash, &c.PreauthEntryXDR, &c.CreatedAt, &c.UpdatedAt); err != nil {
+			&c.State, &c.ExpiresAt, &c.LockTxHash, &c.PreauthEntryXDR, &c.CreatedAt, &c.UpdatedAt, &c.RequestID); err != nil {
 			return nil, err
 		}
 		out = append(out, c)
@@ -186,7 +196,8 @@ func (r *Repository) ListActiveForAddress(ctx context.Context, address string) (
 func (r *Repository) ExpiredFundedCheques(ctx context.Context, asOf time.Time) ([]Cheque, error) {
 	rows, err := r.pool.Query(ctx, `
 		SELECT id, sender_address, receiver_address, token_contract, amount_raw::text, decimals,
-		       state, expires_at, coalesce(lock_tx_hash,''), coalesce(preauth_entry_xdr,''), created_at, updated_at
+		       state, expires_at, coalesce(lock_tx_hash,''), coalesce(preauth_entry_xdr,''), created_at, updated_at,
+		       coalesce(request_id,'')
 		FROM pay.cheques WHERE state = $1 AND expires_at <= $2
 	`, StateHavuzda, asOf)
 	if err != nil {
@@ -197,7 +208,7 @@ func (r *Repository) ExpiredFundedCheques(ctx context.Context, asOf time.Time) (
 	for rows.Next() {
 		var c Cheque
 		if err := rows.Scan(&c.ID, &c.SenderAddress, &c.ReceiverAddress, &c.TokenContract, &c.AmountRaw, &c.Decimals,
-			&c.State, &c.ExpiresAt, &c.LockTxHash, &c.PreauthEntryXDR, &c.CreatedAt, &c.UpdatedAt); err != nil {
+			&c.State, &c.ExpiresAt, &c.LockTxHash, &c.PreauthEntryXDR, &c.CreatedAt, &c.UpdatedAt, &c.RequestID); err != nil {
 			return nil, err
 		}
 		out = append(out, c)

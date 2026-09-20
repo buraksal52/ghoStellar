@@ -387,14 +387,33 @@ func withdrawMemo(memoType, memo string) (txnbuild.Memo, error) {
 	}
 }
 
-// ConfirmTrustline records that a change_trust op has been submitted
-// successfully — called by the client after pay-tx-service confirms it.
-func (s *Service) ConfirmTrustline(ctx context.Context, owner string, ledgerSeq int64) error {
+// ConfirmTrustline refreshes the pay.trustlines cache from the chain, which
+// stays the source of truth: the client only says "I submitted it", so the
+// row is marked active only if the trustline is really there, and the ledger
+// recorded is the chain's own — never a client-supplied value. A trustline
+// that is not on-chain is recorded as "missing" (which also repairs a row
+// wrongly left "active" by an earlier unverified confirm) and reported as
+// errTrustlineMissing.
+func (s *Service) ConfirmTrustline(ctx context.Context, owner string) error {
 	repo, err := s.repos()
 	if err != nil {
 		return err
 	}
-	return repo.SetTrustline(ctx, owner, s.cfg.AssetCode, s.cfg.AssetIssuer, "active", ledgerSeq)
+	trustline, err := s.chain.GetTrustline(ctx, owner, s.cfg.AssetCode, s.cfg.AssetIssuer)
+	if err != nil {
+		return fmt.Errorf("%w: %v", errChainUnavailable, err)
+	}
+	if !trustline.Exists {
+		if err := repo.SetTrustline(ctx, owner, s.cfg.AssetCode, s.cfg.AssetIssuer, "missing", 0); err != nil {
+			return err
+		}
+		return errTrustlineMissing
+	}
+	ledger, err := s.chain.GetLedger(ctx)
+	if err != nil {
+		return fmt.Errorf("%w: %v", errChainUnavailable, err)
+	}
+	return repo.SetTrustline(ctx, owner, s.cfg.AssetCode, s.cfg.AssetIssuer, "active", ledger.Sequence)
 }
 
 var (

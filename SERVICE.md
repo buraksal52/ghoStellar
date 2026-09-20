@@ -236,3 +236,28 @@ eklendi.
 `sub` taşıyor; SEP-10 sonrası JWT'ler genelde `WEB_AUTH_DOMAIN`'e `aud`
 olarak bağlanır. Anahtar tamamen kendi imzamız olduğu için istismar yüzeyi
 dar, ama spec uyumu eksik.
+
+## 20. İstemci ağ parolası sabit testnet; anchor SEP-10 challenge'ı kendi parolasını yok sayıyor
+
+`frontend/lib/core/config/env.dart`'taki `networkPassphrase` sabit testnet
+değeri (`const`), oysa `gatewayBaseUrl` `--dart-define` ile başka bir
+backend'e yönlendirilebiliyor. Backend pubnet XDR üretirse istemci yine
+testnet ağ kimliğiyle imzalar: imza yapısal olarak geçerli ama kriptografik
+olarak yanlıştır, hiçbir hata fırlamaz — Horizon yalnızca `tx_bad_auth`
+döner (`/tx/submit` bunu artık `tx.submit_failed` olarak görünür kılıyor).
+Ayrıca `anchor_api.dart` anchor SEP-10 challenge yanıtındaki
+`network_passphrase` alanını atıyor ve `anchor_providers.dart` challenge'ı
+`Env` parolasıyla imzalıyor; platform girişi (`auth_providers.dart`)
+sunucunun parolasını doğru kullanıyor. Kapatma yolu: parolayı
+`--dart-define` ile yapılandırılabilir yapmak ve anchor challenge'ında yanıttaki
+parolayı kullanmak.
+
+## 21. `tx_failed` işlem düzeyinde kodun ötesine geçmiyor
+
+`chain.SubmitClassic`, Horizon reddinde yalnızca `TransactionCode`'u
+(`tx_failed`, `tx_bad_seq`, …) `resultCode` olarak döner; operasyon düzeyi
+kod (`op_low_reserve`, `op_no_issuer`, …) düşürülüyor. Bu yüzden istemci
+"yetersiz rezerv" ile diğer `tx_failed` sebeplerini ayırt edemez ve genel
+bir XLM ipucu gösterir. Kapatma yolu: `codes.OperationCodes`'u `ResultCode`'a
+eklemek (ör. `tx_failed:op_low_reserve`) ve `ErrorCopy`'yi buna göre
+genişletmek.

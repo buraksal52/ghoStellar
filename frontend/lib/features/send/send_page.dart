@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:uuid/uuid.dart';
 
+import '../../core/config/pay_asset.dart';
 import '../../core/payments/payment_uri.dart';
 import '../../core/theme/app_colors.dart';
 import '../../core/utils/amount_formatter.dart';
@@ -42,7 +43,7 @@ class _SendPageState extends ConsumerState<SendPage> {
   ChequeHandoff? _handoff;
   bool _delivered = false;
   Timer? _handoffTimer;
-  StreamSubscription<void>? _readSub;
+  StreamSubscription<void>? _deliveredSub;
 
   bool get _amountLocked => _request?.amount != null && !_amountUnlocked;
 
@@ -55,8 +56,8 @@ class _SendPageState extends ConsumerState<SendPage> {
   @override
   void dispose() {
     _handoffTimer?.cancel();
-    _readSub?.cancel();
-    if (_handoff != null) _stopHandoffBroadcast();
+    _deliveredSub?.cancel();
+    if (_handoff != null) _stopHandoffNfc();
     _amountController.dispose();
     super.dispose();
   }
@@ -91,10 +92,14 @@ class _SendPageState extends ConsumerState<SendPage> {
 
     ChequeHandoff? handoff;
     final ok = await overlay.run<bool>((report) async {
-      final created = await chequeApi.create(receiver: request.destination, amount: amount);
-      // The cheque exists now: this request must not be payable a second time.
       final nonce = request.nonce;
-      if (nonce != null) ref.read(usedNoncesProvider.notifier).add(nonce);
+      // The request id is what makes the server refuse a second cheque for
+      // the same request (`cheque.request_used`).
+      final created = await chequeApi.create(
+        receiver: request.destination,
+        amount: amount,
+        requestId: nonce,
+      );
 
       report(SigningStep.signing);
       final signedLockXdr = signing.signTransactionXdr(created.lockXdr, keyPair);
@@ -136,6 +141,10 @@ class _SendPageState extends ConsumerState<SendPage> {
   /// waiting for their `/sync`. NFC where the device can, and always as a QR
   /// so a receiver without NFC (or a missed tap) still closes the payment —
   /// and their polling closes it even if neither is used.
+  ///
+  /// An Android sender starts presenting/alternating at once. An iPhone can
+  /// only read, and Apple wants NFC sessions user-initiated, so it waits for
+  /// the "Tap receiver's phone" button ([_beginHandoffRead]).
   Future<void> _offerHandoff(ChequeHandoff handoff) async {
     setState(() {
       _handoff = handoff;
@@ -145,22 +154,35 @@ class _SendPageState extends ConsumerState<SendPage> {
     _handoffTimer = Timer(_handoffWindow, _endHandoff);
 
     final nfc = _nfc;
-    if (!nfc.isEmulateSupported) return;
-    _readSub?.cancel();
-    _readSub = nfc.onPayloadRead.listen((_) {
+    if (!nfc.isAvailable) return;
+    _deliveredSub?.cancel();
+    _deliveredSub = nfc.onDelivered.listen((_) {
       if (mounted) setState(() => _delivered = true);
     });
+    if (!nfc.canBeTag) return;
     try {
-      await nfc.startBroadcast(handoff.toUri());
+      await nfc.start(role: nfc.senderRole, offer: handoff.toUri());
     } catch (_) {
       // NFC unavailable/disabled — the QR of the same payload still works.
     }
   }
 
+  /// The iPhone's (reader-only) start: pull the receiver's tag and write the
+  /// handoff to it in one tap.
+  Future<void> _beginHandoffRead() async {
+    final handoff = _handoff;
+    if (handoff == null) return;
+    try {
+      await _nfc.start(role: NfcRole.reader, offer: handoff.toUri());
+    } catch (_) {
+      // NFC unavailable/disabled — the QR still works.
+    }
+  }
+
   void _endHandoff() {
     _handoffTimer?.cancel();
-    _readSub?.cancel();
-    _stopHandoffBroadcast();
+    _deliveredSub?.cancel();
+    _stopHandoffNfc();
     if (mounted) {
       setState(() {
         _handoff = null;
@@ -169,8 +191,8 @@ class _SendPageState extends ConsumerState<SendPage> {
     }
   }
 
-  void _stopHandoffBroadcast() {
-    unawaited(_nfc.stopBroadcast().catchError((_) {}));
+  void _stopHandoffNfc() {
+    unawaited(_nfc.stop().catchError((_) {}));
   }
 
   Widget _ring(AppColors c, IconData icon, {required VoidCallback? onTap}) {
@@ -205,7 +227,7 @@ class _SendPageState extends ConsumerState<SendPage> {
       children: [
         if (_delivered)
           _ring(c, Icons.check_rounded, onTap: null)
-        else if (nfc.isEmulateSupported)
+        else if (nfc.canBeTag)
           _ring(c, Icons.nfc, onTap: null)
         else
           QrCard(data: handoff.toUri()),
@@ -220,18 +242,24 @@ class _SendPageState extends ConsumerState<SendPage> {
           child: Text(
             _delivered
                 ? 'They can collect it now.'
-                : nfc.isEmulateSupported
+                : nfc.canBeTag
                     ? 'Hold your phones together again so they can collect'
-                        '${amount == null ? '' : ' $amount XLM'} — or let them scan the code.'
+                        '${amount == null ? '' : ' $amount ${PayAsset.configured.label}'} — or let them scan the code.'
                     : 'Let them scan this code to collect'
-                        '${amount == null ? '' : ' $amount XLM'}.',
+                        '${amount == null ? '' : ' $amount ${PayAsset.configured.label}'}.',
             textAlign: TextAlign.center,
             style: TextStyle(fontSize: 13, color: c.muted),
           ),
         ),
         // Before the QR, so it stays reachable on a short screen.
+        if (nfc.isAvailable && !nfc.canBeTag && !_delivered)
+          TextButton.icon(
+            onPressed: _beginHandoffRead,
+            icon: Icon(Icons.nfc, size: 18, color: c.text),
+            label: Text("Tap receiver's phone", style: TextStyle(fontSize: 13, color: c.text)),
+          ),
         TextButton(onPressed: _endHandoff, child: const Text('Done')),
-        if (nfc.isEmulateSupported && !_delivered) ...[
+        if (nfc.canBeTag && !_delivered) ...[
           const SizedBox(height: 4),
           QrCard(data: handoff.toUri()),
         ],
@@ -243,6 +271,9 @@ class _SendPageState extends ConsumerState<SendPage> {
   Widget build(BuildContext context) {
     final c = context.colors;
     final overlayStep = ref.watch(signingOverlayProvider).step;
+    // Keeps `/sync` loaded while the user picks a recipient, so the scan's
+    // "already paid" pre-check has data to check against.
+    ref.watch(paidRequestIdsProvider);
     final request = _request;
     final canSend = request != null &&
         AmountFormatter.isValidPositiveDecimal(_amountController.text) &&
@@ -287,7 +318,7 @@ class _SendPageState extends ConsumerState<SendPage> {
                     ),
                   ),
                   const SizedBox(width: 12),
-                  Text('XLM', style: TextStyle(fontSize: 16, fontWeight: FontWeight.w600, color: c.info)),
+                  Text(PayAsset.configured.label, style: TextStyle(fontSize: 16, fontWeight: FontWeight.w600, color: c.info)),
                 ],
               ),
               const SizedBox(height: 6),

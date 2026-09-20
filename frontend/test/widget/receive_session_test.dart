@@ -3,6 +3,7 @@ import 'package:flutter_riverpod/misc.dart' show Override;
 import 'package:flutter_test/flutter_test.dart';
 import 'package:ghostellar_app/core/payments/payment_uri.dart';
 import 'package:ghostellar_app/data/api/models/cheque_models.dart';
+import 'package:ghostellar_app/data/nfc/nfc_service.dart';
 import 'package:ghostellar_app/state/core_providers.dart';
 import 'package:ghostellar_app/state/signing_overlay_provider.dart';
 import 'package:ghostellar_app/state/sync_providers.dart';
@@ -15,7 +16,7 @@ import '../support/fakes.dart';
 const _chequeId = '01J8F2K9ABCDEFGHJKMNPQRSTV';
 
 class _Rig {
-  _Rig({List<Cheque> Function(String me)? preexisting}) {
+  _Rig() {
     keyPair = KeyPair.random();
     me = keyPair.accountId;
     container = ProviderContainer(overrides: <Override>[
@@ -25,7 +26,7 @@ class _Rig {
       chequeApiProvider.overrideWithValue(chequeApi),
       txApiProvider.overrideWithValue(FakeTxApi()),
       stellarSigningServiceProvider.overrideWithValue(FakeSigning()),
-      syncProvider.overrideWith(() => FakeSyncNotifier(preexisting?.call(me) ?? const [])),
+      syncProvider.overrideWith(() => FakeSyncNotifier(const [])),
       clockProvider.overrideWithValue(() => now),
     ]);
   }
@@ -64,8 +65,11 @@ void main() {
     expect(request.nonce, isNotEmpty);
     expect(request.expiresAt, rig.now.add(const Duration(minutes: 5)));
     // The tag and the QR carry the very same URI.
-    expect(rig.nfc.broadcasts, [request.toUri()]);
-    expect(PaymentRequest.tryParse(rig.nfc.broadcasts.single)!.amount, '25.50');
+    expect(rig.nfc.presented, [request.toUri()]);
+    expect(PaymentRequest.tryParse(rig.nfc.presented.single)!.amount, '25.50');
+    // An Android receiver is the tag from the start, and takes writes.
+    expect(rig.nfc.started.single.role, NfcRole.tag);
+    expect(rig.nfc.started.single.offer, request.toUri());
 
     rig.session.stop();
   });
@@ -83,33 +87,35 @@ void main() {
 
   testWidgets('no NFC: still offers the request (for the QR) and never broadcasts', (tester) async {
     final rig = _Rig();
-    rig.nfc.isEmulateSupported = false;
-    rig.nfc.isScanSupported = false;
+    rig.nfc.canBeTag = false;
+    rig.nfc.canRead = false;
     addTearDown(rig.container.dispose);
     await rig.ready(tester);
 
     await rig.session.start();
 
     expect(rig.state.phase, ReceivePhase.offering);
-    expect(rig.nfc.broadcasts, isEmpty);
+    expect(rig.nfc.presented, isEmpty);
     rig.session.stop();
   });
 
-  testWidgets('NFC path: peer reads → roles flip → handoff over a second tap → claimed', (tester) async {
+  testWidgets('Android: a peer reads the request, then hands the cheque over on the same tag', (tester) async {
     final rig = _Rig();
     addTearDown(rig.container.dispose);
     await rig.ready(tester);
     await rig.session.start(amount: '25.50');
     final nonce = rig.state.request!.nonce!;
 
-    rig.nfc.peerReads();
+    rig.nfc.delivered();
     await tester.pump();
 
     expect(rig.state.phase, ReceivePhase.awaitingCheque);
-    expect(rig.nfc.stops, greaterThan(0), reason: 'stops being the tag');
-    expect(rig.nfc.scanCount, 1, reason: 'becomes the reader');
+    // Roles never flip: still the one tag session, not stopped, no reader started.
+    expect(rig.nfc.started, hasLength(1));
+    expect(rig.nfc.stops, 0);
 
-    rig.nfc.deliver(ChequeHandoff(chequeId: _chequeId, from: testSender, amount: '25.50', nonce: nonce).toUri());
+    // The sender's phone writes the handoff to our tag.
+    rig.nfc.receive(ChequeHandoff(chequeId: _chequeId, from: testSender, amount: '25.50', nonce: nonce).toUri());
     await tester.pump();
     await tester.pump();
 
@@ -117,20 +123,22 @@ void main() {
     expect(rig.chequeApi.acked, [_chequeId]);
     expect(rig.state.phase, ReceivePhase.done);
     expect(rig.state.claimedChequeId, _chequeId);
+    expect(rig.nfc.stops, greaterThan(0), reason: 'the radio is released once paid');
   });
 
-  testWidgets('a repeated read of the tag does not restart the handoff wait', (tester) async {
+  testWidgets('a repeated read of the tag does not move the phase twice', (tester) async {
     final rig = _Rig();
     addTearDown(rig.container.dispose);
     await rig.ready(tester);
     await rig.session.start();
 
-    rig.nfc.peerReads();
-    rig.nfc.peerReads();
-    rig.nfc.peerReads();
+    rig.nfc.delivered();
+    rig.nfc.delivered();
+    rig.nfc.delivered();
     await tester.pump();
 
-    expect(rig.nfc.scanCount, 1);
+    expect(rig.state.phase, ReceivePhase.awaitingCheque);
+    expect(rig.nfc.started, hasLength(1));
     rig.session.stop();
   });
 
@@ -139,25 +147,105 @@ void main() {
     addTearDown(rig.container.dispose);
     await rig.ready(tester);
     await rig.session.start();
-    rig.nfc.peerReads();
+    rig.nfc.delivered();
     await tester.pump();
 
-    rig.nfc.deliver(ChequeHandoff(chequeId: _chequeId, from: testSender, nonce: 'not-ours').toUri());
+    rig.nfc.receive(ChequeHandoff(chequeId: _chequeId, from: testSender, nonce: 'not-ours').toUri());
     await tester.pump();
 
     expect(rig.chequeApi.claimAttempts, 0);
     expect(rig.state.phase, ReceivePhase.awaitingCheque);
-
-    // It keeps listening (after a short pause) rather than giving up.
-    await tester.pump(const Duration(seconds: 1));
-    expect(rig.nfc.scanCount, 2);
     rig.session.stop();
+  });
+
+  testWidgets('a peer payload that is not a handoff is ignored', (tester) async {
+    final rig = _Rig();
+    addTearDown(rig.container.dispose);
+    await rig.ready(tester);
+    await rig.session.start();
+
+    rig.nfc.receive('hello');
+    rig.nfc.receive('web+stellar:pay?destination=${rig.me}');
+    await tester.pump();
+
+    expect(rig.chequeApi.claimAttempts, 0);
+    expect(rig.state.phase, ReceivePhase.offering);
+    rig.session.stop();
+  });
+
+  group('an iPhone (reader only)', () {
+    testWidgets('does not start NFC by itself — Apple wants the user to start a read', (tester) async {
+      final rig = _Rig();
+      rig.nfc.canBeTag = false;
+      addTearDown(rig.container.dispose);
+      await rig.ready(tester);
+
+      await rig.session.start(amount: '5');
+
+      expect(rig.state.phase, ReceivePhase.offering, reason: 'the QR is on screen');
+      expect(rig.nfc.started, isEmpty);
+      rig.session.stop();
+    });
+
+    testWidgets('beginNfcRead reads and writes the request in one tap, twice: request, then handoff', (tester) async {
+      final rig = _Rig();
+      rig.nfc.canBeTag = false;
+      addTearDown(rig.container.dispose);
+      await rig.ready(tester);
+      await rig.session.start(amount: '25.50');
+      final request = rig.state.request!;
+
+      // First tap: our request goes to the Android sender's tag.
+      await rig.session.beginNfcRead();
+      expect(rig.nfc.started.single.role, NfcRole.reader);
+      expect(rig.nfc.started.single.offer, request.toUri());
+      rig.nfc.delivered();
+      await tester.pump();
+      expect(rig.state.phase, ReceivePhase.awaitingCheque);
+
+      // Second tap, once they've paid: their handoff comes back as the peer payload.
+      await rig.session.beginNfcRead();
+      expect(rig.nfc.started, hasLength(2));
+      rig.nfc.receive(ChequeHandoff(chequeId: _chequeId, from: testSender, nonce: request.nonce).toUri());
+      await tester.pump();
+      await tester.pump();
+
+      expect(rig.chequeApi.claimed, [_chequeId]);
+      expect(rig.state.phase, ReceivePhase.done);
+    });
+
+    testWidgets('beginNfcRead is a no-op on a device that is already the tag', (tester) async {
+      final rig = _Rig();
+      addTearDown(rig.container.dispose);
+      await rig.ready(tester);
+      await rig.session.start();
+      expect(rig.nfc.started, hasLength(1));
+
+      await rig.session.beginNfcRead();
+
+      expect(rig.nfc.started, hasLength(1));
+      rig.session.stop();
+    });
+
+    testWidgets('beginNfcRead survives NFC being switched off', (tester) async {
+      final rig = _Rig();
+      rig.nfc.canBeTag = false;
+      rig.nfc.startError = StateError('NFC is off');
+      addTearDown(rig.container.dispose);
+      await rig.ready(tester);
+      await rig.session.start();
+
+      await rig.session.beginNfcRead(); // must not throw
+
+      expect(rig.state.phase, ReceivePhase.offering);
+      rig.session.stop();
+    });
   });
 
   testWidgets('QR path: acceptHandoff claims for the matching nonce only', (tester) async {
     final rig = _Rig();
-    rig.nfc.isEmulateSupported = false;
-    rig.nfc.isScanSupported = false;
+    rig.nfc.canBeTag = false;
+    rig.nfc.canRead = false;
     addTearDown(rig.container.dispose);
     await rig.ready(tester);
     await rig.session.start(amount: '25.50');
@@ -178,17 +266,18 @@ void main() {
     expect(rig.state.phase, ReceivePhase.done);
   });
 
-  testWidgets('polling fallback claims a new matching cheque when no handoff arrives', (tester) async {
+  testWidgets('polling claims the cheque that answers this session\'s request', (tester) async {
     final rig = _Rig();
     addTearDown(rig.container.dispose);
     await rig.ready(tester);
     await rig.session.start(amount: '25.50');
+    final nonce = rig.state.request!.nonce!;
 
     await tester.pump(const Duration(seconds: 3));
     expect(rig.syncApi.calls, 1);
     expect(rig.chequeApi.claimAttempts, 0, reason: 'nothing to claim yet');
 
-    rig.syncApi.cheques = [testCheque(_chequeId, rig.me)];
+    rig.syncApi.cheques = [testCheque(_chequeId, rig.me, requestId: nonce)];
     await tester.pump(const Duration(seconds: 3));
     await tester.pump();
 
@@ -196,13 +285,13 @@ void main() {
     expect(rig.state.phase, ReceivePhase.done);
   });
 
-  testWidgets('polling ignores cheques that existed before the session started', (tester) async {
-    final rig = _Rig(preexisting: (me) => [testCheque('01OLDOLDOLDOLDOLDOLDOLDOLD', me)]);
+  testWidgets('polling leaves a cheque with no request id to the manual list', (tester) async {
+    final rig = _Rig();
     addTearDown(rig.container.dispose);
     await rig.ready(tester);
     await rig.session.start();
 
-    rig.syncApi.cheques = [testCheque('01OLDOLDOLDOLDOLDOLDOLDOLD', rig.me)];
+    rig.syncApi.cheques = [testCheque(_chequeId, rig.me)];
     await tester.pump(const Duration(seconds: 3));
     await tester.pump();
 
@@ -211,13 +300,13 @@ void main() {
     rig.session.stop();
   });
 
-  testWidgets('polling ignores a cheque whose amount differs from the request', (tester) async {
+  testWidgets('polling ignores a cheque that answers some other request', (tester) async {
     final rig = _Rig();
     addTearDown(rig.container.dispose);
     await rig.ready(tester);
-    await rig.session.start(amount: '25.50');
+    await rig.session.start();
 
-    rig.syncApi.cheques = [testCheque(_chequeId, rig.me, amountRaw: '100000000')];
+    rig.syncApi.cheques = [testCheque(_chequeId, rig.me, requestId: 'somebody-elses')];
     await tester.pump(const Duration(seconds: 3));
     await tester.pump();
 
@@ -225,16 +314,69 @@ void main() {
     rig.session.stop();
   });
 
-  testWidgets('polling only auto-claims cheques that are claimable and addressed to me', (tester) async {
+  testWidgets('a cheque for a rotated-out request is still claimed', (tester) async {
     final rig = _Rig();
     addTearDown(rig.container.dispose);
     await rig.ready(tester);
     await rig.session.start();
+    final first = rig.state.request!.nonce!;
+
+    // The QR nobody answered in time is replaced…
+    await tester.pump(ReceiveSessionNotifier.requestTtl);
+    expect(rig.state.request!.nonce, isNot(first));
+
+    // …but a sender who scanned it just before that may finish paying now.
+    rig.syncApi.cheques = [testCheque(_chequeId, rig.me, requestId: first)];
+    await tester.pump(const Duration(seconds: 3));
+    await tester.pump();
+
+    expect(rig.chequeApi.claimed, [_chequeId]);
+  });
+
+  testWidgets('editing the amount does not forget requests already offered', (tester) async {
+    final rig = _Rig();
+    addTearDown(rig.container.dispose);
+    await rig.ready(tester);
+    await rig.session.start(amount: '1');
+    final first = rig.state.request!.nonce!;
+    await rig.session.start(amount: '2');
+    expect(rig.state.request!.nonce, isNot(first));
+
+    rig.syncApi.cheques = [testCheque(_chequeId, rig.me, requestId: first)];
+    await tester.pump(const Duration(seconds: 3));
+    await tester.pump();
+
+    expect(rig.chequeApi.claimed, [_chequeId]);
+  });
+
+  testWidgets('a new session does not honour the previous session\'s requests', (tester) async {
+    final rig = _Rig();
+    addTearDown(rig.container.dispose);
+    await rig.ready(tester);
+    await rig.session.start();
+    final old = rig.state.request!.nonce!;
+    rig.session.stop();
+
+    await rig.session.start();
+    rig.syncApi.cheques = [testCheque(_chequeId, rig.me, requestId: old)];
+    await tester.pump(const Duration(seconds: 3));
+    await tester.pump();
+
+    expect(rig.chequeApi.claimAttempts, 0);
+    rig.session.stop();
+  });
+
+  testWidgets('polling only claims cheques that are claimable and addressed to me', (tester) async {
+    final rig = _Rig();
+    addTearDown(rig.container.dispose);
+    await rig.ready(tester);
+    await rig.session.start();
+    final nonce = rig.state.request!.nonce!;
 
     rig.syncApi.cheques = [
-      testCheque('01AAAAAAAAAAAAAAAAAAAAAAAA', 'GSOMEONEELSE'),
-      testCheque('01BBBBBBBBBBBBBBBBBBBBBBBB', rig.me, state: ChequeState.kapandi),
-      testCheque('01CCCCCCCCCCCCCCCCCCCCCCCC', rig.me, state: ChequeState.fonlaniyor),
+      testCheque('01AAAAAAAAAAAAAAAAAAAAAAAA', 'GSOMEONEELSE', requestId: nonce),
+      testCheque('01BBBBBBBBBBBBBBBBBBBBBBBB', rig.me, state: ChequeState.kapandi, requestId: nonce),
+      testCheque('01CCCCCCCCCCCCCCCCCCCCCCCC', rig.me, state: ChequeState.fonlaniyor, requestId: nonce),
     ];
     await tester.pump(const Duration(seconds: 3));
     await tester.pump();
@@ -249,7 +391,8 @@ void main() {
     addTearDown(rig.container.dispose);
     await rig.ready(tester);
     await rig.session.start();
-    rig.syncApi.cheques = [testCheque(_chequeId, rig.me)];
+    final nonce = rig.state.request!.nonce!;
+    rig.syncApi.cheques = [testCheque(_chequeId, rig.me, requestId: nonce)];
 
     for (var i = 0; i < 4; i++) {
       await tester.pump(const Duration(seconds: 3));
@@ -276,7 +419,8 @@ void main() {
     expect(second.nonce, isNot(first.nonce));
     expect(second.amount, '5');
     expect(second.expiresAt, rig.now.add(ReceiveSessionNotifier.requestTtl));
-    expect(rig.nfc.broadcasts.last, second.toUri());
+    expect(rig.nfc.presented.last, second.toUri());
+    expect(rig.nfc.started, hasLength(1), reason: 'rotation swaps the payload, it does not restart the radio');
     rig.session.stop();
   });
 
@@ -287,13 +431,11 @@ void main() {
     await rig.session.start();
     final first = rig.state.request!;
 
-    rig.nfc.peerReads();
+    rig.nfc.delivered();
     await tester.pump();
     expect(rig.state.phase, ReceivePhase.awaitingCheque);
 
-    // The reader session times out with nothing (startScan → null).
-    rig.nfc.deliverNothing();
-    await tester.pump();
+    await tester.pump(ReceiveSessionNotifier.handoffWindow);
     await tester.pump();
 
     expect(rig.state.phase, ReceivePhase.offering);
@@ -312,7 +454,7 @@ void main() {
     await tester.pump(const Duration(seconds: 30));
 
     expect(rig.state.phase, ReceivePhase.idle);
-    expect(rig.nfc.cancels, greaterThan(0));
+    expect(rig.nfc.stops, greaterThan(0));
     expect(rig.syncApi.calls, callsAtStop);
   });
 
@@ -344,12 +486,23 @@ void main() {
     expect(rig.state.phase, ReceivePhase.idle, reason: 'manual claim does not touch the session');
   });
 
-  test('UsedNonces remembers what was added', () {
-    final container = ProviderContainer();
+  testWidgets('paidRequestIdsProvider is the request ids of cheques I sent, from /sync', (tester) async {
+    final rig = _Rig();
+    final me = rig.me;
+    final container = ProviderContainer(overrides: <Override>[
+      walletProvider.overrideWith(() => UnlockedWallet(rig.keyPair)),
+      syncProvider.overrideWith(() => FakeSyncNotifier([
+            testCheque('01AAAAAAAAAAAAAAAAAAAAAAAA', 'GSOMEONE', sender: me, requestId: 'mine-1'),
+            testCheque('01BBBBBBBBBBBBBBBBBBBBBBBB', 'GSOMEONE', sender: me),
+            // Addressed to me, i.e. a request somebody else paid — not "I paid".
+            testCheque('01CCCCCCCCCCCCCCCCCCCCCCCC', me, requestId: 'theirs-1'),
+          ])),
+    ]);
     addTearDown(container.dispose);
-    expect(container.read(usedNoncesProvider), isEmpty);
-    container.read(usedNoncesProvider.notifier).add('n1');
-    expect(container.read(usedNoncesProvider), {'n1'});
+    container.listen(syncProvider, (prev, next) {});
+    await container.read(syncProvider.future);
+    await tester.pump();
+
+    expect(container.read(paidRequestIdsProvider), {'mine-1'});
   });
 }
-

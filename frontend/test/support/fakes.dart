@@ -46,14 +46,18 @@ class FakeChequeApi extends Fake implements ChequeApi {
   Future<void> ack(String chequeId) async => acked.add(chequeId);
 
   // Sender side.
-  final created = <({String receiver, String amount})>[];
+  final created = <({String receiver, String amount, String? requestId})>[];
   final confirmedLocks = <String>[];
   final preauths = <String>[];
 
   @override
-  Future<CreateChequeResult> create({required String receiver, required String amount}) async {
+  Future<CreateChequeResult> create({
+    required String receiver,
+    required String amount,
+    String? requestId,
+  }) async {
     if (createError != null) throw createError!;
-    created.add((receiver: receiver, amount: amount));
+    created.add((receiver: receiver, amount: amount, requestId: requestId));
     return const CreateChequeResult(
       chequeId: '01J8F2K9ABCDEFGHJKMNPQRSTV',
       lockXdr: 'lock-xdr',
@@ -120,13 +124,16 @@ SyncResponse syncResponse(List<Cheque> cheques) => SyncResponse(
 Cheque testCheque(
   String id,
   String me, {
-  String amountRaw = '255000000', // 25.5000000 XLM
+  String amountRaw = '255000000', // 25.5000000
   ChequeState state = ChequeState.havuzda,
+  String? requestId,
+  String? sender,
 }) =>
     Cheque(
       id: id,
-      senderAddress: testSender,
+      senderAddress: sender ?? testSender,
       receiverAddress: me,
+      requestId: requestId,
       tokenContract: 'C',
       amountRaw: amountRaw,
       decimals: 7,

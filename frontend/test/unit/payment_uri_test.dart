@@ -1,9 +1,13 @@
 import 'package:flutter_test/flutter_test.dart';
+import 'package:ghostellar_app/core/config/pay_asset.dart';
 import 'package:ghostellar_app/core/payments/payment_uri.dart';
 
 void main() {
   const valid = 'GAAZI4TCR3TY5OJHCTJC2A4QSY6CJWJH5IAJTGKIN2ER7LBNVKOCCWN7';
   const ulid = '01J8F2K9ABCDEFGHJKMNPQRSTV';
+  const issuer = 'GBBD47IF6LWK7P7MDEVSCWR7DPUWV3NY3DTQEVFL4NAT4AQH3ZLLFLA5';
+  const usdc = PayAsset(code: 'USDC', issuer: issuer);
+  const xlm = PayAsset(code: 'XLM');
 
   group('PaymentRequest.tryParse', () {
     test('accepts a bare G... address (backward compatible)', () {
@@ -37,7 +41,7 @@ void main() {
     });
 
     test('a request without an amount lets the sender choose', () {
-      final r = PaymentRequest.tryParse('web+stellar:pay?destination=$valid&asset_code=XLM')!;
+      final r = PaymentRequest.tryParse('web+stellar:pay?destination=$valid', asset: xlm)!;
       expect(r.amount, isNull);
     });
 
@@ -64,12 +68,56 @@ void main() {
       }
     });
 
-    test('rejects anything other than the native asset', () {
-      expect(PaymentRequest.tryParse('web+stellar:pay?destination=$valid&asset_code=USDC'), isNull);
-      expect(
-        PaymentRequest.tryParse('web+stellar:pay?destination=$valid&asset_code=XLM&asset_issuer=$valid'),
-        isNull,
-      );
+    group('asset', () {
+      test('an issued asset is written and read with code AND issuer', () {
+        final uri = PaymentRequest(destination: valid, amount: '5').toUri(asset: usdc);
+        expect(uri, contains('asset_code=USDC'));
+        expect(uri, contains('asset_issuer=$issuer'));
+        expect(PaymentRequest.tryParse(uri, asset: usdc)!.amount, '5');
+      });
+
+      test('the native asset carries no issuer', () {
+        final uri = PaymentRequest(destination: valid).toUri(asset: xlm);
+        expect(uri, contains('asset_code=XLM'));
+        expect(uri, isNot(contains('asset_issuer')));
+        expect(PaymentRequest.tryParse(uri, asset: xlm), isNotNull);
+      });
+
+      test('a different code is refused', () {
+        expect(
+          PaymentRequest.tryParse('web+stellar:pay?destination=$valid&asset_code=EURC&asset_issuer=$issuer', asset: usdc),
+          isNull,
+        );
+      });
+
+      test('the same code from a different issuer is a different asset and is refused', () {
+        expect(
+          PaymentRequest.tryParse('web+stellar:pay?destination=$valid&asset_code=USDC&asset_issuer=$valid', asset: usdc),
+          isNull,
+        );
+      });
+
+      test('an issued asset named without its issuer is refused (code alone is ambiguous)', () {
+        expect(PaymentRequest.tryParse('web+stellar:pay?destination=$valid&asset_code=USDC', asset: usdc), isNull);
+      });
+
+      test('a native request is refused by an app that uses an issued asset, and the reverse', () {
+        final native = PaymentRequest(destination: valid).toUri(asset: xlm);
+        final issued = PaymentRequest(destination: valid).toUri(asset: usdc);
+        expect(PaymentRequest.tryParse(native, asset: usdc), isNull);
+        expect(PaymentRequest.tryParse(issued, asset: xlm), isNull);
+      });
+
+      test('a request that names no asset is accepted (bare address, minimal request)', () {
+        expect(PaymentRequest.tryParse('web+stellar:pay?destination=$valid', asset: usdc), isNotNull);
+        expect(PaymentRequest.tryParse(valid, asset: usdc), isNotNull);
+      });
+
+      test('defaults to the configured asset', () {
+        final uri = PaymentRequest(destination: valid).toUri();
+        expect(PaymentRequest.tryParse(uri), isNotNull);
+        expect(uri, contains('asset_code=${PayAsset.configured.code}'));
+      });
     });
 
     test('rejects a bad or oversized nonce and a bad expiry', () {

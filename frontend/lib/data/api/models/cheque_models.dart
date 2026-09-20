@@ -37,6 +37,10 @@ abstract class Cheque with _$Cheque {
     required String id,
     required String senderAddress,
     required String receiverAddress,
+
+    /// The single-use payment-request id this cheque answers (tap/scan
+    /// flow); null for a plain cheque. Unique per receiver on the server.
+    String? requestId,
     required String tokenContract,
     required String amountRaw,
     required int decimals,

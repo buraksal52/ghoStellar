@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -249,5 +250,52 @@ func TestWriteChequeError_Mapping(t *testing.T) {
 				t.Errorf("code = %q, want %q", env.Error.Code, tc.wantCode)
 			}
 		})
+	}
+}
+
+// ---- tap/scan payment requests (requestId) over HTTP ------------------------
+
+func TestHandler_CreateCheque_RequestIDIsSingleUse(t *testing.T) {
+	svc := newServiceWithRepo(testConfig(), newFakeRepo(), fundedChain(t, 1))
+	mux := newAPIMux(NewHandler(svc))
+
+	first := bearerFixtureFor(t, testSender)
+	second := bearerFixtureFor(t, mustRandomAccount())
+	body := map[string]string{"receiver": testReceiver, "amount": "10", "requestId": "req-http-1"}
+
+	rec := doJSON(t, first.wrap(mux), "POST", "/cheques", first.accessToken, body)
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("first create: status %d, body %s", rec.Code, rec.Body.String())
+	}
+
+	rec = doJSON(t, second.wrap(mux), "POST", "/cheques", second.accessToken, body)
+	if rec.Code != http.StatusConflict {
+		t.Fatalf("second create: status %d, want 409; body %s", rec.Code, rec.Body.String())
+	}
+	var env struct {
+		Error struct {
+			Code string `json:"code"`
+		} `json:"error"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &env); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if env.Error.Code != ErrRequestUsed {
+		t.Errorf("error code = %q, want %q", env.Error.Code, ErrRequestUsed)
+	}
+}
+
+func TestHandler_CreateCheque_InvalidRequestIDIs400(t *testing.T) {
+	svc := newServiceWithRepo(testConfig(), newFakeRepo(), fundedChain(t, 1))
+	mux := newAPIMux(NewHandler(svc))
+	f := bearerFixtureFor(t, testSender)
+
+	rec := doJSON(t, f.wrap(mux), "POST", "/cheques", f.accessToken,
+		map[string]string{"receiver": testReceiver, "amount": "10", "requestId": "no spaces allowed"})
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("status %d, want 400; body %s", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), ErrInvalidRequestID) {
+		t.Errorf("body %s does not carry %s", rec.Body.String(), ErrInvalidRequestID)
 	}
 }

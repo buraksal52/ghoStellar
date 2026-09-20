@@ -162,9 +162,6 @@ class _AnchorDepositWithdrawPageState extends ConsumerState<AnchorDepositWithdra
         kind: TxKind.classic,
         xdr: signed,
       );
-      if (!res.successful) {
-        throw ApiException(code: 'tx.submit_failed', message: res.resultCode ?? 'transaction failed');
-      }
       return res.hash;
     });
   }

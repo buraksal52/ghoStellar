@@ -29,6 +29,8 @@ func callerAddress(r *http.Request) (string, bool) {
 type createChequeRequest struct {
 	Receiver string `json:"receiver"`
 	Amount   string `json:"amount"`
+	// RequestID is the receiver's single-use payment-request id (optional).
+	RequestID string `json:"requestId"`
 }
 
 func (h *Handler) CreateCheque(w http.ResponseWriter, r *http.Request) {
@@ -42,7 +44,7 @@ func (h *Handler) CreateCheque(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, http.StatusBadRequest, ErrBadRequest, "invalid JSON body", nil)
 		return
 	}
-	result, err := h.svc.CreateCheque(r.Context(), sender, req.Receiver, req.Amount)
+	result, err := h.svc.CreateCheque(r.Context(), sender, req.Receiver, req.Amount, req.RequestID)
 	if err != nil {
 		writeChequeError(w, err)
 		return
@@ -317,6 +319,10 @@ func writeChequeError(w http.ResponseWriter, err error) {
 		code, status = ErrReceiverNoTrustline, http.StatusUnprocessableEntity
 	case errors.Is(err, errSelfTransfer):
 		code, status = ErrSelfTransfer, http.StatusBadRequest
+	case errors.Is(err, errRequestUsed):
+		code, status = ErrRequestUsed, http.StatusConflict
+	case errors.Is(err, errInvalidRequestID):
+		code, status = ErrInvalidRequestID, http.StatusBadRequest
 	case errors.Is(err, errInvalidAmount):
 		code, status = ErrInvalidAmount, http.StatusBadRequest
 	case errors.Is(err, errExpired):

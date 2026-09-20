@@ -1,3 +1,4 @@
+import '../config/pay_asset.dart';
 import '../utils/amount_formatter.dart';
 import '../utils/stellar_address.dart';
 
@@ -21,7 +22,6 @@ class PaymentRequest {
   });
 
   static const scheme = 'web+stellar';
-  static const assetCode = 'XLM';
   static const _maxNonceLength = 64;
 
   final String destination;
@@ -29,7 +29,8 @@ class PaymentRequest {
   /// Plain decimal string, or null when the sender chooses the amount.
   final String? amount;
 
-  /// Single-use id; the sender remembers it so a replayed QR is refused.
+  /// Single-use id. The sender passes it as the cheque's `requestId`, and
+  /// the server refuses a second cheque for it.
   final String? nonce;
 
   final DateTime? expiresAt;
@@ -38,8 +39,8 @@ class PaymentRequest {
 
   /// Returns null for anything that is not a request we can act on: a
   /// foreign scheme, a secret seed / muxed address, a malformed or
-  /// non-positive amount, or an asset other than the native one.
-  static PaymentRequest? tryParse(String? raw) {
+  /// non-positive amount, or an asset other than the app's own.
+  static PaymentRequest? tryParse(String? raw, {PayAsset? asset}) {
     if (raw == null) return null;
     final text = raw.trim();
     if (text.isEmpty) return null;
@@ -56,9 +57,15 @@ class PaymentRequest {
     final amount = q['amount'];
     if (amount != null && !AmountFormatter.isValidPositiveDecimal(amount)) return null;
 
-    final asset = q['asset_code'];
-    if (asset != null && asset != assetCode) return null;
-    if (q.containsKey('asset_issuer')) return null;
+    // Whatever the request names must be *our* asset — code and issuer both.
+    // An absent asset means "the app's asset" (a bare address, or a minimal
+    // request), so it is accepted.
+    final expected = asset ?? PayAsset.configured;
+    final code = q['asset_code'];
+    final issuer = q['asset_issuer'];
+    if (code != null && code != expected.code) return null;
+    if (issuer != null && issuer != expected.issuer) return null;
+    if (issuer == null && code != null && !expected.isNative) return null;
 
     final nonce = q['x_req'];
     if (nonce != null && (nonce.isEmpty || nonce.length > _maxNonceLength)) return null;
@@ -79,14 +86,16 @@ class PaymentRequest {
     );
   }
 
-  String toUri() {
+  String toUri({PayAsset? asset}) {
+    final a = asset ?? PayAsset.configured;
     return Uri(
       scheme: scheme,
       path: 'pay',
       queryParameters: {
         'destination': destination,
         if (amount != null) 'amount': amount!,
-        'asset_code': assetCode,
+        'asset_code': a.code,
+        if (!a.isNative) 'asset_issuer': a.issuer!,
         'msg': 'ghoStellar',
         if (nonce != null) 'x_req': nonce!,
         if (expiresAt != null) 'x_exp': '${expiresAt!.millisecondsSinceEpoch ~/ 1000}',

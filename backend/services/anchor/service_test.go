@@ -354,16 +354,75 @@ func TestStartInteractive_NoSEP24ServerFailsReadably(t *testing.T) {
 	}
 }
 
-func TestConfirmTrustline_RecordsState(t *testing.T) {
+func TestConfirmTrustline_OnChainRecordsActiveWithChainLedger(t *testing.T) {
 	repo := newFakeRepo()
 	cfg := testConfig(testAnchorDomain, testIssuer(t))
-	svc := newServiceWithRepo(cfg, repo, NewClient(http.DefaultClient), &portstest.FakeChain{}, discardLogger())
+	chain := &portstest.FakeChain{
+		GetTrustlineFunc: func(ctx context.Context, address, assetCode, assetIssuer string) (ports.TrustlineInfo, error) {
+			return ports.TrustlineInfo{Exists: true}, nil
+		},
+		GetLedgerFunc: func(ctx context.Context) (ports.LedgerInfo, error) {
+			return ports.LedgerInfo{Sequence: 4242}, nil
+		},
+	}
+	svc := newServiceWithRepo(cfg, repo, NewClient(http.DefaultClient), chain, discardLogger())
 
-	if err := svc.ConfirmTrustline(context.Background(), "GADDR", 42); err != nil {
+	if err := svc.ConfirmTrustline(context.Background(), "GADDR"); err != nil {
 		t.Fatalf("ConfirmTrustline: %v", err)
 	}
-	if got := repo.trustlines["GADDR/"+cfg.AssetCode+"/"+cfg.AssetIssuer]; got != "active" {
+	key := "GADDR/" + cfg.AssetCode + "/" + cfg.AssetIssuer
+	if got := repo.trustlines[key]; got != "active" {
 		t.Errorf("trustline state = %q, want active", got)
+	}
+	if got := repo.trustlineSeq[key]; got != 4242 {
+		t.Errorf("ledger_seq = %d, want the chain's 4242", got)
+	}
+}
+
+// TestConfirmTrustline_NotOnChainIsNotActive is the regression test for
+// "setup says completed but isn't": the client's word is not enough — a
+// trustline the chain doesn't have must never be recorded active, and a row
+// wrongly left active by an earlier unverified confirm is repaired.
+func TestConfirmTrustline_NotOnChainIsNotActive(t *testing.T) {
+	repo := newFakeRepo()
+	cfg := testConfig(testAnchorDomain, testIssuer(t))
+	key := "GADDR/" + cfg.AssetCode + "/" + cfg.AssetIssuer
+	repo.trustlines[key] = "active" // stale, wrong row from the old behaviour
+	chain := &portstest.FakeChain{
+		GetTrustlineFunc: func(ctx context.Context, address, assetCode, assetIssuer string) (ports.TrustlineInfo, error) {
+			return ports.TrustlineInfo{Exists: false}, nil
+		},
+	}
+	svc := newServiceWithRepo(cfg, repo, NewClient(http.DefaultClient), chain, discardLogger())
+
+	err := svc.ConfirmTrustline(context.Background(), "GADDR")
+	if !errors.Is(err, errTrustlineMissing) {
+		t.Fatalf("got %v, want errTrustlineMissing", err)
+	}
+	if got := repo.trustlines[key]; got != "missing" {
+		t.Errorf("trustline state = %q, want missing", got)
+	}
+	if chain.GetLedgerCalls != 0 {
+		t.Error("the ledger must not be read when there is no trustline")
+	}
+}
+
+func TestConfirmTrustline_ChainErrorLeavesRowUntouched(t *testing.T) {
+	repo := newFakeRepo()
+	cfg := testConfig(testAnchorDomain, testIssuer(t))
+	chain := &portstest.FakeChain{
+		GetTrustlineFunc: func(ctx context.Context, address, assetCode, assetIssuer string) (ports.TrustlineInfo, error) {
+			return ports.TrustlineInfo{}, errors.New("horizon down")
+		},
+	}
+	svc := newServiceWithRepo(cfg, repo, NewClient(http.DefaultClient), chain, discardLogger())
+
+	err := svc.ConfirmTrustline(context.Background(), "GADDR")
+	if !errors.Is(err, errChainUnavailable) {
+		t.Fatalf("got %v, want errChainUnavailable", err)
+	}
+	if len(repo.trustlines) != 0 {
+		t.Errorf("no row should be written when the chain can't be read, got %v", repo.trustlines)
 	}
 }
 

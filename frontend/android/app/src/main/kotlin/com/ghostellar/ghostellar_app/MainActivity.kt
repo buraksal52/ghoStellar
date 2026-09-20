@@ -16,12 +16,14 @@ class MainActivity : FlutterActivity() {
         channel.setMethodCallHandler { call, result ->
             when (call.method) {
                 "startBroadcast" -> {
-                    val payload = call.argument<String>("payload")
-                    HceService.currentPayload = payload?.toByteArray(Charsets.UTF_8)
+                    // `payload` is raw bytes (or null: nothing to offer yet).
+                    HceService.offer = call.argument<ByteArray>("payload")
+                    HceService.acceptWrites = call.argument<Boolean>("acceptWrites") ?: false
                     result.success(null)
                 }
                 "stopBroadcast" -> {
-                    HceService.currentPayload = null
+                    HceService.offer = null
+                    HceService.acceptWrites = false
                     result.success(null)
                 }
                 else -> result.notImplemented()
@@ -29,20 +31,25 @@ class MainActivity : FlutterActivity() {
         }
 
         // HostApduService and the Flutter engine share this process, so the
-        // read signal is a plain callback — no IPC. The APDU thread is not
+        // signals are plain callbacks — no IPC. The APDU thread is not
         // guaranteed to be the platform thread, so hop before touching the
         // channel.
         val main = Handler(Looper.getMainLooper())
-        HceService.onPayloadRead = {
+        HceService.onRead = {
             main.post { channel.invokeMethod("payloadRead", null) }
+        }
+        HceService.onWritten = { bytes ->
+            main.post { channel.invokeMethod("payloadWritten", bytes) }
         }
     }
 
     override fun cleanUpFlutterEngine(flutterEngine: FlutterEngine) {
-        // Drop the callback so a dead engine's channel is never invoked, and
-        // stop offering a payload nobody on this screen is managing any more.
-        HceService.onPayloadRead = null
-        HceService.currentPayload = null
+        // Drop the callbacks so a dead engine's channel is never invoked, and
+        // stop offering / accepting anything nobody on this screen manages.
+        HceService.onRead = null
+        HceService.onWritten = null
+        HceService.offer = null
+        HceService.acceptWrites = false
         super.cleanUpFlutterEngine(flutterEngine)
     }
 }

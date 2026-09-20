@@ -3,58 +3,67 @@ import 'dart:async';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:ghostellar_app/data/nfc/nfc_service.dart';
 
-/// A stand-in for the two-phone NFC handshake. Lets a test decide when the
-/// "other phone" reads our tag ([peerReads]) and what our reader session
-/// sees ([deliver]).
+/// A stand-in for the two-phone NFC exchange. It records what the app asks
+/// the radio to do, and lets a test play "the other phone": [receive] is a
+/// payload arriving (written to our tag, or read from theirs), [delivered]
+/// is the other phone getting ours.
+///
+/// The defaults describe an Android phone (can be a tag, can read). Set
+/// [canBeTag] false for an iPhone (reader only), both false for no NFC.
 class FakeNfc extends Fake implements NfcService {
   @override
-  bool isEmulateSupported = true;
+  bool canBeTag = true;
   @override
-  bool isScanSupported = true;
+  bool canRead = true;
 
-  final broadcasts = <String>[];
+  @override
+  bool get isAvailable => canBeTag || canRead;
+
+  @override
+  NfcRole get receiverRole => canBeTag ? NfcRole.tag : NfcRole.reader;
+
+  @override
+  NfcRole get senderRole => canBeTag ? NfcRole.auto : NfcRole.reader;
+
+  /// Every `start` call, in order.
+  final started = <({NfcRole role, String? offer})>[];
+
+  /// Every payload we were asked to present/write — from `start` and
+  /// `setOffer` alike, in order.
+  final presented = <String>[];
+
   int stops = 0;
-  int cancels = 0;
-  final _reads = StreamController<void>.broadcast();
-  final _scans = <Completer<String?>>[];
+
+  /// Make `start` fail, as when NFC is switched off.
+  Object? startError;
+
+  final _peer = StreamController<String>.broadcast();
+  final _delivered = StreamController<void>.broadcast();
 
   @override
-  Stream<void> get onPayloadRead => _reads.stream;
-
-  void peerReads() => _reads.add(null);
+  Stream<String> get onPeerPayload => _peer.stream;
 
   @override
-  Future<void> startBroadcast(String payload) async => broadcasts.add(payload);
+  Stream<void> get onDelivered => _delivered.stream;
+
+  /// The other phone hands us [payload].
+  void receive(String payload) => _peer.add(payload);
+
+  /// The other phone now has our offer.
+  void delivered() => _delivered.add(null);
 
   @override
-  Future<void> stopBroadcast() async => stops++;
-
-  @override
-  Future<String?> startScan({Duration timeout = const Duration(seconds: 30)}) {
-    final c = Completer<String?>();
-    _scans.add(c);
-    return c.future;
-  }
-
-  int get scanCount => _scans.length;
-
-  /// The peer's phone shows [payload] to our reader session.
-  void deliver(String payload) {
-    final open = _scans.where((c) => !c.isCompleted);
-    if (open.isNotEmpty) open.last.complete(payload);
+  Future<void> start({required NfcRole role, String? offer}) async {
+    if (startError != null) throw startError!;
+    started.add((role: role, offer: offer));
+    if (offer != null) presented.add(offer);
   }
 
   @override
-  Future<void> cancelScan() async {
-    cancels++;
-    for (final c in _scans) {
-      if (!c.isCompleted) c.complete(null);
-    }
+  Future<void> setOffer(String? offer) async {
+    if (offer != null) presented.add(offer);
   }
 
-  /// A reader session that ended without reading anything (timeout).
-  void deliverNothing() {
-    final open = _scans.where((c) => !c.isCompleted);
-    if (open.isNotEmpty) open.last.complete(null);
-  }
+  @override
+  Future<void> stop() async => stops++;
 }

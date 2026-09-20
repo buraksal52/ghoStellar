@@ -5,13 +5,21 @@ class ChequeApi {
   ChequeApi(this._client);
   final ApiClient _client;
 
+  /// [requestId] is the receiver's single-use payment-request id (the
+  /// `x_req` of the request that was scanned/tapped). The server refuses a
+  /// second cheque for the same one with `cheque.request_used`.
   Future<CreateChequeResult> create({
     required String receiver,
     required String amount,
+    String? requestId,
   }) async {
     final data = await _client.post(
       '/cheques',
-      body: {'receiver': receiver, 'amount': amount},
+      body: {
+        'receiver': receiver,
+        'amount': amount,
+        'requestId': ?requestId,
+      },
     );
     return CreateChequeResult.fromJson(data);
   }

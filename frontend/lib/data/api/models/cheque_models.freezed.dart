@@ -15,7 +15,9 @@ T _$identity<T>(T value) => value;
 /// @nodoc
 mixin _$Cheque {
 
- String get id; String get senderAddress; String get receiverAddress; String get tokenContract; String get amountRaw; int get decimals; ChequeState get state; String get expiresAt; String? get lockTxHash; String get createdAt; String get updatedAt;
+ String get id; String get senderAddress; String get receiverAddress;/// The single-use payment-request id this cheque answers (tap/scan
+/// flow); null for a plain cheque. Unique per receiver on the server.
+ String? get requestId; String get tokenContract; String get amountRaw; int get decimals; ChequeState get state; String get expiresAt; String? get lockTxHash; String get createdAt; String get updatedAt;
 /// Create a copy of Cheque
 /// with the given fields replaced by the non-null parameter values.
 @JsonKey(includeFromJson: false, includeToJson: false)
@@ -28,16 +30,16 @@ $ChequeCopyWith<Cheque> get copyWith => _$ChequeCopyWithImpl<Cheque>(this as Che
 
 @override
 bool operator ==(Object other) {
-  return identical(this, other) || (other.runtimeType == runtimeType&&other is Cheque&&(identical(other.id, id) || other.id == id)&&(identical(other.senderAddress, senderAddress) || other.senderAddress == senderAddress)&&(identical(other.receiverAddress, receiverAddress) || other.receiverAddress == receiverAddress)&&(identical(other.tokenContract, tokenContract) || other.tokenContract == tokenContract)&&(identical(other.amountRaw, amountRaw) || other.amountRaw == amountRaw)&&(identical(other.decimals, decimals) || other.decimals == decimals)&&(identical(other.state, state) || other.state == state)&&(identical(other.expiresAt, expiresAt) || other.expiresAt == expiresAt)&&(identical(other.lockTxHash, lockTxHash) || other.lockTxHash == lockTxHash)&&(identical(other.createdAt, createdAt) || other.createdAt == createdAt)&&(identical(other.updatedAt, updatedAt) || other.updatedAt == updatedAt));
+  return identical(this, other) || (other.runtimeType == runtimeType&&other is Cheque&&(identical(other.id, id) || other.id == id)&&(identical(other.senderAddress, senderAddress) || other.senderAddress == senderAddress)&&(identical(other.receiverAddress, receiverAddress) || other.receiverAddress == receiverAddress)&&(identical(other.requestId, requestId) || other.requestId == requestId)&&(identical(other.tokenContract, tokenContract) || other.tokenContract == tokenContract)&&(identical(other.amountRaw, amountRaw) || other.amountRaw == amountRaw)&&(identical(other.decimals, decimals) || other.decimals == decimals)&&(identical(other.state, state) || other.state == state)&&(identical(other.expiresAt, expiresAt) || other.expiresAt == expiresAt)&&(identical(other.lockTxHash, lockTxHash) || other.lockTxHash == lockTxHash)&&(identical(other.createdAt, createdAt) || other.createdAt == createdAt)&&(identical(other.updatedAt, updatedAt) || other.updatedAt == updatedAt));
 }
 
 @JsonKey(includeFromJson: false, includeToJson: false)
 @override
-int get hashCode => Object.hash(runtimeType,id,senderAddress,receiverAddress,tokenContract,amountRaw,decimals,state,expiresAt,lockTxHash,createdAt,updatedAt);
+int get hashCode => Object.hash(runtimeType,id,senderAddress,receiverAddress,requestId,tokenContract,amountRaw,decimals,state,expiresAt,lockTxHash,createdAt,updatedAt);
 
 @override
 String toString() {
-  return 'Cheque(id: $id, senderAddress: $senderAddress, receiverAddress: $receiverAddress, tokenContract: $tokenContract, amountRaw: $amountRaw, decimals: $decimals, state: $state, expiresAt: $expiresAt, lockTxHash: $lockTxHash, createdAt: $createdAt, updatedAt: $updatedAt)';
+  return 'Cheque(id: $id, senderAddress: $senderAddress, receiverAddress: $receiverAddress, requestId: $requestId, tokenContract: $tokenContract, amountRaw: $amountRaw, decimals: $decimals, state: $state, expiresAt: $expiresAt, lockTxHash: $lockTxHash, createdAt: $createdAt, updatedAt: $updatedAt)';
 }
 
 
@@ -48,7 +50,7 @@ abstract mixin class $ChequeCopyWith<$Res>  {
   factory $ChequeCopyWith(Cheque value, $Res Function(Cheque) _then) = _$ChequeCopyWithImpl;
 @useResult
 $Res call({
- String id, String senderAddress, String receiverAddress, String tokenContract, String amountRaw, int decimals, ChequeState state, String expiresAt, String? lockTxHash, String createdAt, String updatedAt
+ String id, String senderAddress, String receiverAddress, String? requestId, String tokenContract, String amountRaw, int decimals, ChequeState state, String expiresAt, String? lockTxHash, String createdAt, String updatedAt
 });
 
 
@@ -65,12 +67,13 @@ class _$ChequeCopyWithImpl<$Res>
 
 /// Create a copy of Cheque
 /// with the given fields replaced by the non-null parameter values.
-@pragma('vm:prefer-inline') @override $Res call({Object? id = null,Object? senderAddress = null,Object? receiverAddress = null,Object? tokenContract = null,Object? amountRaw = null,Object? decimals = null,Object? state = null,Object? expiresAt = null,Object? lockTxHash = freezed,Object? createdAt = null,Object? updatedAt = null,}) {
+@pragma('vm:prefer-inline') @override $Res call({Object? id = null,Object? senderAddress = null,Object? receiverAddress = null,Object? requestId = freezed,Object? tokenContract = null,Object? amountRaw = null,Object? decimals = null,Object? state = null,Object? expiresAt = null,Object? lockTxHash = freezed,Object? createdAt = null,Object? updatedAt = null,}) {
   return _then(_self.copyWith(
 id: null == id ? _self.id : id // ignore: cast_nullable_to_non_nullable
 as String,senderAddress: null == senderAddress ? _self.senderAddress : senderAddress // ignore: cast_nullable_to_non_nullable
 as String,receiverAddress: null == receiverAddress ? _self.receiverAddress : receiverAddress // ignore: cast_nullable_to_non_nullable
-as String,tokenContract: null == tokenContract ? _self.tokenContract : tokenContract // ignore: cast_nullable_to_non_nullable
+as String,requestId: freezed == requestId ? _self.requestId : requestId // ignore: cast_nullable_to_non_nullable
+as String?,tokenContract: null == tokenContract ? _self.tokenContract : tokenContract // ignore: cast_nullable_to_non_nullable
 as String,amountRaw: null == amountRaw ? _self.amountRaw : amountRaw // ignore: cast_nullable_to_non_nullable
 as String,decimals: null == decimals ? _self.decimals : decimals // ignore: cast_nullable_to_non_nullable
 as int,state: null == state ? _self.state : state // ignore: cast_nullable_to_non_nullable
@@ -163,10 +166,10 @@ return $default(_that);case _:
 /// }
 /// ```
 
-@optionalTypeArgs TResult maybeWhen<TResult extends Object?>(TResult Function( String id,  String senderAddress,  String receiverAddress,  String tokenContract,  String amountRaw,  int decimals,  ChequeState state,  String expiresAt,  String? lockTxHash,  String createdAt,  String updatedAt)?  $default,{required TResult orElse(),}) {final _that = this;
+@optionalTypeArgs TResult maybeWhen<TResult extends Object?>(TResult Function( String id,  String senderAddress,  String receiverAddress,  String? requestId,  String tokenContract,  String amountRaw,  int decimals,  ChequeState state,  String expiresAt,  String? lockTxHash,  String createdAt,  String updatedAt)?  $default,{required TResult orElse(),}) {final _that = this;
 switch (_that) {
 case _Cheque() when $default != null:
-return $default(_that.id,_that.senderAddress,_that.receiverAddress,_that.tokenContract,_that.amountRaw,_that.decimals,_that.state,_that.expiresAt,_that.lockTxHash,_that.createdAt,_that.updatedAt);case _:
+return $default(_that.id,_that.senderAddress,_that.receiverAddress,_that.requestId,_that.tokenContract,_that.amountRaw,_that.decimals,_that.state,_that.expiresAt,_that.lockTxHash,_that.createdAt,_that.updatedAt);case _:
   return orElse();
 
 }
@@ -184,10 +187,10 @@ return $default(_that.id,_that.senderAddress,_that.receiverAddress,_that.tokenCo
 /// }
 /// ```
 
-@optionalTypeArgs TResult when<TResult extends Object?>(TResult Function( String id,  String senderAddress,  String receiverAddress,  String tokenContract,  String amountRaw,  int decimals,  ChequeState state,  String expiresAt,  String? lockTxHash,  String createdAt,  String updatedAt)  $default,) {final _that = this;
+@optionalTypeArgs TResult when<TResult extends Object?>(TResult Function( String id,  String senderAddress,  String receiverAddress,  String? requestId,  String tokenContract,  String amountRaw,  int decimals,  ChequeState state,  String expiresAt,  String? lockTxHash,  String createdAt,  String updatedAt)  $default,) {final _that = this;
 switch (_that) {
 case _Cheque():
-return $default(_that.id,_that.senderAddress,_that.receiverAddress,_that.tokenContract,_that.amountRaw,_that.decimals,_that.state,_that.expiresAt,_that.lockTxHash,_that.createdAt,_that.updatedAt);case _:
+return $default(_that.id,_that.senderAddress,_that.receiverAddress,_that.requestId,_that.tokenContract,_that.amountRaw,_that.decimals,_that.state,_that.expiresAt,_that.lockTxHash,_that.createdAt,_that.updatedAt);case _:
   throw StateError('Unexpected subclass');
 
 }
@@ -204,10 +207,10 @@ return $default(_that.id,_that.senderAddress,_that.receiverAddress,_that.tokenCo
 /// }
 /// ```
 
-@optionalTypeArgs TResult? whenOrNull<TResult extends Object?>(TResult? Function( String id,  String senderAddress,  String receiverAddress,  String tokenContract,  String amountRaw,  int decimals,  ChequeState state,  String expiresAt,  String? lockTxHash,  String createdAt,  String updatedAt)?  $default,) {final _that = this;
+@optionalTypeArgs TResult? whenOrNull<TResult extends Object?>(TResult? Function( String id,  String senderAddress,  String receiverAddress,  String? requestId,  String tokenContract,  String amountRaw,  int decimals,  ChequeState state,  String expiresAt,  String? lockTxHash,  String createdAt,  String updatedAt)?  $default,) {final _that = this;
 switch (_that) {
 case _Cheque() when $default != null:
-return $default(_that.id,_that.senderAddress,_that.receiverAddress,_that.tokenContract,_that.amountRaw,_that.decimals,_that.state,_that.expiresAt,_that.lockTxHash,_that.createdAt,_that.updatedAt);case _:
+return $default(_that.id,_that.senderAddress,_that.receiverAddress,_that.requestId,_that.tokenContract,_that.amountRaw,_that.decimals,_that.state,_that.expiresAt,_that.lockTxHash,_that.createdAt,_that.updatedAt);case _:
   return null;
 
 }
@@ -219,12 +222,15 @@ return $default(_that.id,_that.senderAddress,_that.receiverAddress,_that.tokenCo
 @JsonSerializable()
 
 class _Cheque implements Cheque {
-  const _Cheque({required this.id, required this.senderAddress, required this.receiverAddress, required this.tokenContract, required this.amountRaw, required this.decimals, required this.state, required this.expiresAt, this.lockTxHash, required this.createdAt, required this.updatedAt});
+  const _Cheque({required this.id, required this.senderAddress, required this.receiverAddress, this.requestId, required this.tokenContract, required this.amountRaw, required this.decimals, required this.state, required this.expiresAt, this.lockTxHash, required this.createdAt, required this.updatedAt});
   factory _Cheque.fromJson(Map<String, dynamic> json) => _$ChequeFromJson(json);
 
 @override final  String id;
 @override final  String senderAddress;
 @override final  String receiverAddress;
+/// The single-use payment-request id this cheque answers (tap/scan
+/// flow); null for a plain cheque. Unique per receiver on the server.
+@override final  String? requestId;
 @override final  String tokenContract;
 @override final  String amountRaw;
 @override final  int decimals;
@@ -247,16 +253,16 @@ Map<String, dynamic> toJson() {
 
 @override
 bool operator ==(Object other) {
-  return identical(this, other) || (other.runtimeType == runtimeType&&other is _Cheque&&(identical(other.id, id) || other.id == id)&&(identical(other.senderAddress, senderAddress) || other.senderAddress == senderAddress)&&(identical(other.receiverAddress, receiverAddress) || other.receiverAddress == receiverAddress)&&(identical(other.tokenContract, tokenContract) || other.tokenContract == tokenContract)&&(identical(other.amountRaw, amountRaw) || other.amountRaw == amountRaw)&&(identical(other.decimals, decimals) || other.decimals == decimals)&&(identical(other.state, state) || other.state == state)&&(identical(other.expiresAt, expiresAt) || other.expiresAt == expiresAt)&&(identical(other.lockTxHash, lockTxHash) || other.lockTxHash == lockTxHash)&&(identical(other.createdAt, createdAt) || other.createdAt == createdAt)&&(identical(other.updatedAt, updatedAt) || other.updatedAt == updatedAt));
+  return identical(this, other) || (other.runtimeType == runtimeType&&other is _Cheque&&(identical(other.id, id) || other.id == id)&&(identical(other.senderAddress, senderAddress) || other.senderAddress == senderAddress)&&(identical(other.receiverAddress, receiverAddress) || other.receiverAddress == receiverAddress)&&(identical(other.requestId, requestId) || other.requestId == requestId)&&(identical(other.tokenContract, tokenContract) || other.tokenContract == tokenContract)&&(identical(other.amountRaw, amountRaw) || other.amountRaw == amountRaw)&&(identical(other.decimals, decimals) || other.decimals == decimals)&&(identical(other.state, state) || other.state == state)&&(identical(other.expiresAt, expiresAt) || other.expiresAt == expiresAt)&&(identical(other.lockTxHash, lockTxHash) || other.lockTxHash == lockTxHash)&&(identical(other.createdAt, createdAt) || other.createdAt == createdAt)&&(identical(other.updatedAt, updatedAt) || other.updatedAt == updatedAt));
 }
 
 @JsonKey(includeFromJson: false, includeToJson: false)
 @override
-int get hashCode => Object.hash(runtimeType,id,senderAddress,receiverAddress,tokenContract,amountRaw,decimals,state,expiresAt,lockTxHash,createdAt,updatedAt);
+int get hashCode => Object.hash(runtimeType,id,senderAddress,receiverAddress,requestId,tokenContract,amountRaw,decimals,state,expiresAt,lockTxHash,createdAt,updatedAt);
 
 @override
 String toString() {
-  return 'Cheque(id: $id, senderAddress: $senderAddress, receiverAddress: $receiverAddress, tokenContract: $tokenContract, amountRaw: $amountRaw, decimals: $decimals, state: $state, expiresAt: $expiresAt, lockTxHash: $lockTxHash, createdAt: $createdAt, updatedAt: $updatedAt)';
+  return 'Cheque(id: $id, senderAddress: $senderAddress, receiverAddress: $receiverAddress, requestId: $requestId, tokenContract: $tokenContract, amountRaw: $amountRaw, decimals: $decimals, state: $state, expiresAt: $expiresAt, lockTxHash: $lockTxHash, createdAt: $createdAt, updatedAt: $updatedAt)';
 }
 
 
@@ -267,7 +273,7 @@ abstract mixin class _$ChequeCopyWith<$Res> implements $ChequeCopyWith<$Res> {
   factory _$ChequeCopyWith(_Cheque value, $Res Function(_Cheque) _then) = __$ChequeCopyWithImpl;
 @override @useResult
 $Res call({
- String id, String senderAddress, String receiverAddress, String tokenContract, String amountRaw, int decimals, ChequeState state, String expiresAt, String? lockTxHash, String createdAt, String updatedAt
+ String id, String senderAddress, String receiverAddress, String? requestId, String tokenContract, String amountRaw, int decimals, ChequeState state, String expiresAt, String? lockTxHash, String createdAt, String updatedAt
 });
 
 
@@ -284,12 +290,13 @@ class __$ChequeCopyWithImpl<$Res>
 
 /// Create a copy of Cheque
 /// with the given fields replaced by the non-null parameter values.
-@override @pragma('vm:prefer-inline') $Res call({Object? id = null,Object? senderAddress = null,Object? receiverAddress = null,Object? tokenContract = null,Object? amountRaw = null,Object? decimals = null,Object? state = null,Object? expiresAt = null,Object? lockTxHash = freezed,Object? createdAt = null,Object? updatedAt = null,}) {
+@override @pragma('vm:prefer-inline') $Res call({Object? id = null,Object? senderAddress = null,Object? receiverAddress = null,Object? requestId = freezed,Object? tokenContract = null,Object? amountRaw = null,Object? decimals = null,Object? state = null,Object? expiresAt = null,Object? lockTxHash = freezed,Object? createdAt = null,Object? updatedAt = null,}) {
   return _then(_Cheque(
 id: null == id ? _self.id : id // ignore: cast_nullable_to_non_nullable
 as String,senderAddress: null == senderAddress ? _self.senderAddress : senderAddress // ignore: cast_nullable_to_non_nullable
 as String,receiverAddress: null == receiverAddress ? _self.receiverAddress : receiverAddress // ignore: cast_nullable_to_non_nullable
-as String,tokenContract: null == tokenContract ? _self.tokenContract : tokenContract // ignore: cast_nullable_to_non_nullable
+as String,requestId: freezed == requestId ? _self.requestId : requestId // ignore: cast_nullable_to_non_nullable
+as String?,tokenContract: null == tokenContract ? _self.tokenContract : tokenContract // ignore: cast_nullable_to_non_nullable
 as String,amountRaw: null == amountRaw ? _self.amountRaw : amountRaw // ignore: cast_nullable_to_non_nullable
 as String,decimals: null == decimals ? _self.decimals : decimals // ignore: cast_nullable_to_non_nullable
 as int,state: null == state ? _self.state : state // ignore: cast_nullable_to_non_nullable

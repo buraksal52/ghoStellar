@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../../core/config/pay_asset.dart';
 import '../../core/payments/payment_uri.dart';
 import '../../core/theme/app_colors.dart';
 import '../../core/utils/amount_formatter.dart';
@@ -114,7 +115,7 @@ class _ReceivePageState extends ConsumerState<ReceivePage> {
     final nfc = ref.read(nfcServiceProvider);
     final request = session.request;
     final amount = request?.amount;
-    final asked = amount == null ? '' : '${AmountFormatter.trimTrailingZeros(amount)} XLM';
+    final asked = amount == null ? '' : '${AmountFormatter.trimTrailingZeros(amount)} ${PayAsset.configured.label}';
 
     switch (session.phase) {
       case ReceivePhase.done:
@@ -147,11 +148,17 @@ class _ReceivePageState extends ConsumerState<ReceivePage> {
           _title(
             context,
             'Waiting for the payment',
-            nfc.isScanSupported
+            nfc.canBeTag
                 ? 'The sender is signing. Hold the phones together again when they ask, or scan their code.'
-                : 'The sender is signing. Scan the code on their screen when it appears.',
+                : 'The sender is signing. When they show "Payment sent", tap their phone again — or scan their code.',
             c,
           ),
+          if (nfc.isAvailable && !nfc.canBeTag)
+            TextButton.icon(
+              onPressed: _session.beginNfcRead,
+              icon: Icon(Icons.nfc, size: 18, color: c.text),
+              label: Text("Tap sender's phone", style: TextStyle(fontSize: 13, color: c.text)),
+            ),
           TextButton.icon(
             onPressed: _scanHandoff,
             icon: Icon(Icons.qr_code_scanner, size: 18, color: c.text),
@@ -161,7 +168,7 @@ class _ReceivePageState extends ConsumerState<ReceivePage> {
       case ReceivePhase.idle:
       case ReceivePhase.offering:
         final uri = request?.toUri();
-        final showRing = nfc.isEmulateSupported;
+        final showRing = nfc.canBeTag;
         return [
           if (showRing)
             _nfcRing(c, Icons.nfc)
@@ -173,7 +180,9 @@ class _ReceivePageState extends ConsumerState<ReceivePage> {
             showRing ? 'Ready to Receive' : 'Show this to the sender',
             showRing
                 ? "Bring the sender's device close — or show them your QR code."
-                : 'NFC tap-to-receive needs Android on both sides — have them scan this QR instead.',
+                : nfc.isAvailable
+                    ? 'Have the sender scan this QR — or tap phones if theirs is an Android.'
+                    : 'Have the sender scan this QR.',
             c,
           ),
           if (asked.isNotEmpty) ...[
@@ -192,6 +201,12 @@ class _ReceivePageState extends ConsumerState<ReceivePage> {
             ),
             if (_showQr) ...[const SizedBox(height: 8), QrCard(data: uri)],
           ],
+          if (nfc.isAvailable && !nfc.canBeTag)
+            TextButton.icon(
+              onPressed: _session.beginNfcRead,
+              icon: Icon(Icons.nfc, size: 18, color: c.text),
+              label: Text("Tap sender's phone", style: TextStyle(fontSize: 13, color: c.text)),
+            ),
           TextButton.icon(
             onPressed: _scanHandoff,
             icon: Icon(Icons.qr_code_scanner, size: 18, color: c.text),
@@ -249,7 +264,7 @@ class _ReceivePageState extends ConsumerState<ReceivePage> {
               onChanged: _onAmountChanged,
               decoration: InputDecoration(
                 hintText: 'Request an amount (optional)',
-                suffixText: 'XLM',
+                suffixText: PayAsset.configured.label,
                 errorText: _amountError,
               ),
             ),
@@ -278,7 +293,7 @@ class _ReceivePageState extends ConsumerState<ReceivePage> {
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
                         Text(
-                          '${AmountFormatter.trimTrailingZeros(AmountFormatter.fromRaw(cheque.amountRaw, cheque.decimals))} XLM',
+                          '${AmountFormatter.trimTrailingZeros(AmountFormatter.fromRaw(cheque.amountRaw, cheque.decimals))} ${PayAsset.configured.label}',
                           style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w600),
                         ),
                         const SizedBox(height: 2),

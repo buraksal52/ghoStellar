@@ -2,8 +2,10 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_riverpod/misc.dart' show Override;
 import 'package:flutter_test/flutter_test.dart';
+import 'package:ghostellar_app/core/config/pay_asset.dart';
 import 'package:ghostellar_app/core/payments/payment_uri.dart';
 import 'package:ghostellar_app/core/theme/app_colors.dart';
+import 'package:ghostellar_app/data/nfc/nfc_service.dart';
 import 'package:ghostellar_app/features/receive/receive_page.dart';
 import 'package:ghostellar_app/features/shared/widgets/qr_card.dart';
 import 'package:ghostellar_app/state/core_providers.dart';
@@ -78,8 +80,8 @@ void main() {
     await _open(tester, rig);
 
     expect(find.text('Ready to Receive'), findsOneWidget);
-    expect(rig.nfc.broadcasts, hasLength(1));
-    final request = PaymentRequest.tryParse(rig.nfc.broadcasts.single)!;
+    expect(rig.nfc.presented, hasLength(1));
+    final request = PaymentRequest.tryParse(rig.nfc.presented.single)!;
     expect(request.destination, rig.keyPair.accountId);
     expect(request.amount, isNull, reason: 'no amount typed yet — the sender chooses');
     expect(find.text('Secure session active'), findsOneWidget);
@@ -96,20 +98,70 @@ void main() {
     await tester.pump();
 
     final qr = tester.widget<QrCard>(find.byType(QrCard));
-    expect(qr.data, rig.nfc.broadcasts.single);
+    expect(qr.data, rig.nfc.presented.single);
 
     await _leave(tester, rig);
   });
 
   testWidgets('without NFC the QR is the primary affordance', (tester) async {
     final rig = _Rig();
-    rig.nfc.isEmulateSupported = false;
-    rig.nfc.isScanSupported = false;
+    rig.nfc.canBeTag = false;
+    rig.nfc.canRead = false;
     await _open(tester, rig);
 
     expect(find.text('Show this to the sender'), findsOneWidget);
     expect(find.byType(QrCard), findsOneWidget);
-    expect(rig.nfc.broadcasts, isEmpty);
+    expect(rig.nfc.presented, isEmpty);
+
+    await _leave(tester, rig);
+  });
+
+  testWidgets('an iPhone gets the QR plus a button to start an NFC read (never automatic)', (tester) async {
+    final rig = _Rig();
+    rig.nfc.canBeTag = false; // reader only
+    await _open(tester, rig);
+
+    expect(find.text('Show this to the sender'), findsOneWidget);
+    expect(find.byType(QrCard), findsOneWidget);
+    expect(find.text('Have the sender scan this QR — or tap phones if theirs is an Android.'), findsOneWidget);
+    expect(rig.nfc.started, isEmpty, reason: 'Apple wants NFC sessions user-initiated');
+
+    await tester.tap(find.text("Tap sender's phone"));
+    await tester.pump();
+
+    expect(rig.nfc.started.single.role, NfcRole.reader);
+    expect(
+      PaymentRequest.tryParse(rig.nfc.started.single.offer)!.destination,
+      rig.keyPair.accountId,
+      reason: 'the request we write to their tag',
+    );
+
+    await _leave(tester, rig);
+  });
+
+  testWidgets('an Android receiver has no read button — it is the tag already', (tester) async {
+    final rig = _Rig();
+    await _open(tester, rig);
+
+    expect(find.text("Tap sender's phone"), findsNothing);
+    expect(rig.nfc.started.single.role, NfcRole.tag);
+
+    await _leave(tester, rig);
+  });
+
+  testWidgets('an iPhone waiting for the cheque can start the second tap', (tester) async {
+    final rig = _Rig();
+    rig.nfc.canBeTag = false;
+    await _open(tester, rig);
+
+    rig.nfc.delivered();
+    await tester.pump();
+    await tester.pump();
+
+    expect(find.text('Waiting for the payment'), findsOneWidget);
+    await tester.tap(find.text("Tap sender's phone"));
+    await tester.pump();
+    expect(rig.nfc.started, hasLength(1));
 
     await _leave(tester, rig);
   });
@@ -120,14 +172,14 @@ void main() {
 
     await tester.enterText(find.byType(TextField), '25.50');
     await tester.pump(const Duration(milliseconds: 100));
-    expect(rig.nfc.broadcasts, hasLength(1), reason: 'still typing — no restart yet');
+    expect(rig.nfc.presented, hasLength(1), reason: 'still typing — no restart yet');
 
     await tester.pump(const Duration(milliseconds: 600));
     await tester.pump();
 
-    expect(rig.nfc.broadcasts, hasLength(2));
-    expect(PaymentRequest.tryParse(rig.nfc.broadcasts.last)!.amount, '25.50');
-    expect(find.text('Requesting 25.5 XLM'), findsOneWidget);
+    expect(rig.nfc.presented, hasLength(2));
+    expect(PaymentRequest.tryParse(rig.nfc.presented.last)!.amount, '25.50');
+    expect(find.text('Requesting 25.5 ${PayAsset.configured.label}'), findsOneWidget);
 
     await _leave(tester, rig);
   });
@@ -140,7 +192,7 @@ void main() {
     await tester.pump(const Duration(seconds: 1));
 
     expect(find.text('Enter a valid amount, or leave it empty.'), findsOneWidget);
-    expect(rig.nfc.broadcasts, hasLength(1));
+    expect(rig.nfc.presented, hasLength(1));
 
     await _leave(tester, rig);
   });
@@ -149,7 +201,7 @@ void main() {
     final rig = _Rig();
     await _open(tester, rig);
 
-    rig.nfc.peerReads();
+    rig.nfc.delivered();
     await tester.pump();
     await tester.pump();
 
@@ -187,7 +239,7 @@ void main() {
     final rig = _Rig(pending: true);
     await _open(tester, rig);
 
-    expect(find.text('25.5 XLM'), findsOneWidget);
+    expect(find.text('25.5 ${PayAsset.configured.label}'), findsOneWidget);
     await tester.tap(find.text('Claim'));
     await tester.pump();
     await tester.pump();
@@ -218,7 +270,6 @@ void main() {
     await _leave(tester, rig);
 
     expect(container.read(receiveSessionProvider).phase, ReceivePhase.idle);
-    expect(rig.nfc.cancels, greaterThan(0));
     expect(rig.nfc.stops, greaterThan(0));
 
     final callsAfterLeaving = rig.syncApi.calls;

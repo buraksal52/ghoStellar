@@ -130,6 +130,7 @@ class AnchorApi {
     return data['trustlineXdr'] as String;
   }
 
-  Future<void> trustlineConfirm(String anchorId, int ledgerSeq) =>
-      _client.post('/anchors/$anchorId/trustline-confirm', body: {'ledgerSeq': ledgerSeq});
+  /// The backend verifies the trustline against the chain itself, so no
+  /// client-supplied ledger is sent.
+  Future<void> trustlineConfirm(String anchorId) => _client.post('/anchors/$anchorId/trustline-confirm');
 }

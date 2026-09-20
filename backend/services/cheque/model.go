@@ -38,9 +38,13 @@ func (s State) IsTerminal() bool { return terminalStates[s] }
 
 // Cheque is one row of pay.cheques.
 type Cheque struct {
-	ID              string    `json:"id"`
-	SenderAddress   string    `json:"senderAddress"`
-	ReceiverAddress string    `json:"receiverAddress"`
+	ID              string `json:"id"`
+	SenderAddress   string `json:"senderAddress"`
+	ReceiverAddress string `json:"receiverAddress"`
+	// RequestID is the receiver's single-use payment-request id this cheque
+	// answers (tap/scan flow), empty for a plain cheque. Unique per receiver
+	// (migration 000003) — the server-side half of "you already paid this".
+	RequestID       string    `json:"requestId,omitempty"`
 	TokenContract   string    `json:"tokenContract"`
 	AmountRaw       string    `json:"amountRaw"` // decimal string, money.Amount.String() shape
 	Decimals        uint8     `json:"decimals"`

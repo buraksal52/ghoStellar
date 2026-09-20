@@ -5,150 +5,373 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
 import 'package:nfc_manager/nfc_manager.dart';
 import 'package:nfc_manager/nfc_manager_android.dart';
+import 'package:nfc_manager/nfc_manager_ios.dart';
+
+import 'nfc_frame.dart';
+
+/// Which side of the tap a device plays.
+enum NfcRole {
+  /// Present a payload as a tag (Android Host Card Emulation) and accept
+  /// writes. Continuous until [NfcService.stop].
+  tag,
+
+  /// Read the other phone's tag, and write ours. One shot: ends after the
+  /// first successful exchange or the timeout. The only role an iPhone has.
+  reader,
+
+  /// Android only: alternate short reader windows with tag windows, so it
+  /// works against another Android (either may be the reader) *and* an
+  /// iPhone (which can only read). Continuous until [NfcService.stop].
+  auto,
+}
 
 /// Real NFC handshake between two phones. It carries short URIs — a payment
-/// request (receiver -> sender) and a cheque handoff (sender -> receiver),
-/// both defined in `core/payments/payment_uri.dart` — before or after the
-/// normal REST + sign + submit pipeline. NFC is never the settlement rail,
-/// just the proximity handshake; this class moves opaque strings and leaves
-/// parsing and validation to the caller.
+/// request and a cheque handoff, both defined in
+/// `core/payments/payment_uri.dart` — and moves them in **both directions in
+/// one tap** (see [NfcProtocol]). NFC is never the settlement rail, just the
+/// proximity handshake; this class moves opaque strings and leaves parsing
+/// and validation to the caller.
 ///
-/// Platform split (deliberate, not a bug): Android can both broadcast (Host
+/// Platform split (deliberate, not a bug): Android can both present (Host
 /// Card Emulation, via a native `HostApduService` reached over a platform
 /// channel — no Flutter NFC plugin exposes HCE emulate-mode) and read
-/// (`nfc_manager`'s ISO-DEP reader mode). iOS's Core NFC framework does not
-/// allow third-party apps to emulate a tag for another phone to read, and
-/// reading another phone's HCE needs an ISO 7816 select-identifiers
-/// entitlement we don't ship, so both flags are false there — the UI must
-/// fall back to QR on iOS, it should never imply a working "Tap to Send".
+/// (`nfc_manager`'s ISO-DEP reader mode). iOS's Core NFC does not let a
+/// third-party app emulate a tag, so an iPhone is reader-only. That makes
+/// iPhone↔Android work in both directions, and **iPhone↔iPhone impossible
+/// over NFC** — the UI falls back to QR there. (Apple's HCE API exists only
+/// in the EU/Japan behind an Apple-approved entitlement.)
 class NfcService {
-  static const _hceChannel = MethodChannel('ghostellar/nfc_hce');
+  NfcService({
+    ReaderTransport? reader,
+    TagTransport? tag,
+    TargetPlatform? platform,
+    this.readerWindow = const Duration(milliseconds: 1500),
+    this.tagWindow = const Duration(milliseconds: 1500),
+    this.readerTimeout = const Duration(seconds: 30),
+  })  : _reader = reader ?? NfcManagerReaderTransport(),
+        _tag = tag,
+        _platform = platform ?? defaultTargetPlatform;
 
-  /// Custom, unregistered AID under the proprietary `F0` prefix — fine for
-  /// this MVP's own app-to-app handshake, not a payment network AID.
-  static const List<int> _aid = [0xF0, 0x47, 0x68, 0x6F, 0x53, 0x74, 0x6C];
-  static const int _insGetData = 0xCA;
+  final ReaderTransport _reader;
+  TagTransport? _tag;
+  final TargetPlatform _platform;
 
-  /// A short-APDU response carries at most 256 data bytes; leave headroom
-  /// for the 2 status bytes rather than discovering the limit on a device.
-  static const int maxPayloadBytes = 240;
+  /// [NfcRole.auto]: how long each reader window and each tag (listen)
+  /// window lasts.
+  final Duration readerWindow;
+  final Duration tagWindow;
 
-  StreamController<void>? _readController;
-  Completer<String?>? _activeScan;
+  /// [NfcRole.reader]: give up after this long with no exchange.
+  final Duration readerTimeout;
 
-  bool get isEmulateSupported => defaultTargetPlatform == TargetPlatform.android;
-  bool get isScanSupported => defaultTargetPlatform == TargetPlatform.android;
+  final _peer = StreamController<String>.broadcast();
+  final _delivered = StreamController<void>.broadcast();
+  StreamSubscription<void>? _readSub;
+  StreamSubscription<Uint8List>? _writtenSub;
 
-  Future<bool> get isReaderSupported async {
-    return NfcManager.instance.isAvailable();
-  }
+  NfcRole? _role;
+  String? _offer;
+  int _epoch = 0;
+  Completer<void>? _window;
+  String? _lastPeer;
+  String? _lastDeliveredOffer;
 
-  /// Fires each time a reader successfully pulled the current broadcast
-  /// payload — how the broadcaster learns "the other phone has it". A reader
-  /// may retry GET DATA, so consumers must treat repeats as the same event.
-  Stream<void> get onPayloadRead {
-    var controller = _readController;
-    if (controller == null) {
-      controller = StreamController<void>.broadcast();
-      _readController = controller;
-      _hceChannel.setMethodCallHandler((call) async {
-        if (call.method == 'payloadRead') controller!.add(null);
-      });
+  bool get canBeTag => _platform == TargetPlatform.android;
+  bool get canRead => _platform == TargetPlatform.android || _platform == TargetPlatform.iOS;
+
+  /// Whether this phone can take part in NFC at all.
+  bool get isAvailable => canBeTag || canRead;
+
+  /// The role this device plays when it is the one *showing* a request.
+  NfcRole get receiverRole => canBeTag ? NfcRole.tag : NfcRole.reader;
+
+  /// The role this device plays when it is the one *paying*.
+  NfcRole get senderRole => canBeTag ? NfcRole.auto : NfcRole.reader;
+
+  /// Whether the OS hardware is on (a device with NFC can still have it off).
+  Future<bool> get isHardwareEnabled => NfcManager.instance.isAvailable();
+
+  /// A payload the other phone handed us — read from its tag, or written to
+  /// ours. Unvalidated text. A payload identical to the previous one is not
+  /// re-emitted, so a phone resting on ours doesn't fire it every window.
+  Stream<String> get onPeerPayload => _peer.stream;
+
+  /// The other phone now has our offer: it read the whole tag payload, or we
+  /// wrote it to them in full. May repeat for a new offer, never for the same.
+  Stream<void> get onDelivered => _delivered.stream;
+
+  /// Starts (or restarts) a session. [offer] is what we present/write, or
+  /// null when we have nothing to give yet (a sender waiting for a request).
+  Future<void> start({required NfcRole role, String? offer}) async {
+    await stop();
+    if (!isAvailable) throw UnsupportedError('NFC is not available on this platform.');
+    if (role == NfcRole.tag && !canBeTag) {
+      throw UnsupportedError('This device cannot present as an NFC tag.');
     }
-    return controller.stream;
-  }
-
-  /// Android only. Starts offering [payload] via HCE so another phone can
-  /// read it by tapping. Throws on other platforms and for a payload the
-  /// APDU response cannot carry.
-  Future<void> startBroadcast(String payload) async {
-    if (!isEmulateSupported) {
-      throw UnsupportedError('NFC emulate/broadcast is Android-only.');
+    if (role == NfcRole.reader && !canRead) {
+      throw UnsupportedError('This device cannot read NFC tags.');
     }
-    if (utf8.encode(payload).length > maxPayloadBytes) {
-      throw ArgumentError.value(payload.length, 'payload', 'too long for one NFC response');
+    if (offer != null && utf8.encode(offer).length > NfcProtocol.maxPayloadBytes) {
+      throw ArgumentError.value(offer.length, 'offer', 'too long for NFC');
     }
-    await _hceChannel.invokeMethod('startBroadcast', {
-      'aid': _aid,
-      'payload': payload,
-    });
+
+    final epoch = ++_epoch;
+    _offer = offer;
+    _lastPeer = null;
+    _lastDeliveredOffer = null;
+    // A device that cannot be a tag has only one way to take part.
+    _role = role == NfcRole.auto && !canBeTag ? NfcRole.reader : role;
+
+    if (_role == NfcRole.tag || _role == NfcRole.auto) await _present();
+    if (_role == NfcRole.reader) {
+      unawaited(_runReader(epoch, continuous: false));
+    } else if (_role == NfcRole.auto) {
+      unawaited(_runReader(epoch, continuous: true));
+    }
   }
 
-  Future<void> stopBroadcast() async {
-    if (!isEmulateSupported) return;
-    await _hceChannel.invokeMethod('stopBroadcast');
+  /// Changes what we present/write on the running session (e.g. the request
+  /// gives way to the cheque handoff once the cheque is locked).
+  Future<void> setOffer(String? offer) async {
+    if (offer != null && utf8.encode(offer).length > NfcProtocol.maxPayloadBytes) {
+      throw ArgumentError.value(offer.length, 'offer', 'too long for NFC');
+    }
+    _offer = offer;
+    _lastDeliveredOffer = null;
+    if (_role == NfcRole.tag || _role == NfcRole.auto) await _present();
   }
 
-  /// Starts an NFC reader session and returns the first payload read from a
-  /// broadcasting peer, or null if the session was cancelled or timed out
-  /// without one. The payload is unvalidated text.
-  ///
-  /// A misread (not ISO-DEP, wrong AID, garbled bytes) does not end the
-  /// session — the peer stays in the field and we keep waiting until the
-  /// timeout, so one bad exchange doesn't force the user to restart.
-  Future<String?> startScan({Duration timeout = const Duration(seconds: 30)}) async {
-    if (!isScanSupported) return null;
-    // One reader session at a time: a second caller joins the running one
-    // instead of cancelling it (its teardown would stop the new session).
-    final running = _activeScan;
-    if (running != null) return running.future;
-
-    final completer = Completer<String?>();
-    _activeScan = completer;
-
-    try {
-      await NfcManager.instance.startSession(
-        pollingOptions: {NfcPollingOption.iso14443},
-        onDiscovered: (tag) async {
-          try {
-            final payload = await _read(tag);
-            if (payload != null && !completer.isCompleted) completer.complete(payload);
-          } catch (_) {
-            // Keep polling — a misread shouldn't kill the session.
-          }
-        },
-      );
-      return await completer.future.timeout(timeout, onTimeout: () => null);
-    } finally {
-      if (identical(_activeScan, completer)) _activeScan = null;
+  /// Ends the session: stops presenting, closes any reader window.
+  Future<void> stop() async {
+    _epoch++;
+    final window = _window;
+    if (window != null && !window.isCompleted) window.complete();
+    if (_role != null) {
+      _role = null;
       try {
-        await NfcManager.instance.stopSession();
+        await _reader.stop();
       } catch (_) {
-        // Already stopped (e.g. by the OS) — nothing to release.
+        // Not running.
+      }
+      try {
+        await _tag?.stop();
+      } catch (_) {
+        // Not presenting.
       }
     }
   }
 
-  /// Ends a running [startScan] promptly; it resolves to null.
-  Future<void> cancelScan() async {
-    final scan = _activeScan;
-    if (scan != null && !scan.isCompleted) scan.complete(null);
+  // ---- internals ---------------------------------------------------------
+
+  Future<void> _present() async {
+    final tag = _tag ??= HceChannelTagTransport();
+    _readSub ??= tag.onRead.listen((_) => _emitDelivered(_offer));
+    _writtenSub ??= tag.onWritten.listen(_onWritten);
+    await tag.present(
+      offer: _offer == null ? null : Uint8List.fromList(utf8.encode(_offer!)),
+      acceptWrites: true,
+    );
   }
 
-  Future<String?> _read(NfcTag tag) async {
-    final isoDep = IsoDepAndroid.from(tag);
-    if (isoDep == null) return null; // Not an ISO-DEP (HCE) tag.
+  void _onWritten(Uint8List bytes) => _emitPeer(bytes);
 
-    final selectResp = await isoDep.transceive(_buildSelectApdu(_aid));
-    if (!_isSuccess(selectResp)) return null;
-
-    final resp = await isoDep.transceive(_buildGetDataApdu());
-    if (!_isSuccess(resp)) return null;
-
-    return utf8.decode(resp.sublist(0, resp.length - 2));
+  void _emitPeer(Uint8List bytes) {
+    final String text;
+    try {
+      text = utf8.decode(bytes);
+    } on FormatException {
+      return; // Not text we produced.
+    }
+    if (text == _lastPeer) return;
+    _lastPeer = text;
+    _peer.add(text);
   }
 
-  static Uint8List _buildSelectApdu(List<int> aid) {
-    return Uint8List.fromList([0x00, 0xA4, 0x04, 0x00, aid.length, ...aid, 0x00]);
+  void _emitDelivered(String? offer) {
+    if (offer == null) return; // Nothing was on offer; a read means nothing.
+    if (offer == _lastDeliveredOffer) return;
+    _lastDeliveredOffer = offer;
+    _delivered.add(null);
   }
 
-  static Uint8List _buildGetDataApdu() {
-    return Uint8List.fromList([0x00, _insGetData, 0x00, 0x00, 0x00]);
+  Future<void> _runReader(int epoch, {required bool continuous}) async {
+    while (epoch == _epoch) {
+      final exchanged = await _readerWindow(epoch, continuous ? readerWindow : readerTimeout);
+      if (epoch != _epoch) return;
+      if (!continuous) return; // one shot: done either way.
+      // The listen window: our tag answers a reader (an iPhone, or an
+      // Android currently in its own reader window).
+      await Future<void>.delayed(exchanged ? tagWindow * 2 : tagWindow);
+    }
   }
 
-  static bool _isSuccess(Uint8List response) {
-    if (response.length < 2) return false;
-    return response[response.length - 2] == 0x90 &&
-        response[response.length - 1] == 0x00;
+  /// One reader session. Returns whether a ghoStellar tag was exchanged with.
+  Future<bool> _readerWindow(int epoch, Duration timeout) async {
+    final window = Completer<void>();
+    _window = window;
+    var exchanged = false;
+
+    try {
+      await _reader.start(
+        alertMessage: 'Hold your iPhone near the other phone',
+        onEnded: () {
+          if (!window.isCompleted) window.complete();
+        },
+        onLink: (link) async {
+          if (epoch != _epoch || exchanged) return;
+          final offer = _offer;
+          final ExchangeResult? result;
+          try {
+            result = await readerExchange(
+              link,
+              offer: offer == null ? null : Uint8List.fromList(utf8.encode(offer)),
+            );
+          } catch (_) {
+            return; // Tag lost mid-tap — keep the window open for another go.
+          }
+          if (result == null || result.isEmpty) return; // Not ours / nothing to gain.
+          exchanged = true;
+          final peer = result.peerPayload;
+          if (peer != null) _emitPeer(peer);
+          if (result.delivered) _emitDelivered(offer);
+          if (!window.isCompleted) window.complete();
+        },
+      );
+      await window.future.timeout(timeout, onTimeout: () {});
+    } catch (_) {
+      // The session couldn't start (NFC off, another session running).
+    } finally {
+      if (identical(_window, window)) _window = null;
+      try {
+        await _reader.stop(alertMessage: exchanged ? 'Done' : null);
+      } catch (_) {
+        // Already ended by the OS.
+      }
+    }
+    return exchanged;
   }
+}
+
+// ---- platform seams --------------------------------------------------------
+
+/// Reader mode on the device: Android `IsoDep`, iOS `NFCTagReaderSession`.
+abstract interface class ReaderTransport {
+  /// Starts a session; [onLink] runs for each discovered tag. [onEnded] fires
+  /// if the OS ends the session on its own (iOS: cancel button, 60 s limit).
+  Future<void> start({
+    required Future<void> Function(TagLink link) onLink,
+    void Function()? onEnded,
+    String? alertMessage,
+  });
+
+  Future<void> stop({String? alertMessage});
+}
+
+/// Presenting a tag: Android Host Card Emulation over a platform channel.
+abstract interface class TagTransport {
+  /// Presents [offer] (null = nothing) and accepts writes when [acceptWrites].
+  Future<void> present({required Uint8List? offer, required bool acceptWrites});
+
+  Future<void> stop();
+
+  /// A reader received the whole of our offer.
+  Stream<void> get onRead;
+
+  /// A reader wrote a complete payload to us.
+  Stream<Uint8List> get onWritten;
+}
+
+class NfcManagerReaderTransport implements ReaderTransport {
+  @override
+  Future<void> start({
+    required Future<void> Function(TagLink link) onLink,
+    void Function()? onEnded,
+    String? alertMessage,
+  }) {
+    return NfcManager.instance.startSession(
+      pollingOptions: {NfcPollingOption.iso14443},
+      alertMessageIos: alertMessage,
+      onSessionErrorIos: (_) => onEnded?.call(),
+      onDiscovered: (tag) async {
+        final link = _linkFor(tag);
+        if (link != null) await onLink(link);
+      },
+    );
+  }
+
+  @override
+  Future<void> stop({String? alertMessage}) =>
+      NfcManager.instance.stopSession(alertMessageIos: alertMessage);
+
+  static TagLink? _linkFor(NfcTag tag) {
+    final android = IsoDepAndroid.from(tag);
+    if (android != null) return _AndroidLink(android);
+    final ios = Iso7816Ios.from(tag);
+    if (ios != null) return _IosLink(ios);
+    return null; // Not an ISO-DEP tag.
+  }
+}
+
+class _AndroidLink implements TagLink {
+  _AndroidLink(this._isoDep);
+  final IsoDepAndroid _isoDep;
+
+  @override
+  bool get alreadySelected => false;
+
+  @override
+  Future<Uint8List> transceive(Uint8List apdu) => _isoDep.transceive(apdu);
+}
+
+class _IosLink implements TagLink {
+  _IosLink(this._tag);
+  final Iso7816Ios _tag;
+
+  /// iOS selects the AIDs declared in Info.plist itself when it discovers the
+  /// tag, and reports which one it selected.
+  @override
+  bool get alreadySelected => _tag.initialSelectedAID.toUpperCase() == NfcProtocol.aidHex;
+
+  @override
+  Future<Uint8List> transceive(Uint8List apdu) async {
+    final r = await _tag.sendCommandRaw(data: apdu);
+    return Uint8List.fromList([...r.payload, r.statusWord1, r.statusWord2]);
+  }
+}
+
+class HceChannelTagTransport implements TagTransport {
+  HceChannelTagTransport() {
+    _channel.setMethodCallHandler((call) async {
+      switch (call.method) {
+        case 'payloadRead':
+          _read.add(null);
+        case 'payloadWritten':
+          final bytes = call.arguments;
+          if (bytes is Uint8List) _written.add(bytes);
+      }
+    });
+  }
+
+  static const _channel = MethodChannel('ghostellar/nfc_hce');
+
+  final _read = StreamController<void>.broadcast();
+  final _written = StreamController<Uint8List>.broadcast();
+
+  @override
+  Stream<void> get onRead => _read.stream;
+
+  @override
+  Stream<Uint8List> get onWritten => _written.stream;
+
+  @override
+  Future<void> present({required Uint8List? offer, required bool acceptWrites}) {
+    return _channel.invokeMethod('startBroadcast', {
+      'aid': NfcProtocol.aid,
+      'payload': offer,
+      'acceptWrites': acceptWrites,
+    });
+  }
+
+  @override
+  Future<void> stop() => _channel.invokeMethod('stopBroadcast');
 }

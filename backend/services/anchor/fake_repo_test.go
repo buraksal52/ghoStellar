@@ -8,6 +8,7 @@ import (
 type fakeRepo struct {
 	transactions map[string]Transaction // key: anchorID+"/"+txID
 	trustlines   map[string]string      // key: address+"/"+code+"/"+issuer -> state
+	trustlineSeq map[string]int64       // same key -> ledger_seq last recorded
 	auditLog     []auditEntry
 	failOn       map[string]error
 }
@@ -21,7 +22,8 @@ func newFakeRepo() *fakeRepo {
 	return &fakeRepo{
 		transactions: map[string]Transaction{},
 		trustlines:   map[string]string{},
-		failOn:       map[string]error{},
+		trustlineSeq: map[string]int64{},
+		failOn:      map[string]error{},
 	}
 }
 
@@ -83,7 +85,9 @@ func (f *fakeRepo) SetTrustline(ctx context.Context, address, assetCode, assetIs
 	if err := f.failOn["SetTrustline"]; err != nil {
 		return err
 	}
-	f.trustlines[address+"/"+assetCode+"/"+assetIssuer] = state
+	key := address + "/" + assetCode + "/" + assetIssuer
+	f.trustlines[key] = state
+	f.trustlineSeq[key] = ledgerSeq
 	return nil
 }
 

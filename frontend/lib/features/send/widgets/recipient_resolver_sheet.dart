@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:mobile_scanner/mobile_scanner.dart';
@@ -10,7 +12,7 @@ import '../../../state/tap_providers.dart';
 
 /// Resolves who to pay — and, when the receiver asked for one, how much —
 /// as a [PaymentRequest], via, in order of how the design prioritizes them:
-/// a live NFC tap (Android only), a scanned QR code (the counterpart's
+/// a live NFC tap (Android, or an iPhone against an Android), a scanned QR code (the counterpart's
 /// Receive screen renders one), or manual entry/paste as the always-available
 /// fallback — matches the design's "More ways to send" affordance rather
 /// than inventing a new UI concept. All three go through the same
@@ -29,8 +31,13 @@ class RecipientResolverSheet extends ConsumerStatefulWidget {
 }
 
 class _RecipientResolverSheetState extends ConsumerState<RecipientResolverSheet> {
+  /// How long a tap is awaited before the sheet says nothing was found.
+  static const _nfcWait = Duration(seconds: 30);
+
   // Held in a field: `ref` can't be used inside dispose().
   late final NfcService _nfc;
+  StreamSubscription<String>? _peerSub;
+  Timer? _nfcTimeout;
   bool _scanningNfc = false;
   bool _scanningQr = false;
   final _manualController = TextEditingController();
@@ -41,7 +48,7 @@ class _RecipientResolverSheetState extends ConsumerState<RecipientResolverSheet>
   void initState() {
     super.initState();
     _nfc = ref.read(nfcServiceProvider);
-    if (widget.autoScanNfc && _nfc.isScanSupported) {
+    if (widget.autoScanNfc && _nfc.isAvailable) {
       WidgetsBinding.instance.addPostFrameCallback((_) {
         if (mounted) _scanNfc();
       });
@@ -50,8 +57,10 @@ class _RecipientResolverSheetState extends ConsumerState<RecipientResolverSheet>
 
   @override
   void dispose() {
-    // Closing the sheet must end the reader session, not leave it polling.
-    _nfc.cancelScan();
+    // Closing the sheet must end the NFC session, not leave it running.
+    _nfcTimeout?.cancel();
+    _peerSub?.cancel();
+    _nfc.stop();
     _manualController.dispose();
     super.dispose();
   }
@@ -65,26 +74,51 @@ class _RecipientResolverSheetState extends ConsumerState<RecipientResolverSheet>
       return 'This request has expired — ask them to show a new one.';
     }
     final nonce = request.nonce;
-    if (nonce != null && ref.read(usedNoncesProvider).contains(nonce)) {
+    if (nonce != null && ref.read(paidRequestIdsProvider).contains(nonce)) {
       return 'You already paid this request.';
     }
     Navigator.of(context).pop(request);
     return null;
   }
 
+  /// Listens for the other phone's payment request. Android alternates
+  /// reader and tag windows (so an iPhone, which can only read, can also
+  /// push its side); an iPhone runs a single system read session.
   Future<void> _scanNfc() async {
     setState(() {
       _scanningNfc = true;
       _scanError = null;
     });
-    try {
-      final payload = await _nfc.startScan();
-      if (!mounted || payload == null) return;
+    await _peerSub?.cancel();
+    _peerSub = _nfc.onPeerPayload.listen((payload) {
       final problem = _accept(payload);
-      if (problem != null) setState(() => _scanError = problem);
-    } finally {
-      if (mounted) setState(() => _scanningNfc = false);
+      // Keep listening after a bad one — the right phone may still arrive.
+      if (problem != null && mounted) setState(() => _scanError = problem);
+    });
+    _nfcTimeout?.cancel();
+    _nfcTimeout = Timer(_nfcWait, () => _stopNfc(nothingFound: true));
+    try {
+      await _nfc.start(role: _nfc.senderRole, offer: null);
+    } catch (_) {
+      _stopNfc(unavailable: true);
     }
+  }
+
+  void _stopNfc({bool nothingFound = false, bool unavailable = false}) {
+    _nfcTimeout?.cancel();
+    _peerSub?.cancel();
+    _nfc.stop();
+    if (!mounted) return;
+    setState(() {
+      _scanningNfc = false;
+      if (unavailable) {
+        _scanError = 'NFC is turned off or unavailable. Scan their QR code instead.';
+      } else if (nothingFound) {
+        _scanError = _nfc.canBeTag
+            ? 'No phone found. Hold the phones back to back and try again, or scan their QR code.'
+            : "No phone found. An iPhone can only tap an Android phone — for another iPhone, scan their QR code.";
+      }
+    });
   }
 
   void _onQrDetected(BarcodeCapture capture) {
@@ -114,7 +148,7 @@ class _RecipientResolverSheetState extends ConsumerState<RecipientResolverSheet>
         children: [
           Text('Find recipient', style: Theme.of(context).textTheme.titleLarge),
           const SizedBox(height: 16),
-          if (_nfc.isScanSupported)
+          if (_nfc.isAvailable)
             SizedBox(
               width: double.infinity,
               height: 50,

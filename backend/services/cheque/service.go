@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"math/big"
+	"regexp"
 	"time"
 
 	"github.com/oklog/ulid/v2"
@@ -105,7 +106,7 @@ type CreateChequeResult struct {
 // pass, reserves the amount and returns everything the device needs to
 // sign: the unsigned `lock` transaction and the unsigned force_collect
 // pre-authorization entry.
-func (s *Service) CreateCheque(ctx context.Context, sender, receiver, amountStr string) (CreateChequeResult, error) {
+func (s *Service) CreateCheque(ctx context.Context, sender, receiver, amountStr, requestID string) (CreateChequeResult, error) {
 	repo, err := s.repos()
 	if err != nil {
 		return CreateChequeResult{}, err
@@ -113,6 +114,9 @@ func (s *Service) CreateCheque(ctx context.Context, sender, receiver, amountStr 
 
 	if sender == receiver {
 		return CreateChequeResult{}, errSelfTransfer
+	}
+	if !validRequestID(requestID) {
+		return CreateChequeResult{}, errInvalidRequestID
 	}
 	if !stellarx.IsValidAccountAddress(receiver) {
 		return CreateChequeResult{}, errInvalidReceiver
@@ -145,6 +149,7 @@ func (s *Service) CreateCheque(ctx context.Context, sender, receiver, amountStr 
 		ID:              chequeID.String(),
 		SenderAddress:   sender,
 		ReceiverAddress: receiver,
+		RequestID:       requestID,
 		TokenContract:   s.cfg.TokenContractID,
 		AmountRaw:       amount.Raw.String(),
 		Decimals:        s.cfg.Decimals,
@@ -154,6 +159,9 @@ func (s *Service) CreateCheque(ctx context.Context, sender, receiver, amountStr 
 	if err := repo.CreateReservedCheque(ctx, c); err != nil {
 		if errors.Is(err, ErrAlreadyActiveInRepo) {
 			return CreateChequeResult{}, errAlreadyActive
+		}
+		if errors.Is(err, ErrRequestUsedInRepo) {
+			return CreateChequeResult{}, errRequestUsed
 		}
 		return CreateChequeResult{}, fmt.Errorf("cheque: create reservation: %w", err)
 	}
@@ -808,6 +816,8 @@ var (
 	errInvalidReceiver     = errors.New(ErrInvalidReceiver)
 	errReceiverNoTrustline = errors.New(ErrReceiverNoTrustline)
 	errSelfTransfer        = errors.New(ErrSelfTransfer)
+	errRequestUsed         = errors.New(ErrRequestUsed)
+	errInvalidRequestID    = errors.New(ErrInvalidRequestID)
 	errInvalidAmount       = errors.New(ErrInvalidAmount)
 	errExpired             = errors.New(ErrExpired)
 	errTerminalState       = errors.New(ErrTerminalState)
@@ -816,3 +826,12 @@ var (
 	errBadRequest          = errors.New(ErrBadRequest)
 	errChainUnavailable    = errors.New(ErrChainUnavailable)
 )
+
+// requestIDPattern bounds the receiver-chosen request id: it is stored and
+// echoed back in /sync, so it must not be free-form text. Empty is allowed
+// (a plain cheque with no payment request behind it).
+var requestIDPattern = regexp.MustCompile(`^[A-Za-z0-9-]{1,64}$`)
+
+func validRequestID(id string) bool {
+	return id == "" || requestIDPattern.MatchString(id)
+}

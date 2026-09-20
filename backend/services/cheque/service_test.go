@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/rand"
 	"errors"
+	"strings"
 	"testing"
 	"time"
 
@@ -178,7 +179,7 @@ func TestCreateCheque_Validations(t *testing.T) {
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			svc := newServiceWithRepo(testConfig(), newFakeRepo(), tc.chain(t))
-			_, err := svc.CreateCheque(context.Background(), tc.sender, tc.receiver, tc.amount)
+			_, err := svc.CreateCheque(context.Background(), tc.sender, tc.receiver, tc.amount, "")
 			if !errors.Is(err, tc.wantErr) {
 				t.Fatalf("got err %v, want %v", err, tc.wantErr)
 			}
@@ -191,10 +192,10 @@ func TestCreateCheque_AlreadyActive(t *testing.T) {
 	svc := newServiceWithRepo(testConfig(), repo, fundedChain(t, 1))
 	ctx := context.Background()
 
-	if _, err := svc.CreateCheque(ctx, testSender, testReceiver, "10"); err != nil {
+	if _, err := svc.CreateCheque(ctx, testSender, testReceiver, "10", ""); err != nil {
 		t.Fatalf("first CreateCheque: %v", err)
 	}
-	_, err := svc.CreateCheque(ctx, testSender, testReceiver, "5")
+	_, err := svc.CreateCheque(ctx, testSender, testReceiver, "5", "")
 	if !errors.Is(err, errAlreadyActive) {
 		t.Fatalf("got %v, want errAlreadyActive", err)
 	}
@@ -205,7 +206,7 @@ func TestCreateCheque_HappyPath(t *testing.T) {
 	svc := newServiceWithRepo(testConfig(), repo, fundedChain(t, 1))
 	before := time.Now()
 
-	result, err := svc.CreateCheque(context.Background(), testSender, testReceiver, "10.5")
+	result, err := svc.CreateCheque(context.Background(), testSender, testReceiver, "10.5", "")
 	if err != nil {
 		t.Fatalf("CreateCheque: %v", err)
 	}
@@ -602,8 +603,85 @@ func TestService_DBNotReady(t *testing.T) {
 	pool := &dbx.Pool{} // never connected: Get() returns nil
 	svc := NewService(testConfig(), pool, fundedChain(t, 1))
 
-	_, err := svc.CreateCheque(context.Background(), testSender, testReceiver, "10")
+	_, err := svc.CreateCheque(context.Background(), testSender, testReceiver, "10", "")
 	if !errors.Is(err, ErrDBNotReadyErr) {
 		t.Fatalf("got %v, want ErrDBNotReadyErr", err)
+	}
+}
+
+// ---- tap/scan payment requests (requestId) ---------------------------------
+
+func TestCreateCheque_StoresRequestID(t *testing.T) {
+	repo := newFakeRepo()
+	svc := newServiceWithRepo(testConfig(), repo, fundedChain(t, 1))
+
+	result, err := svc.CreateCheque(context.Background(), testSender, testReceiver, "10", "req-abc-123")
+	if err != nil {
+		t.Fatalf("CreateCheque: %v", err)
+	}
+	if got := repo.cheques[result.ChequeID].RequestID; got != "req-abc-123" {
+		t.Errorf("stored RequestID = %q, want req-abc-123", got)
+	}
+}
+
+func TestCreateCheque_RequestUsedByAnotherSender(t *testing.T) {
+	repo := newFakeRepo()
+	svc := newServiceWithRepo(testConfig(), repo, fundedChain(t, 1))
+	ctx := context.Background()
+	otherSender := mustRandomAccount()
+
+	if _, err := svc.CreateCheque(ctx, testSender, testReceiver, "10", "req-1"); err != nil {
+		t.Fatalf("first CreateCheque: %v", err)
+	}
+	// A different sender has no active cheque, so only the request id can
+	// be the reason this is refused.
+	_, err := svc.CreateCheque(ctx, otherSender, testReceiver, "10", "req-1")
+	if !errors.Is(err, errRequestUsed) {
+		t.Fatalf("got %v, want errRequestUsed", err)
+	}
+}
+
+func TestCreateCheque_SameRequestIDForADifferentReceiverIsAnotherRequest(t *testing.T) {
+	repo := newFakeRepo()
+	svc := newServiceWithRepo(testConfig(), repo, fundedChain(t, 1))
+	ctx := context.Background()
+
+	if _, err := svc.CreateCheque(ctx, testSender, testReceiver, "10", "req-1"); err != nil {
+		t.Fatalf("first CreateCheque: %v", err)
+	}
+	if _, err := svc.CreateCheque(ctx, mustRandomAccount(), mustRandomAccount(), "10", "req-1"); err != nil {
+		t.Fatalf("same id, other receiver should be allowed: %v", err)
+	}
+}
+
+func TestCreateCheque_NoRequestIDIsUnrestricted(t *testing.T) {
+	repo := newFakeRepo()
+	svc := newServiceWithRepo(testConfig(), repo, fundedChain(t, 1))
+	ctx := context.Background()
+
+	for i := 0; i < 2; i++ {
+		if _, err := svc.CreateCheque(ctx, mustRandomAccount(), testReceiver, "10", ""); err != nil {
+			t.Fatalf("plain cheque #%d: %v", i, err)
+		}
+	}
+}
+
+func TestCreateCheque_InvalidRequestIDRejectedBeforeAnyChainCall(t *testing.T) {
+	for _, bad := range []string{"has space", "a/b", "semi;colon", strings.Repeat("a", 65), "ünicode"} {
+		t.Run(bad, func(t *testing.T) {
+			chain := &portstest.FakeChain{} // any chain call would panic on a nil func
+			svc := newServiceWithRepo(testConfig(), newFakeRepo(), chain)
+			_, err := svc.CreateCheque(context.Background(), testSender, testReceiver, "10", bad)
+			if !errors.Is(err, errInvalidRequestID) {
+				t.Fatalf("got %v, want errInvalidRequestID", err)
+			}
+		})
+	}
+}
+
+func TestCreateCheque_RequestIDBoundaryLength(t *testing.T) {
+	svc := newServiceWithRepo(testConfig(), newFakeRepo(), fundedChain(t, 1))
+	if _, err := svc.CreateCheque(context.Background(), testSender, testReceiver, "10", strings.Repeat("a", 64)); err != nil {
+		t.Fatalf("64-char id should be accepted: %v", err)
 	}
 }

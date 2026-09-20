@@ -3,6 +3,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import 'package:uuid/uuid.dart';
 
+import '../../core/errors/api_error.dart';
 import '../../core/theme/app_colors.dart';
 import '../../data/api/models/tx_models.dart';
 import '../../state/anchor_providers.dart';
@@ -15,20 +16,27 @@ class TrustlineSetupPage extends ConsumerWidget {
   const TrustlineSetupPage({super.key});
 
   Future<void> _signAndSetUp(WidgetRef ref, BuildContext context) async {
-    final anchor = ref.read(primaryAnchorProvider);
-    final keyPair = ref.read(walletProvider).keyPair;
-    if (anchor == null || keyPair == null) return;
-
     final anchorApi = ref.read(anchorApiProvider);
     final txApi = ref.read(txApiProvider);
     final signing = ref.read(stellarSigningServiceProvider);
     final overlay = ref.read(signingOverlayProvider.notifier);
 
     await overlay.run((report) async {
+      final anchor = ref.read(primaryAnchorProvider);
+      final keyPair = ref.read(walletProvider).keyPair;
+      // Surface these instead of silently doing nothing on tap.
+      if (anchor == null) {
+        throw ApiException(code: 'anchor.not_allowed', message: 'anchor not loaded');
+      }
+      if (keyPair == null) {
+        throw ApiException(code: 'auth.invalid_token', message: 'wallet is locked');
+      }
+
       final xdr = await anchorApi.trustlineXdr(anchor.id);
       report(SigningStep.signing);
       final signed = signing.signTransactionXdr(xdr, keyPair);
       report(SigningStep.submitting);
+      // Throws if the network rejected the transaction (see TxApi.submit).
       await txApi.submit(
         idempotencyKey: const Uuid().v4(),
         purpose: 'trustline',
@@ -36,9 +44,14 @@ class TrustlineSetupPage extends ConsumerWidget {
         xdr: signed,
       );
       report(SigningStep.confirming);
-      final ledgerSeq = ref.read(syncProvider).value?.ledgerSeq ?? 0;
-      await anchorApi.trustlineConfirm(anchor.id, ledgerSeq);
+      // The backend checks the trustline on-chain and answers
+      // `anchor.trustline_missing` if it isn't there.
+      await anchorApi.trustlineConfirm(anchor.id);
       await ref.read(syncProvider.notifier).refresh();
+      final synced = ref.read(syncProvider).value;
+      if (synced != null && !synced.trustlineReady) {
+        throw ApiException(code: 'anchor.trustline_missing', message: 'trustline not visible on-chain');
+      }
       if (context.mounted) context.pop();
     });
   }
