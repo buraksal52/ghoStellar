@@ -20,9 +20,9 @@ RUN apk --no-cache add ca-certificates tzdata \
 COPY --from=builder /out/ghoStellar /app/ghoStellar
 COPY --from=migrator /go/bin/migrate /app/migrate
 COPY deploy/migrations /app/migrations
-COPY scripts/railway-predeploy.sh /app/railway-predeploy.sh
-RUN chmod 0555 /app/railway-predeploy.sh
+COPY scripts/railway-start.sh /app/railway-start.sh
+RUN chmod 0555 /app/railway-start.sh
 USER app
 ENV GOMEMLIMIT=200MiB GOGC=100
 EXPOSE 8080
-CMD ["/app/ghoStellar"]
+CMD ["/app/railway-start.sh"]

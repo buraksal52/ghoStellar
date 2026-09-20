@@ -10,7 +10,6 @@
     ]
   },
   "deploy": {
-    "preDeployCommand": ["/app/railway-predeploy.sh"],
     "healthcheckPath": "/health",
     "healthcheckTimeout": 300,
     "restartPolicyType": "ON_FAILURE",
