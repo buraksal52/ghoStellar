@@ -237,9 +237,9 @@ class _SendPageState extends ConsumerState<SendPage> {
   /// so a receiver without NFC (or a missed tap) still closes the payment —
   /// and their polling closes it even if neither is used.
   ///
-  /// An Android sender starts presenting/alternating at once. An iPhone can
-  /// only read, and Apple wants NFC sessions user-initiated, so it waits for
-  /// the "Tap receiver's phone" button ([_beginHandoffRead]).
+  /// An Android sender alternates reader and tag windows so either Android or
+  /// iPhone receivers can collect the handoff. An iPhone waits for the
+  /// "Tap receiver's phone" button ([_beginHandoffRead]).
   Future<void> _offerHandoff(_Handoff handoff) async {
     setState(() {
       _handoff = handoff;

@@ -1,0 +1,171 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1900" height="1120" viewBox="0 0 1900 1120" role="img" aria-labelledby="title desc">
+  <title id="title">ghoStellar servisler arası iletişim</title>
+  <desc id="desc">Mikroservis topolojisi: istemci, APISIX rotaları, Go servisleri, iç HTTP çağrıları, PostgreSQL ve Stellar testnet bağlantıları.</desc>
+  <defs>
+    <marker id="arrow-blue" markerWidth="9" markerHeight="9" refX="8" refY="4.5" orient="auto"><path d="M0,0 L9,4.5 L0,9 Z" fill="#334155"/></marker>
+    <marker id="arrow-green" markerWidth="9" markerHeight="9" refX="8" refY="4.5" orient="auto"><path d="M0,0 L9,4.5 L0,9 Z" fill="#16806a"/></marker>
+    <marker id="arrow-purple" markerWidth="9" markerHeight="9" refX="8" refY="4.5" orient="auto"><path d="M0,0 L9,4.5 L0,9 Z" fill="#7554b8"/></marker>
+    <marker id="arrow-orange" markerWidth="9" markerHeight="9" refX="8" refY="4.5" orient="auto"><path d="M0,0 L9,4.5 L0,9 Z" fill="#d97706"/></marker>
+    <style>
+      text { font-family: Inter, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; fill: #263342; }
+      .title { font-size: 31px; font-weight: 650; }
+      .subtitle { font-size: 15px; fill: #778390; }
+      .zone { fill: #fbfcfd; stroke: #d6dde3; stroke-width: 1.5; }
+      .zone-label { font-size: 14px; fill: #66727e; }
+      .node { fill: #fff; stroke-width: 1.7; rx: 5; }
+      .api { stroke: #315d9a; }
+      .internal { stroke: #20806b; }
+      .data { stroke: #20806b; }
+      .stellar { stroke: #7554b8; }
+      .anchor { stroke: #d97706; }
+      .node-title { font-size: 16px; font-weight: 550; }
+      .node-sub { font-size: 11px; fill: #65717d; }
+      .route { fill: none; stroke: #475569; stroke-width: 1.4; marker-end: url(#arrow-blue); }
+      .internal-line { fill: none; stroke: #16806a; stroke-width: 1.5; marker-end: url(#arrow-green); }
+      .chain-line { fill: none; stroke: #7554b8; stroke-width: 1.5; marker-end: url(#arrow-purple); }
+      .anchor-line { fill: none; stroke: #d97706; stroke-width: 1.5; marker-end: url(#arrow-orange); }
+      .label-bg { fill: #fff; opacity: .96; }
+      .edge-label { font-size: 10.5px; fill: #46515d; }
+      .note { font-size: 11px; fill: #5c6874; }
+      .foot { font-size: 12px; fill: #55616d; }
+    </style>
+  </defs>
+  <rect width="1900" height="1120" fill="#fff"/>
+  <text class="title" x="20" y="43">07 · Servisler arası iletişim</text>
+  <text class="subtitle" x="20" y="69">Mikroservis modu — kim kimi çağırıyor, hangi portu kullanıyor</text>
+
+  <!-- Deployment boundary and zones -->
+  <rect class="zone" x="260" y="112" width="1090" height="845" rx="10"/>
+  <text class="zone-label" x="280" y="137">Docker Compose · internal network</text>
+  <rect x="1370" y="112" width="510" height="845" rx="10" fill="#fff" stroke="#e1e5e9" stroke-width="1.5"/>
+  <text class="zone-label" x="1390" y="137">Stellar ağı ve harici anchor</text>
+
+  <!-- Connections, behind nodes -->
+  <!-- Client to edge -->
+  <path class="route" d="M205 385 H290"/>
+  <rect class="label-bg" x="218" y="365" width="64" height="17"/><text class="edge-label" x="250" y="377" text-anchor="middle">HTTPS</text>
+
+  <!-- Edge routes -->
+  <path class="route" d="M470 286 H530 V211 H600"/>
+  <rect class="label-bg" x="486" y="255" width="92" height="17"/><text class="edge-label" x="532" y="267" text-anchor="middle">/auth/*</text>
+  <path class="route" d="M470 340 H545 V341 H600"/>
+  <rect class="label-bg" x="478" y="319" width="115" height="17"/><text class="edge-label" x="535" y="331" text-anchor="middle">/cheques · /sync</text>
+  <path class="route" d="M470 395 H555 V471 H600"/>
+  <rect class="label-bg" x="478" y="414" width="113" height="17"/><text class="edge-label" x="534" y="426" text-anchor="middle">/pool/* · /tx/*</text>
+  <path class="route" d="M470 455 H540 V601 H600"/>
+  <rect class="label-bg" x="478" y="504" width="116" height="17"/><text class="edge-label" x="536" y="516" text-anchor="middle">/anchors/*</text>
+
+  <!-- Stateful API services to chain gateway -->
+  <path class="internal-line" d="M840 211 H915 V366 H1000"/>
+  <rect class="label-bg" x="876" y="246" width="78" height="17"/><text class="edge-label" x="915" y="258" text-anchor="middle">account / fund</text>
+  <path class="internal-line" d="M840 341 H1000"/>
+  <rect class="label-bg" x="884" y="322" width="76" height="17"/><text class="edge-label" x="922" y="334" text-anchor="middle">check / build</text>
+  <path class="internal-line" d="M840 471 H925 V410 H1000"/>
+  <rect class="label-bg" x="881" y="447" width="76" height="17"/><text class="edge-label" x="919" y="459" text-anchor="middle">signed submit</text>
+  <path class="internal-line" d="M840 601 H940 V425 H1000"/>
+  <rect class="label-bg" x="888" y="663" width="68" height="17"/><text class="edge-label" x="922" y="675" text-anchor="middle">trustline / XDR</text>
+
+  <!-- Scheduler calls -->
+  <path class="internal-line" d="M1000 600 H930 V341 H840"/>
+  <rect class="label-bg" x="887" y="525" width="72" height="17"/><text class="edge-label" x="923" y="537" text-anchor="middle">expired scan</text>
+  <path class="internal-line" d="M1120 565 V445"/>
+  <rect class="label-bg" x="1140" y="482" width="106" height="20"/><text class="edge-label" x="1193" y="496" text-anchor="middle">refund · bump</text>
+
+  <!-- Database calls -->
+  <path class="internal-line" d="M600 211 H520 V760 H720 V794"/>
+  <path class="internal-line" d="M600 341 H520 V760 H720 V794"/>
+  <path class="internal-line" d="M600 471 H520 V760 H720 V794"/>
+  <path class="internal-line" d="M600 601 H520 V760 H720 V794"/>
+  <rect class="label-bg" x="486" y="675" width="60" height="17"/><text class="edge-label" x="516" y="687" text-anchor="middle">SQL</text>
+  <path class="internal-line" d="M1000 849 H850"/>
+  <rect class="label-bg" x="877" y="827" width="96" height="17"/><text class="edge-label" x="925" y="839" text-anchor="middle">schema init</text>
+
+  <!-- Chain gateway to Stellar -->
+  <path class="chain-line" d="M1240 355 H1395 V225 H1440"/>
+  <rect class="label-bg" x="1297" y="273" width="82" height="17"/><text class="edge-label" x="1338" y="285" text-anchor="middle">Horizon API</text>
+  <path class="chain-line" d="M1240 405 H1440"/>
+  <rect class="label-bg" x="1307" y="385" width="70" height="17"/><text class="edge-label" x="1342" y="397" text-anchor="middle">simulate / submit</text>
+  <path class="chain-line" d="M1650 422 H1710"/>
+  <rect class="label-bg" x="1652" y="398" width="56" height="17"/><text class="edge-label" x="1680" y="410" text-anchor="middle">invoke</text>
+
+  <!-- Anchor proxy -->
+  <path class="anchor-line" d="M840 626 H870 V696 H1300 H1440"/>
+  <rect class="label-bg" x="1146" y="672" width="145" height="17"/><text class="edge-label" x="1218" y="684" text-anchor="middle">SEP-1 / 6 / 10 / 12 / 38</text>
+
+  <!-- Nodes -->
+  <rect class="node api" x="25" y="300" width="180" height="170"/>
+  <text class="node-title" x="115" y="370" text-anchor="middle">Flutter istemci</text>
+  <text class="node-sub" x="115" y="393" text-anchor="middle">Mobil uygulama</text>
+  <text class="node-sub" x="115" y="411" text-anchor="middle">Kullanıcı anahtarı cihazda</text>
+  <text class="node-sub" x="115" y="429" text-anchor="middle">XDR imzası istemcide</text>
+
+  <rect class="node api" x="290" y="225" width="180" height="390"/>
+  <text class="node-title" x="380" y="405" text-anchor="middle">APISIX</text>
+  <text class="node-sub" x="380" y="429" text-anchor="middle">API Gateway</text>
+  <text class="node-sub" x="380" y="450" text-anchor="middle">host :9080 / :9443</text>
+  <text class="node-sub" x="380" y="477" text-anchor="middle">route · CORS</text>
+  <text class="node-sub" x="380" y="495" text-anchor="middle">rate limit</text>
+  <text class="node-sub" x="380" y="560" text-anchor="middle">tek host'a açık giriş</text>
+
+  <rect class="node api" x="600" y="166" width="240" height="90"/>
+  <text class="node-title" x="720" y="202" text-anchor="middle">pay-auth-service :8081</text>
+  <text class="node-sub" x="720" y="224" text-anchor="middle">SEP-10 · JWT · testnet funding</text>
+
+  <rect class="node api" x="600" y="296" width="240" height="90"/>
+  <text class="node-title" x="720" y="332" text-anchor="middle">pay-cheque-service :8083</text>
+  <text class="node-sub" x="720" y="354" text-anchor="middle">Çek · Havuz · confirm · sync</text>
+
+  <rect class="node api" x="600" y="426" width="240" height="90"/>
+  <text class="node-title" x="720" y="462" text-anchor="middle">pay-tx-service :8084</text>
+  <text class="node-sub" x="720" y="484" text-anchor="middle">idempotency · signed XDR submit</text>
+
+  <rect class="node api" x="600" y="556" width="240" height="90"/>
+  <text class="node-title" x="720" y="592" text-anchor="middle">pay-anchor-service :8086</text>
+  <text class="node-sub" x="720" y="614" text-anchor="middle">SEP proxy · deposit / withdrawal</text>
+
+  <rect class="node internal" x="1000" y="330" width="240" height="115"/>
+  <text class="node-title" x="1120" y="374" text-anchor="middle">pay-chain-gateway :8082</text>
+  <text class="node-sub" x="1120" y="398" text-anchor="middle">yalnız Stellar çıkış kapısı</text>
+  <text class="node-sub" x="1120" y="418" text-anchor="middle">Horizon + Soroban RPC</text>
+
+  <rect class="node internal" x="1000" y="565" width="240" height="90"/>
+  <text class="node-title" x="1120" y="601" text-anchor="middle">pay-scheduler-service :8085</text>
+  <text class="node-sub" x="1120" y="623" text-anchor="middle">public API yok · keeper worker</text>
+
+  <rect class="node data" x="600" y="794" width="240" height="105"/>
+  <text class="node-title" x="720" y="837" text-anchor="middle">PostgreSQL 17</text>
+  <text class="node-sub" x="720" y="861" text-anchor="middle">tek instance · pay şeması</text>
+  <text class="node-sub" x="720" y="879" text-anchor="middle">auth · cheque · tx · anchor verisi</text>
+
+  <rect class="node data" x="1000" y="804" width="240" height="90"/>
+  <text class="node-title" x="1120" y="840" text-anchor="middle">migrate job</text>
+  <text class="node-sub" x="1120" y="862" text-anchor="middle">servislerden önce bir kez çalışır</text>
+
+  <rect class="node stellar" x="1440" y="180" width="210" height="90"/>
+  <text class="node-title" x="1545" y="217" text-anchor="middle">Stellar Horizon</text>
+  <text class="node-sub" x="1545" y="239" text-anchor="middle">Testnet · classic Stellar API</text>
+
+  <rect class="node stellar" x="1440" y="377" width="210" height="90"/>
+  <text class="node-title" x="1545" y="414" text-anchor="middle">Soroban RPC</text>
+  <text class="node-sub" x="1545" y="436" text-anchor="middle">Testnet · contract işlemleri</text>
+
+  <rect class="node stellar" x="1710" y="377" width="155" height="90"/>
+  <text class="node-title" x="1787" y="414" text-anchor="middle">pay-escrow</text>
+  <text class="node-sub" x="1787" y="436" text-anchor="middle">Soroban kontratı</text>
+  <text class="node-sub" x="1787" y="453" text-anchor="middle">Çek + Havuz</text>
+
+  <rect class="node anchor" x="1440" y="651" width="260" height="90"/>
+  <text class="node-title" x="1570" y="688" text-anchor="middle">TR Mock Anchor</text>
+  <text class="node-sub" x="1570" y="710" text-anchor="middle">banka adımı simüle · gerçek TRY yok</text>
+
+  <!-- Legend and operational note -->
+  <line x1="1395" y1="820" x2="1435" y2="820" stroke="#475569" stroke-width="1.5" marker-end="url(#arrow-blue)"/><text class="note" x="1445" y="824">HTTP / route</text>
+  <line x1="1550" y1="820" x2="1590" y2="820" stroke="#16806a" stroke-width="1.5" marker-end="url(#arrow-green)"/><text class="note" x="1600" y="824">iç servis / SQL</text>
+  <line x1="1735" y1="820" x2="1775" y2="820" stroke="#7554b8" stroke-width="1.5" marker-end="url(#arrow-purple)"/><text class="note" x="1785" y="824">Stellar</text>
+  <text class="note" x="1395" y="866">Servis portları host'a yayınlanmaz;</text>
+  <text class="note" x="1395" y="884">dış trafik yalnız APISIX üzerinden girer.</text>
+  <text class="note" x="1395" y="920">Anchor JWT istemcide kalır;</text>
+  <text class="note" x="1395" y="938">scheduler anchor durumunu doğrudan sorgulamaz.</text>
+
+  <text class="foot" x="25" y="1045">Görünüm: varsayılan Docker Compose mikroservis profili · servisler internal HTTP ile konuşur · kullanıcı işlemlerini istemci imzalar</text>
+</svg>

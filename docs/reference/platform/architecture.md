@@ -10,13 +10,13 @@ yapılandırmalarıyla eşleştirilmiştir.
 | **Zincir** | yalnızca Stellar (Horizon + Soroban RPC) |
 | **Diller** | Go (backend) + Rust (Soroban kontratı) |
 | **Custody** | non-custodial. Backend hiçbir kullanıcı özel anahtarını tutmaz. |
-| **Frontend** | bu depoda yok — bkz. `CLAUDE.md` |
+| **Frontend** | Flutter istemci kaynağı depoda mevcut; public demo yok |
 
 ## 1. Çalışan Sistem Topolojisi
 
 ```mermaid
 flowchart TB
-    client["Mobil istemci<br/>(bu depoda yok)"]
+    client["Flutter istemci<br/>(kaynak depoda · public demo yok)"]
     edge["APISIX Gateway<br/>:9080 / :9443<br/>routing · CORS · rate limit"]
     client --> edge
 
@@ -50,6 +50,14 @@ flowchart TB
     chain --> rpc["Stellar Soroban RPC"]
     anchor -->|SEP-1 · SEP-10 · SEP-6 · SEP-12 · SEP-38| mock["TR Mock Anchor<br/>tr-mock-anchor.fly.dev"]
 ```
+
+Servislerin portlarını, APISIX rotalarını, iç HTTP çağrılarını, veri
+bağlantılarını ve Stellar/anchor çıkışlarını referans görseldeki yatay
+yerleşimle görmek için:
+
+![ghoStellar mikroservis iletişim diyagramı](servisler-arasi-iletisim.png)
+
+Vektör kaynak: [servisler-arasi-iletisim.svg](servisler-arasi-iletisim.svg).
 
 Docker Compose servisleri ayrı process'ler olarak çalıştırır ve tek Postgres
 instance'ını kullanır. Tablolar `pay` şemasında olsa da servisler yalnızca

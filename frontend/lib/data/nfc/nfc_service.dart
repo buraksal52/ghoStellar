@@ -85,7 +85,9 @@ class NfcService {
   /// The role this device plays when it is the one *showing* a request.
   NfcRole get receiverRole => canBeTag ? NfcRole.tag : NfcRole.reader;
 
-  /// The role this device plays when it is the one *paying*.
+  /// The role this device plays when it presents a handoff after paying.
+  /// Android alternates tag and reader windows so iPhone receivers can read
+  /// the handoff while Android receivers can still be read directly.
   NfcRole get senderRole => canBeTag ? NfcRole.auto : NfcRole.reader;
 
   /// Whether the OS hardware is on (a device with NFC can still have it off).

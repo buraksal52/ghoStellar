@@ -91,9 +91,9 @@ class _RecipientResolverSheetState
     return null;
   }
 
-  /// Listens for the other phone's payment request. Android alternates
-  /// reader and tag windows (so an iPhone, which can only read, can also
-  /// push its side); an iPhone runs a single system read session.
+  /// Listens for the other phone's payment request. The Android sender reads
+  /// the receiver's continuously presented HCE tag; an iPhone does the same
+  /// through a Core NFC session.
   Future<void> _scanNfc() async {
     setState(() {
       _scanningNfc = true;
@@ -108,7 +108,13 @@ class _RecipientResolverSheetState
     _nfcTimeout?.cancel();
     _nfcTimeout = Timer(_nfcWait, () => _stopNfc(nothingFound: true));
     try {
-      await _nfc.start(role: _nfc.senderRole, offer: null);
+      // Use a stable reader role for Android-to-Android discovery. Reader
+      // mode disables this phone's HCE, so alternating here only adds missed
+      // windows and can synchronize both phones as readers.
+      await _nfc.start(
+        role: _nfc.canBeTag ? NfcRole.reader : _nfc.senderRole,
+        offer: null,
+      );
     } catch (_) {
       _stopNfc(unavailable: true);
     }

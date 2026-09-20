@@ -252,9 +252,8 @@ void main() {
         // Not pumpAndSettle: the scanning spinner animates for as long as it listens.
         await tester.pump();
         await tester.pump(const Duration(milliseconds: 400));
-        // An Android sender listens in both directions (reader + tag windows),
-        // with nothing to offer yet — it is waiting for a request.
-        expect(rig.nfc.started.single.role, NfcRole.auto);
+        // Android sender reads the receiver's continuously presented HCE tag.
+        expect(rig.nfc.started.single.role, NfcRole.reader);
         expect(rig.nfc.started.single.offer, isNull);
         expect(find.text('Hold near their phone…'), findsOneWidget);
 
@@ -428,7 +427,8 @@ void main() {
       // The receiver's phone gets the cheque id, bound to their nonce.
       expect(find.text('Payment sent'), findsOneWidget);
       final handoff = ChequeHandoff.tryParse(rig.nfc.presented.single)!;
-      // Android alternates reader and tag windows, presenting the handoff.
+      // Android sender alternates windows to present the handoff to an iPhone
+      // receiver, while retaining reader windows for Android receivers.
       expect(rig.nfc.started.last.role, NfcRole.auto);
       expect(rig.nfc.started.last.offer, rig.nfc.presented.single);
       expect(handoff.chequeId, _chequeId);

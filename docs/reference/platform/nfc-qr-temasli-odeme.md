@@ -61,6 +61,12 @@ davranışıdır — Android'deki `HceService.kt` satır satır aynısını uygu
 | Android gönderen | `auto` — okuyucu penceresi ile tag penceresi arasında otomatik geçiş (~1.5sn), böylece hem başka bir Android'i hem bir iPhone'u yakalar |
 | iOS gönderen | okuyucu |
 
+Alıcı arama aşamasında Android gönderen doğrudan `reader` rolünü kullanır;
+Android okuyucu modu aynı cihazdaki kart emülasyonunu kapattığı için burada
+`auto` pencereleri gereksiz gecikme ve eşzamanlı okuyucu pencerelerinde
+kaçırılan temaslar yaratır. Ödeme sonrası Android gönderenin `auto` rolü
+korunur: bu aşamada iPhone alıcıya sunulacak bir tag penceresi de gerekir.
+
 Geçerli çiftler: Android↔Android, Android alıcı↔iOS gönderen, iOS
 alıcı↔Android gönderen. **iOS↔iOS: NFC yok, yalnızca QR** — Apple'ın Core
 NFC'si üçüncü parti uygulamaların tag emülasyonuna izin vermez (HCE
