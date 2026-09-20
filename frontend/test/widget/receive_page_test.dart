@@ -30,25 +30,32 @@ class _Rig {
   final syncApi = FakeSyncApi();
 
   late final List<Override> overrides = [
-        walletProvider.overrideWith(() => UnlockedWallet(keyPair)),
-        nfcServiceProvider.overrideWithValue(nfc),
-        chequeApiProvider.overrideWithValue(chequeApi),
-        syncApiProvider.overrideWithValue(syncApi),
-        txApiProvider.overrideWithValue(FakeTxApi()),
-        stellarSigningServiceProvider.overrideWithValue(FakeSigning()),
-        syncProvider.overrideWith(
-          () => FakeSyncNotifier([if (pending) testCheque(_chequeId, keyPair.accountId)]),
-        ),
-      ];
+    walletProvider.overrideWith(() => UnlockedWallet(keyPair)),
+    nfcServiceProvider.overrideWithValue(nfc),
+    chequeApiProvider.overrideWithValue(chequeApi),
+    syncApiProvider.overrideWithValue(syncApi),
+    txApiProvider.overrideWithValue(FakeTxApi()),
+    stellarSigningServiceProvider.overrideWithValue(FakeSigning()),
+    syncProvider.overrideWith(
+      () => FakeSyncNotifier([
+        if (pending) testCheque(_chequeId, keyPair.accountId),
+      ]),
+    ),
+  ];
 
   Widget _scope(Widget home) => ProviderScope(
-        overrides: overrides,
-        child: MaterialApp(theme: ThemeData(extensions: [AppColors.light]), home: home),
-      );
+    overrides: overrides,
+    child: MaterialApp(
+      theme: ThemeData(extensions: [AppColors.light]),
+      home: home,
+    ),
+  );
 
   Widget app() => _scope(
-        const Scaffold(body: Padding(padding: EdgeInsets.all(20), child: ReceivePage())),
-      );
+    const Scaffold(
+      body: Padding(padding: EdgeInsets.all(20), child: ReceivePage()),
+    ),
+  );
 
   /// Same scope (so the container survives), page gone.
   Widget appWithoutPage() => _scope(const Scaffold(body: SizedBox()));
@@ -75,7 +82,9 @@ Future<void> _leave(WidgetTester tester, _Rig rig) async {
 }
 
 void main() {
-  testWidgets('opens a session on entry: NFC ready, request broadcast', (tester) async {
+  testWidgets('opens a session on entry: NFC ready, request broadcast', (
+    tester,
+  ) async {
     final rig = _Rig();
     await _open(tester, rig);
 
@@ -83,17 +92,29 @@ void main() {
     expect(rig.nfc.presented, hasLength(1));
     final request = PaymentRequest.tryParse(rig.nfc.presented.single)!;
     expect(request.destination, rig.keyPair.accountId);
-    expect(request.amount, isNull, reason: 'no amount typed yet — the sender chooses');
-    expect(find.text('Secure session active'), findsOneWidget);
+    expect(
+      request.amount,
+      isNull,
+      reason: 'no amount typed yet — the sender chooses',
+    );
+    expect(find.text('Receive'), findsOneWidget);
+    expect(find.text('Request an amount (optional)'), findsOneWidget);
 
     await _leave(tester, rig);
   });
 
-  testWidgets('the QR is offered too, and it is the same request', (tester) async {
+  testWidgets('the QR is offered too, and it is the same request', (
+    tester,
+  ) async {
     final rig = _Rig();
     await _open(tester, rig);
 
     expect(find.byType(QrCard), findsNothing);
+    expect(find.text('Scan QR Code'), findsNothing);
+    await tester.tap(find.byIcon(Icons.nfc));
+    await tester.pumpAndSettle();
+    expect(find.text('Scan QR Code'), findsOneWidget);
+    expect(find.text('Use this code'), findsOneWidget);
     await tester.tap(find.text('Show QR code'));
     await tester.pump();
 
@@ -103,53 +124,72 @@ void main() {
     await _leave(tester, rig);
   });
 
-  testWidgets('without NFC the QR is the primary affordance', (tester) async {
+  testWidgets('without NFC the receive circle opens the payment QR', (
+    tester,
+  ) async {
     final rig = _Rig();
     rig.nfc.canBeTag = false;
     rig.nfc.canRead = false;
     await _open(tester, rig);
 
-    expect(find.text('Show this to the sender'), findsOneWidget);
+    expect(find.text('Ready to Receive'), findsOneWidget);
+    expect(find.byType(QrCard), findsNothing);
+    await tester.tap(find.byIcon(Icons.nfc));
+    await tester.pumpAndSettle();
+    expect(find.text('Scan QR Code'), findsOneWidget);
+    await tester.tap(find.text('Show QR code'));
+    await tester.pump();
     expect(find.byType(QrCard), findsOneWidget);
     expect(rig.nfc.presented, isEmpty);
 
     await _leave(tester, rig);
   });
 
-  testWidgets('an iPhone gets the QR plus a button to start an NFC read (never automatic)', (tester) async {
-    final rig = _Rig();
-    rig.nfc.canBeTag = false; // reader only
-    await _open(tester, rig);
+  testWidgets(
+    'an iPhone gets receive options plus a button to start an NFC read (never automatic)',
+    (tester) async {
+      final rig = _Rig();
+      rig.nfc.canBeTag = false; // reader only
+      await _open(tester, rig);
 
-    expect(find.text('Show this to the sender'), findsOneWidget);
-    expect(find.byType(QrCard), findsOneWidget);
-    expect(find.text('Have the sender scan this QR — or tap phones if theirs is an Android.'), findsOneWidget);
-    expect(rig.nfc.started, isEmpty, reason: 'Apple wants NFC sessions user-initiated');
+      expect(find.text('Ready to Receive'), findsOneWidget);
+      expect(find.byType(QrCard), findsNothing);
+      expect(
+        rig.nfc.started,
+        isEmpty,
+        reason: 'Apple wants NFC sessions user-initiated',
+      );
 
-    await tester.tap(find.text("Tap sender's phone"));
-    await tester.pump();
+      await tester.tap(find.text("Tap sender's phone"));
+      await tester.pump();
 
-    expect(rig.nfc.started.single.role, NfcRole.reader);
-    expect(
-      PaymentRequest.tryParse(rig.nfc.started.single.offer)!.destination,
-      rig.keyPair.accountId,
-      reason: 'the request we write to their tag',
-    );
+      expect(rig.nfc.started.single.role, NfcRole.reader);
+      expect(
+        PaymentRequest.tryParse(rig.nfc.started.single.offer)!.destination,
+        rig.keyPair.accountId,
+        reason: 'the request we write to their tag',
+      );
 
-    await _leave(tester, rig);
-  });
+      await _leave(tester, rig);
+    },
+  );
 
-  testWidgets('an Android receiver has no read button — it is the tag already', (tester) async {
-    final rig = _Rig();
-    await _open(tester, rig);
+  testWidgets(
+    'an Android receiver has no read button — it is the tag already',
+    (tester) async {
+      final rig = _Rig();
+      await _open(tester, rig);
 
-    expect(find.text("Tap sender's phone"), findsNothing);
-    expect(rig.nfc.started.single.role, NfcRole.tag);
+      expect(find.text("Tap sender's phone"), findsNothing);
+      expect(rig.nfc.started.single.role, NfcRole.tag);
 
-    await _leave(tester, rig);
-  });
+      await _leave(tester, rig);
+    },
+  );
 
-  testWidgets('an iPhone waiting for the cheque can start the second tap', (tester) async {
+  testWidgets('an iPhone waiting for the cheque can start the second tap', (
+    tester,
+  ) async {
     final rig = _Rig();
     rig.nfc.canBeTag = false;
     await _open(tester, rig);
@@ -166,38 +206,55 @@ void main() {
     await _leave(tester, rig);
   });
 
-  testWidgets('typing an amount re-issues the request with it (debounced)', (tester) async {
+  testWidgets('typing an amount re-issues the request with it (debounced)', (
+    tester,
+  ) async {
     final rig = _Rig();
     await _open(tester, rig);
 
     await tester.enterText(find.byType(TextField), '25.50');
     await tester.pump(const Duration(milliseconds: 100));
-    expect(rig.nfc.presented, hasLength(1), reason: 'still typing — no restart yet');
+    expect(
+      rig.nfc.presented,
+      hasLength(1),
+      reason: 'still typing — no restart yet',
+    );
 
     await tester.pump(const Duration(milliseconds: 600));
     await tester.pump();
 
     expect(rig.nfc.presented, hasLength(2));
     expect(PaymentRequest.tryParse(rig.nfc.presented.last)!.amount, '25.50');
-    expect(find.text('Requesting 25.5 ${PayAsset.configured.label}'), findsOneWidget);
+    expect(
+      find.text('Requesting 25.5 ${PayAsset.configured.label}'),
+      findsOneWidget,
+    );
 
     await _leave(tester, rig);
   });
 
-  testWidgets('an invalid amount shows an error and does not touch the request', (tester) async {
-    final rig = _Rig();
-    await _open(tester, rig);
+  testWidgets(
+    'an invalid amount shows an error and does not touch the request',
+    (tester) async {
+      final rig = _Rig();
+      await _open(tester, rig);
 
-    await tester.enterText(find.byType(TextField), '12abc');
-    await tester.pump(const Duration(seconds: 1));
+      await tester.enterText(find.byType(TextField), '12abc');
+      await tester.pump(const Duration(seconds: 1));
 
-    expect(find.text('Enter a valid amount, or leave it empty.'), findsOneWidget);
-    expect(rig.nfc.presented, hasLength(1));
+      expect(
+        find.text('Enter a valid amount, or leave it empty.'),
+        findsOneWidget,
+      );
+      expect(rig.nfc.presented, hasLength(1));
 
-    await _leave(tester, rig);
-  });
+      await _leave(tester, rig);
+    },
+  );
 
-  testWidgets('once a sender picks the request up it waits for their cheque', (tester) async {
+  testWidgets('once a sender picks the request up it waits for their cheque', (
+    tester,
+  ) async {
     final rig = _Rig();
     await _open(tester, rig);
 
@@ -206,19 +263,28 @@ void main() {
     await tester.pump();
 
     expect(find.text('Waiting for the payment'), findsOneWidget);
-    expect(find.text("Scan sender's code"), findsOneWidget);
-    expect(_container(tester).read(receiveSessionProvider).phase, ReceivePhase.awaitingCheque);
+    expect(find.text('Scan QR Code'), findsNothing);
+    expect(
+      _container(tester).read(receiveSessionProvider).phase,
+      ReceivePhase.awaitingCheque,
+    );
 
     await _leave(tester, rig);
   });
 
-  testWidgets('claiming the handed-over cheque ends in "Payment received"', (tester) async {
+  testWidgets('claiming the handed-over cheque ends in "Payment received"', (
+    tester,
+  ) async {
     final rig = _Rig();
     await _open(tester, rig);
     final session = _container(tester).read(receiveSessionProvider.notifier);
-    final nonce = _container(tester).read(receiveSessionProvider).request!.nonce!;
+    final nonce = _container(
+      tester,
+    ).read(receiveSessionProvider).request!.nonce!;
 
-    await session.acceptHandoff(ChequeHandoff(chequeId: _chequeId, from: testSender, nonce: nonce));
+    await session.acceptHandoff(
+      ChequeHandoff(chequeId: _chequeId, from: testSender, nonce: nonce),
+    );
     await tester.pump();
     await tester.pump();
 
@@ -235,7 +301,9 @@ void main() {
     await _leave(tester, rig);
   });
 
-  testWidgets('a cheque already waiting is listed and claimable by hand', (tester) async {
+  testWidgets('a cheque already waiting is listed and claimable by hand', (
+    tester,
+  ) async {
     final rig = _Rig(pending: true);
     await _open(tester, rig);
 
@@ -249,20 +317,62 @@ void main() {
     await _leave(tester, rig);
   });
 
-  testWidgets('a cheque that was already waiting is not auto-claimed by the session', (tester) async {
-    final rig = _Rig(pending: true);
-    rig.syncApi.cheques = [testCheque(_chequeId, rig.keyPair.accountId)];
+  testWidgets(
+    'a cheque that was already waiting is not auto-claimed by the session',
+    (tester) async {
+      final rig = _Rig(pending: true);
+      rig.syncApi.cheques = [testCheque(_chequeId, rig.keyPair.accountId)];
+      await _open(tester, rig);
+
+      await tester.pump(const Duration(seconds: 3));
+      await tester.pump();
+
+      expect(rig.chequeApi.claimAttempts, 0);
+
+      await _leave(tester, rig);
+    },
+  );
+
+  testWidgets('receive options validate and accept a pasted handoff', (
+    tester,
+  ) async {
+    final rig = _Rig();
     await _open(tester, rig);
-
-    await tester.pump(const Duration(seconds: 3));
+    final nonce = _container(
+      tester,
+    ).read(receiveSessionProvider).request!.nonce!;
+    await tester.tap(find.byIcon(Icons.nfc));
+    await tester.pumpAndSettle();
+    final manual = find.widgetWithText(
+      TextField,
+      'Or paste sender’s payment code',
+    );
+    await tester.enterText(manual, 'invalid');
+    await tester.tap(find.text('Use this code'));
     await tester.pump();
-
-    expect(rig.chequeApi.claimAttempts, 0);
-
+    expect(
+      find.text('Enter a valid payment code from the sender.'),
+      findsOneWidget,
+    );
+    await tester.enterText(
+      manual,
+      ChequeHandoff(
+        chequeId: _chequeId,
+        from: testSender,
+        nonce: nonce,
+      ).toUri(),
+    );
+    await tester.tap(find.text('Use this code'));
+    await tester.pumpAndSettle();
+    expect(rig.chequeApi.claimed, [_chequeId]);
+    expect(find.text('Payment received'), findsOneWidget);
+    expect(find.text('Use this code'), findsNothing);
     await _leave(tester, rig);
   });
 
-  testWidgets('leaving the page ends the session and the radios', (tester) async {
+  testWidgets('leaving the page ends the session and the radios', (
+    tester,
+  ) async {
     final rig = _Rig();
     await _open(tester, rig);
     final container = _container(tester);
@@ -274,6 +384,10 @@ void main() {
 
     final callsAfterLeaving = rig.syncApi.calls;
     await tester.pump(const Duration(seconds: 30));
-    expect(rig.syncApi.calls, callsAfterLeaving, reason: 'no polling after leaving');
+    expect(
+      rig.syncApi.calls,
+      callsAfterLeaving,
+      reason: 'no polling after leaving',
+    );
   });
 }

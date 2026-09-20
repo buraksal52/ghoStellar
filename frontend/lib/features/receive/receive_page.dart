@@ -11,7 +11,6 @@ import '../../state/core_providers.dart';
 import '../../state/sync_providers.dart';
 import '../../state/tap_providers.dart';
 import '../../state/wallet_providers.dart';
-import '../shared/widgets/qr_card.dart';
 import 'widgets/handoff_scanner_sheet.dart';
 
 /// The receiver's side of a tap/scan payment: shows a payment request (NFC +
@@ -31,7 +30,6 @@ class _ReceivePageState extends ConsumerState<ReceivePage> {
   late final ReceiveSessionNotifier _session;
   Timer? _debounce;
   String? _amountError;
-  bool _showQr = false;
 
   @override
   void initState() {
@@ -53,20 +51,28 @@ class _ReceivePageState extends ConsumerState<ReceivePage> {
 
   void _onAmountChanged(String text) {
     final value = text.trim();
-    final valid = value.isEmpty || AmountFormatter.isValidPositiveDecimal(value);
-    setState(() => _amountError = valid ? null : 'Enter a valid amount, or leave it empty.');
+    final valid =
+        value.isEmpty || AmountFormatter.isValidPositiveDecimal(value);
+    setState(
+      () => _amountError = valid
+          ? null
+          : 'Enter a valid amount, or leave it empty.',
+    );
     _debounce?.cancel();
     if (!valid) return;
-    _debounce = Timer(_amountDebounce, () => _session.start(amount: value.isEmpty ? null : value));
+    _debounce = Timer(
+      _amountDebounce,
+      () => _session.start(amount: value.isEmpty ? null : value),
+    );
   }
 
-  Future<void> _scanHandoff() async {
+  Future<void> _openReceiveOptions() async {
     final handoff = await showModalBottomSheet<ChequeHandoff>(
       context: context,
       isScrollControlled: true,
       builder: (_) => const HandoffScannerSheet(),
     );
-    if (handoff == null) return;
+    if (handoff == null || !mounted) return;
     final accepted = await _session.acceptHandoff(handoff);
     if (!accepted && mounted) {
       ScaffoldMessenger.of(context).showSnackBar(
@@ -75,21 +81,36 @@ class _ReceivePageState extends ConsumerState<ReceivePage> {
     }
   }
 
-  Widget _nfcRing(AppColors c, IconData icon) {
-    return Container(
-      width: 184,
-      height: 184,
-      alignment: Alignment.center,
-      decoration: BoxDecoration(shape: BoxShape.circle, border: Border.all(color: c.border)),
-      child: Container(
-        width: 92,
-        height: 92,
-        decoration: BoxDecoration(
-          shape: BoxShape.circle,
-          color: c.surface,
-          border: Border.all(color: c.border),
+  Widget _nfcRing(AppColors c, IconData icon, {VoidCallback? onTap}) {
+    return SizedBox(
+      height: 220,
+      child: Center(
+        child: Semantics(
+          button: onTap != null,
+          label: onTap == null ? null : "Open receive options",
+          child: GestureDetector(
+            onTap: onTap,
+            child: Container(
+              width: 184,
+              height: 184,
+              alignment: Alignment.center,
+              decoration: BoxDecoration(
+                shape: BoxShape.circle,
+                border: Border.all(color: c.border),
+              ),
+              child: Container(
+                width: 92,
+                height: 92,
+                decoration: BoxDecoration(
+                  shape: BoxShape.circle,
+                  color: c.surface,
+                  border: Border.all(color: c.border),
+                ),
+                child: Icon(icon, size: 32, color: c.text),
+              ),
+            ),
+          ),
         ),
-        child: Icon(icon, size: 32, color: c.text),
       ),
     );
   }
@@ -97,10 +118,14 @@ class _ReceivePageState extends ConsumerState<ReceivePage> {
   Widget _title(BuildContext context, String title, String body, AppColors c) {
     return Column(
       children: [
-        Text(title, style: Theme.of(context).textTheme.titleLarge),
+        Text(
+          title,
+          textAlign: TextAlign.center,
+          style: Theme.of(context).textTheme.titleLarge,
+        ),
         const SizedBox(height: 4),
         SizedBox(
-          width: 260,
+          width: 230,
           child: Text(
             body,
             textAlign: TextAlign.center,
@@ -111,40 +136,55 @@ class _ReceivePageState extends ConsumerState<ReceivePage> {
     );
   }
 
-  List<Widget> _hero(BuildContext context, AppColors c, ReceiveSessionState session) {
+  List<Widget> _hero(
+    BuildContext context,
+    AppColors c,
+    ReceiveSessionState session,
+  ) {
     final nfc = ref.read(nfcServiceProvider);
     final request = session.request;
     final amount = request?.amount;
-    final asked = amount == null ? '' : '${AmountFormatter.trimTrailingZeros(amount)} ${PayAsset.configured.label}';
+    final asked = amount == null
+        ? ''
+        : '${AmountFormatter.trimTrailingZeros(amount)} ${PayAsset.configured.label}';
 
     switch (session.phase) {
       case ReceivePhase.done:
         return [
           _nfcRing(c, Icons.check_rounded),
-          const SizedBox(height: 18),
           _title(context, 'Payment received', 'It is in your balance now.', c),
           const SizedBox(height: 10),
           TextButton(
-            onPressed: () => _session.start(amount: _amountController.text.trim()),
+            onPressed: () =>
+                _session.start(amount: _amountController.text.trim()),
             child: const Text('New request'),
           ),
         ];
       case ReceivePhase.claiming:
         return [
           _nfcRing(c, Icons.south_rounded),
-          const SizedBox(height: 18),
-          _title(context, 'Receiving…', 'Signing on your device — this takes a few seconds.', c),
+          _title(
+            context,
+            'Receiving…',
+            'Signing on your device — this takes a few seconds.',
+            c,
+          ),
         ];
       case ReceivePhase.awaitingCheque:
         return [
           Stack(
             alignment: Alignment.center,
             children: [
-              _nfcRing(c, Icons.nfc),
-              const SizedBox(width: 184, height: 184, child: CircularProgressIndicator(strokeWidth: 2)),
+              _nfcRing(c, Icons.nfc, onTap: _openReceiveOptions),
+              const SizedBox(
+                width: 184,
+                height: 184,
+                child: IgnorePointer(
+                  child: CircularProgressIndicator(strokeWidth: 2),
+                ),
+              ),
             ],
           ),
-          const SizedBox(height: 18),
           _title(
             context,
             'Waiting for the payment',
@@ -157,61 +197,46 @@ class _ReceivePageState extends ConsumerState<ReceivePage> {
             TextButton.icon(
               onPressed: _session.beginNfcRead,
               icon: Icon(Icons.nfc, size: 18, color: c.text),
-              label: Text("Tap sender's phone", style: TextStyle(fontSize: 13, color: c.text)),
+              label: Text(
+                "Tap sender's phone",
+                style: TextStyle(fontSize: 13, color: c.text),
+              ),
             ),
           TextButton.icon(
-            onPressed: _scanHandoff,
+            onPressed: _openReceiveOptions,
             icon: Icon(Icons.qr_code_scanner, size: 18, color: c.text),
-            label: Text("Scan sender's code", style: TextStyle(fontSize: 13, color: c.text)),
+            label: Text(
+              "Scan sender's code",
+              style: TextStyle(fontSize: 13, color: c.text),
+            ),
           ),
         ];
       case ReceivePhase.idle:
       case ReceivePhase.offering:
-        final uri = request?.toUri();
-        final showRing = nfc.canBeTag;
         return [
-          if (showRing)
-            _nfcRing(c, Icons.nfc)
-          else if (uri != null)
-            QrCard(data: uri),
-          const SizedBox(height: 18),
+          _nfcRing(c, Icons.nfc, onTap: _openReceiveOptions),
           _title(
             context,
-            showRing ? 'Ready to Receive' : 'Show this to the sender',
-            showRing
-                ? "Bring the sender's device close — or show them your QR code."
-                : nfc.isAvailable
-                    ? 'Have the sender scan this QR — or tap phones if theirs is an Android.'
-                    : 'Have the sender scan this QR.',
+            'Ready to Receive',
+            "Bring your phone close to the sender's device, or tap to show, scan or paste a payment code.",
             c,
           ),
           if (asked.isNotEmpty) ...[
             const SizedBox(height: 6),
-            Text('Requesting $asked', style: TextStyle(fontSize: 13, color: c.textSecondary)),
-          ],
-          if (showRing && uri != null) ...[
-            const SizedBox(height: 6),
-            TextButton.icon(
-              onPressed: () => setState(() => _showQr = !_showQr),
-              icon: Icon(Icons.qr_code_2, size: 18, color: c.text),
-              label: Text(
-                _showQr ? 'Hide QR code' : 'Show QR code',
-                style: TextStyle(fontSize: 13, color: c.text),
-              ),
+            Text(
+              'Requesting $asked',
+              style: TextStyle(fontSize: 13, color: c.textSecondary),
             ),
-            if (_showQr) ...[const SizedBox(height: 8), QrCard(data: uri)],
           ],
           if (nfc.isAvailable && !nfc.canBeTag)
             TextButton.icon(
               onPressed: _session.beginNfcRead,
               icon: Icon(Icons.nfc, size: 18, color: c.text),
-              label: Text("Tap sender's phone", style: TextStyle(fontSize: 13, color: c.text)),
+              label: Text(
+                "Tap sender's phone",
+                style: TextStyle(fontSize: 13, color: c.text),
+              ),
             ),
-          TextButton.icon(
-            onPressed: _scanHandoff,
-            icon: Icon(Icons.qr_code_scanner, size: 18, color: c.text),
-            label: Text("Scan sender's code", style: TextStyle(fontSize: 13, color: c.text)),
-          ),
         ];
     }
   }
@@ -226,49 +251,84 @@ class _ReceivePageState extends ConsumerState<ReceivePage> {
 
     return ListView(
       children: [
-        // minHeight, not a fixed height: the content (~280-310px) is taller than
-        // 260 and a fixed box overflows; this keeps it centered when short and
-        // lets it grow (the ListView scrolls) when not.
-        ConstrainedBox(
-          constraints: const BoxConstraints(minHeight: 260),
-          child: Center(
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                ..._hero(context, c, session),
-                const SizedBox(height: 14),
-                if (session.phase != ReceivePhase.idle && session.phase != ReceivePhase.done)
-                  Container(
-                    padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 9),
-                    decoration: BoxDecoration(color: c.infoCard, borderRadius: BorderRadius.circular(10)),
-                    child: Row(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        Container(width: 7, height: 7, decoration: BoxDecoration(color: c.positive, shape: BoxShape.circle)),
-                        const SizedBox(width: 8),
-                        Text('Secure session active', style: TextStyle(fontSize: 13, color: c.textSecondary)),
-                      ],
+        Container(
+          padding: const EdgeInsets.all(18),
+          decoration: BoxDecoration(
+            color: c.surface,
+            border: Border.all(color: c.border),
+            borderRadius: BorderRadius.circular(16),
+          ),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                'Receive',
+                style: TextStyle(fontSize: 13, color: c.textSecondary),
+              ),
+              const SizedBox(height: 8),
+              Row(
+                crossAxisAlignment: CrossAxisAlignment.baseline,
+                textBaseline: TextBaseline.alphabetic,
+                children: [
+                  Expanded(
+                    child: TextField(
+                      controller: _amountController,
+                      enabled:
+                          me != null &&
+                          (live || session.phase == ReceivePhase.idle),
+                      keyboardType: const TextInputType.numberWithOptions(
+                        decimal: true,
+                      ),
+                      style: Theme.of(context).textTheme.displayLarge,
+                      onChanged: _onAmountChanged,
+                      decoration: InputDecoration(
+                        filled: false,
+                        isDense: true,
+                        contentPadding: EdgeInsets.zero,
+                        border: InputBorder.none,
+                        enabledBorder: InputBorder.none,
+                        focusedBorder: InputBorder.none,
+                        disabledBorder: InputBorder.none,
+                        hintText: '0.00',
+                        semanticCounterText: 'Optional amount to receive',
+                        errorText: _amountError,
+                        errorMaxLines: 2,
+                      ),
                     ),
                   ),
-              ],
-            ),
+                  const SizedBox(width: 12),
+                  Text(
+                    PayAsset.configured.label,
+                    style: TextStyle(
+                      fontSize: 16,
+                      fontWeight: FontWeight.w600,
+                      color: c.info,
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 6),
+              Text(
+                'Request an amount (optional)',
+                style: TextStyle(
+                  fontSize: 13,
+                  color: c.muted,
+                  fontFamily: 'monospace',
+                ),
+              ),
+            ],
           ),
         ),
-        if (me != null)
-          Padding(
-            padding: const EdgeInsets.only(bottom: 16),
-            child: TextField(
-              controller: _amountController,
-              enabled: live || session.phase == ReceivePhase.idle,
-              keyboardType: const TextInputType.numberWithOptions(decimal: true),
-              onChanged: _onAmountChanged,
-              decoration: InputDecoration(
-                hintText: 'Request an amount (optional)',
-                suffixText: PayAsset.configured.label,
-                errorText: _amountError,
-              ),
-            ),
+        const SizedBox(height: 20),
+        ..._hero(context, c, session),
+        const SizedBox(height: 20),
+        Center(
+          child: Text(
+            'Secure on-device signing · payments arrive in your wallet.',
+            style: TextStyle(fontSize: 12, color: c.muted),
           ),
+        ),
+        const SizedBox(height: 16),
         if (pending.isNotEmpty)
           for (final cheque in pending)
             Container(
@@ -284,7 +344,10 @@ class _ReceivePageState extends ConsumerState<ReceivePage> {
                   Container(
                     width: 34,
                     height: 34,
-                    decoration: BoxDecoration(color: c.surfaceRaised, borderRadius: BorderRadius.circular(9)),
+                    decoration: BoxDecoration(
+                      color: c.surfaceRaised,
+                      borderRadius: BorderRadius.circular(9),
+                    ),
                     child: Icon(Icons.south_rounded, size: 16, color: c.text),
                   ),
                   const SizedBox(width: 12),
@@ -294,7 +357,10 @@ class _ReceivePageState extends ConsumerState<ReceivePage> {
                       children: [
                         Text(
                           '${AmountFormatter.trimTrailingZeros(AmountFormatter.fromRaw(cheque.amountRaw, cheque.decimals))} ${PayAsset.configured.label}',
-                          style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w600),
+                          style: const TextStyle(
+                            fontSize: 16,
+                            fontWeight: FontWeight.w600,
+                          ),
                         ),
                         const SizedBox(height: 2),
                         Text(
@@ -309,7 +375,9 @@ class _ReceivePageState extends ConsumerState<ReceivePage> {
                     style: ElevatedButton.styleFrom(
                       backgroundColor: c.primary,
                       foregroundColor: c.primaryText,
-                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(9)),
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(9),
+                      ),
                     ),
                     child: const Text('Claim'),
                   ),
@@ -320,7 +388,10 @@ class _ReceivePageState extends ConsumerState<ReceivePage> {
           Padding(
             padding: const EdgeInsets.symmetric(vertical: 16),
             child: Center(
-              child: Text('No payments waiting right now.', style: TextStyle(color: c.muted, fontSize: 13)),
+              child: Text(
+                'No payments waiting right now.',
+                style: TextStyle(color: c.muted, fontSize: 13),
+              ),
             ),
           ),
       ],

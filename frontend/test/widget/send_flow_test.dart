@@ -34,31 +34,36 @@ class _Rig {
   DateTime now = DateTime.utc(2026, 9, 20, 12);
 
   List<Override> get overrides => [
-        walletProvider.overrideWith(() => UnlockedWallet(keyPair)),
-        nfcServiceProvider.overrideWithValue(nfc),
-        chequeApiProvider.overrideWithValue(chequeApi),
-        txApiProvider.overrideWithValue(FakeTxApi()),
-        stellarSigningServiceProvider.overrideWithValue(FakeSigning()),
-        syncProvider.overrideWith(() => FakeSyncNotifier(alreadySent?.call(keyPair.accountId) ?? const [])),
-        clockProvider.overrideWithValue(() => now),
-      ];
+    walletProvider.overrideWith(() => UnlockedWallet(keyPair)),
+    nfcServiceProvider.overrideWithValue(nfc),
+    chequeApiProvider.overrideWithValue(chequeApi),
+    txApiProvider.overrideWithValue(FakeTxApi()),
+    stellarSigningServiceProvider.overrideWithValue(FakeSigning()),
+    syncProvider.overrideWith(
+      () => FakeSyncNotifier(alreadySent?.call(keyPair.accountId) ?? const []),
+    ),
+    clockProvider.overrideWithValue(() => now),
+  ];
 
   Widget app() => ProviderScope(
-        overrides: overrides,
-        child: MaterialApp(
-          theme: ThemeData(extensions: [AppColors.light]),
-          home: const Scaffold(body: Padding(padding: EdgeInsets.all(20), child: SendPage())),
-        ),
-      );
+    overrides: overrides,
+    child: MaterialApp(
+      theme: ThemeData(extensions: [AppColors.light]),
+      home: const Scaffold(
+        body: Padding(padding: EdgeInsets.all(20), child: SendPage()),
+      ),
+    ),
+  );
 }
 
 Finder get _pasteField => find.byWidgetPredicate(
-      (w) => w is TextField && (w.decoration?.hintText ?? '').startsWith('Or paste'),
-    );
+  (w) =>
+      w is TextField && (w.decoration?.hintText ?? '').startsWith('Or paste'),
+);
 
 Finder get _amountField => find.byWidgetPredicate(
-      (w) => w is TextField && w.decoration?.hintText == '0.00',
-    );
+  (w) => w is TextField && w.decoration?.hintText == '0.00',
+);
 
 ProviderContainer _container(WidgetTester tester) =>
     ProviderScope.containerOf(tester.element(find.byType(SendPage)));
@@ -76,7 +81,8 @@ String _link({String? amount, String? nonce, int? exp}) {
     'destination': _receiver,
     'amount': ?amount,
     'asset_code': PayAsset.configured.code,
-    if (!PayAsset.configured.isNative) 'asset_issuer': PayAsset.configured.issuer!,
+    if (!PayAsset.configured.isNative)
+      'asset_issuer': PayAsset.configured.issuer!,
     'x_req': ?nonce,
     if (exp != null) 'x_exp': '$exp',
   };
@@ -92,8 +98,29 @@ Future<void> _send(WidgetTester tester) async {
 }
 
 void main() {
+  testWidgets('send options show and hide the wallet QR', (tester) async {
+    final rig = _Rig();
+    rig.nfc.canRead = false;
+    rig.nfc.canBeTag = false;
+    await tester.pumpWidget(rig.app());
+    final address = _container(tester).read(walletProvider).publicKey;
+    await tester.tap(find.byIcon(Icons.nfc));
+    await tester.pumpAndSettle();
+    expect(find.text('Scan QR Code'), findsOneWidget);
+    await tester.tap(find.text('Show QR code'));
+    await tester.pumpAndSettle();
+    expect(tester.widget<QrCard>(find.byType(QrCard)).data, address);
+    expect(find.text('Your wallet address'), findsOneWidget);
+    await tester.tap(find.text('Hide QR code'));
+    await tester.pumpAndSettle();
+    expect(find.byType(QrCard), findsNothing);
+    expect(tester.takeException(), isNull);
+  });
+
   group('choosing a recipient', () {
-    testWidgets('a bare address still works and leaves the amount editable', (tester) async {
+    testWidgets('a bare address still works and leaves the amount editable', (
+      tester,
+    ) async {
       final rig = _Rig();
       await tester.pumpWidget(rig.app());
 
@@ -104,7 +131,9 @@ void main() {
       expect(find.text('They asked for this amount.'), findsNothing);
     });
 
-    testWidgets('a request with an amount fixes it until "Change"', (tester) async {
+    testWidgets('a request with an amount fixes it until "Change"', (
+      tester,
+    ) async {
       final rig = _Rig();
       await tester.pumpWidget(rig.app());
 
@@ -120,31 +149,54 @@ void main() {
       expect(tester.widget<TextField>(_amountField).readOnly, isFalse);
     });
 
-    testWidgets('an expired request is refused with its own message', (tester) async {
+    testWidgets('an expired request is refused with its own message', (
+      tester,
+    ) async {
       final rig = _Rig();
       await tester.pumpWidget(rig.app());
-      final past = rig.now.subtract(const Duration(minutes: 1)).millisecondsSinceEpoch ~/ 1000;
+      final past =
+          rig.now.subtract(const Duration(minutes: 1)).millisecondsSinceEpoch ~/
+          1000;
 
       await _pasteRecipient(tester, _link(amount: '5', nonce: 'n1', exp: past));
 
       expect(find.textContaining('has expired'), findsOneWidget);
     });
 
-    testWidgets('a request the server already has my cheque for is refused (from /sync)', (tester) async {
+    testWidgets(
+      'a request the server already has my cheque for is refused (from /sync)',
+      (tester) async {
+        final rig = _Rig(
+          alreadySent: (me) => [
+            testCheque(
+              '01AAAAAAAAAAAAAAAAAAAAAAAA',
+              _receiver,
+              sender: me,
+              requestId: 'n1',
+            ),
+          ],
+        );
+        await tester.pumpWidget(rig.app());
+        await tester.pump(); // let /sync resolve
+
+        await _pasteRecipient(tester, _link(nonce: 'n1'));
+
+        expect(find.text('You already paid this request.'), findsOneWidget);
+      },
+    );
+
+    testWidgets('a different request from the same receiver is not refused', (
+      tester,
+    ) async {
       final rig = _Rig(
-        alreadySent: (me) => [testCheque('01AAAAAAAAAAAAAAAAAAAAAAAA', _receiver, sender: me, requestId: 'n1')],
-      );
-      await tester.pumpWidget(rig.app());
-      await tester.pump(); // let /sync resolve
-
-      await _pasteRecipient(tester, _link(nonce: 'n1'));
-
-      expect(find.text('You already paid this request.'), findsOneWidget);
-    });
-
-    testWidgets('a different request from the same receiver is not refused', (tester) async {
-      final rig = _Rig(
-        alreadySent: (me) => [testCheque('01AAAAAAAAAAAAAAAAAAAAAAAA', _receiver, sender: me, requestId: 'n1')],
+        alreadySent: (me) => [
+          testCheque(
+            '01AAAAAAAAAAAAAAAAAAAAAAAA',
+            _receiver,
+            sender: me,
+            requestId: 'n1',
+          ),
+        ],
       );
       await tester.pumpWidget(rig.app());
       await tester.pump();
@@ -161,55 +213,69 @@ void main() {
 
       await _pasteRecipient(tester, 'https://example.com');
 
-      expect(find.textContaining('Enter a valid Stellar address'), findsOneWidget);
+      expect(
+        find.textContaining('Enter a valid Stellar address'),
+        findsOneWidget,
+      );
     });
 
-    testWidgets('a secret seed is never accepted as a recipient', (tester) async {
+    testWidgets('a secret seed is never accepted as a recipient', (
+      tester,
+    ) async {
       final rig = _Rig();
       await tester.pumpWidget(rig.app());
 
       await _pasteRecipient(tester, 'S${_receiver.substring(1)}');
 
-      expect(find.textContaining('Enter a valid Stellar address'), findsOneWidget);
+      expect(
+        find.textContaining('Enter a valid Stellar address'),
+        findsOneWidget,
+      );
     });
   });
 
   group('NFC entry', () {
-    testWidgets('the circle opens the sheet already listening; a tap picks the recipient', (tester) async {
-      final rig = _Rig();
-      await tester.pumpWidget(rig.app());
+    testWidgets(
+      'the circle opens the sheet already listening; a tap picks the recipient',
+      (tester) async {
+        final rig = _Rig();
+        await tester.pumpWidget(rig.app());
 
-      await tester.tap(find.byIcon(Icons.nfc));
-      // Not pumpAndSettle: the scanning spinner animates for as long as it listens.
-      await tester.pump();
-      await tester.pump(const Duration(milliseconds: 400));
-      // An Android sender listens in both directions (reader + tag windows),
-      // with nothing to offer yet — it is waiting for a request.
-      expect(rig.nfc.started.single.role, NfcRole.auto);
-      expect(rig.nfc.started.single.offer, isNull);
-      expect(find.text('Hold near their phone…'), findsOneWidget);
+        await tester.tap(find.byIcon(Icons.nfc));
+        // Not pumpAndSettle: the scanning spinner animates for as long as it listens.
+        await tester.pump();
+        await tester.pump(const Duration(milliseconds: 400));
+        // An Android sender listens in both directions (reader + tag windows),
+        // with nothing to offer yet — it is waiting for a request.
+        expect(rig.nfc.started.single.role, NfcRole.auto);
+        expect(rig.nfc.started.single.offer, isNull);
+        expect(find.text('Hold near their phone…'), findsOneWidget);
 
-      rig.nfc.receive(_link(amount: '7.25', nonce: 'nfc-1'));
-      await tester.pump();
-      await tester.pump(const Duration(milliseconds: 400));
+        rig.nfc.receive(_link(amount: '7.25', nonce: 'nfc-1'));
+        await tester.pump();
+        await tester.pump(const Duration(milliseconds: 400));
 
-      expect(find.text('to GBBD...FLA5'), findsOneWidget);
-      expect(tester.widget<TextField>(_amountField).controller!.text, '7.25');
-    });
+        expect(find.text('to GBBD...FLA5'), findsOneWidget);
+        expect(tester.widget<TextField>(_amountField).controller!.text, '7.25');
+      },
+    );
 
-    testWidgets('without NFC the circle opens the sheet and offers no tap button', (tester) async {
-      final rig = _Rig();
-      rig.nfc.canRead = false;
-      rig.nfc.canBeTag = false;
-      await tester.pumpWidget(rig.app());
+    testWidgets(
+      'without NFC the circle opens the sheet and offers no tap button',
+      (tester) async {
+        final rig = _Rig();
+        rig.nfc.canRead = false;
+        rig.nfc.canBeTag = false;
+        await tester.pumpWidget(rig.app());
 
-      await tester.tap(find.byIcon(Icons.nfc));
-      await tester.pumpAndSettle();
+        await tester.tap(find.byIcon(Icons.nfc));
+        await tester.pumpAndSettle();
 
-      expect(rig.nfc.started, isEmpty);
-      expect(find.text('Tap their phone'), findsNothing);
-      expect(find.text('Scan QR Code'), findsOneWidget);
-    });
+        expect(rig.nfc.started, isEmpty);
+        expect(find.text('Tap their phone'), findsNothing);
+        expect(find.text('Scan QR Code'), findsOneWidget);
+      },
+    );
 
     testWidgets('closing the sheet ends the reader session', (tester) async {
       final rig = _Rig();
@@ -225,71 +291,99 @@ void main() {
       expect(rig.nfc.stops, greaterThan(0));
     });
 
-    testWidgets('an iPhone sender reads (it can only read) as soon as the sheet opens', (tester) async {
-      final rig = _Rig();
-      rig.nfc.canBeTag = false;
-      await tester.pumpWidget(rig.app());
+    testWidgets(
+      'an iPhone sender reads (it can only read) as soon as the sheet opens',
+      (tester) async {
+        final rig = _Rig();
+        rig.nfc.canBeTag = false;
+        await tester.pumpWidget(rig.app());
 
-      await tester.tap(find.byIcon(Icons.nfc));
-      await tester.pump();
-      await tester.pump(const Duration(milliseconds: 400));
+        await tester.tap(find.byIcon(Icons.nfc));
+        await tester.pump();
+        await tester.pump(const Duration(milliseconds: 400));
 
-      expect(rig.nfc.started.single.role, NfcRole.reader);
-      expect(find.text('Hold near their phone…'), findsOneWidget);
+        expect(rig.nfc.started.single.role, NfcRole.reader);
+        expect(find.text('Hold near their phone…'), findsOneWidget);
 
-      // The request comes back as what we read from the Android's tag.
-      rig.nfc.receive(_link(amount: '3', nonce: 'ios-1'));
-      await tester.pump();
-      await tester.pump(const Duration(milliseconds: 400));
-      expect(find.text('to GBBD...FLA5'), findsOneWidget);
-    });
+        // The request comes back as what we read from the Android's tag.
+        rig.nfc.receive(_link(amount: '3', nonce: 'ios-1'));
+        await tester.pump();
+        await tester.pump(const Duration(milliseconds: 400));
+        expect(find.text('to GBBD...FLA5'), findsOneWidget);
+      },
+    );
 
-    testWidgets('a payload that is not a payment request is reported and listening continues', (tester) async {
-      final rig = _Rig();
-      await tester.pumpWidget(rig.app());
-      await tester.tap(find.byIcon(Icons.nfc));
-      await tester.pump();
-      await tester.pump(const Duration(milliseconds: 400));
+    testWidgets(
+      'a payload that is not a payment request is reported and listening continues',
+      (tester) async {
+        final rig = _Rig();
+        await tester.pumpWidget(rig.app());
+        await tester.tap(find.byIcon(Icons.nfc));
+        await tester.pump();
+        await tester.pump(const Duration(milliseconds: 400));
 
-      rig.nfc.receive('hello');
-      await tester.pump();
+        rig.nfc.receive('hello');
+        await tester.pump();
 
-      expect(find.textContaining("isn't a payment request"), findsOneWidget);
-      // …and the right phone can still arrive afterwards.
-      rig.nfc.receive(_link(amount: '1', nonce: 'late-1'));
-      await tester.pump();
-      await tester.pump(const Duration(milliseconds: 400));
-      expect(find.text('to GBBD...FLA5'), findsOneWidget);
-    });
+        expect(find.textContaining("isn't a payment request"), findsOneWidget);
+        // …and the right phone can still arrive afterwards.
+        rig.nfc.receive(_link(amount: '1', nonce: 'late-1'));
+        await tester.pump();
+        await tester.pump(const Duration(milliseconds: 400));
+        expect(find.text('to GBBD...FLA5'), findsOneWidget);
+      },
+    );
 
-    testWidgets('nothing found after the wait: Android suggests holding closer or the QR', (tester) async {
-      final rig = _Rig();
-      await tester.pumpWidget(rig.app());
-      await tester.tap(find.byIcon(Icons.nfc));
-      await tester.pump();
-      await tester.pump(const Duration(milliseconds: 400));
+    testWidgets(
+      'nothing found after the wait: Android suggests holding closer or the QR',
+      (tester) async {
+        final rig = _Rig();
+        await tester.pumpWidget(rig.app());
+        await tester.tap(find.byIcon(Icons.nfc));
+        await tester.pump();
+        await tester.pump(const Duration(milliseconds: 400));
 
-      await tester.pump(const Duration(seconds: 31));
+        await tester.pump(const Duration(seconds: 31));
 
-      expect(find.textContaining('Hold the phones back to back'), findsOneWidget);
-      expect(rig.nfc.stops, greaterThan(0), reason: 'the session is ended, not left running');
-      expect(find.text('Tap their phone'), findsOneWidget, reason: 'and can be retried');
-    });
+        expect(
+          find.textContaining('Hold the phones back to back'),
+          findsOneWidget,
+        );
+        expect(
+          rig.nfc.stops,
+          greaterThan(0),
+          reason: 'the session is ended, not left running',
+        );
+        expect(
+          find.text('Tap their phone'),
+          findsOneWidget,
+          reason: 'and can be retried',
+        );
+      },
+    );
 
-    testWidgets('nothing found after the wait: an iPhone is told NFC needs an Android', (tester) async {
-      final rig = _Rig();
-      rig.nfc.canBeTag = false;
-      await tester.pumpWidget(rig.app());
-      await tester.tap(find.byIcon(Icons.nfc));
-      await tester.pump();
-      await tester.pump(const Duration(milliseconds: 400));
+    testWidgets(
+      'nothing found after the wait: an iPhone is told NFC needs an Android',
+      (tester) async {
+        final rig = _Rig();
+        rig.nfc.canBeTag = false;
+        await tester.pumpWidget(rig.app());
+        await tester.tap(find.byIcon(Icons.nfc));
+        await tester.pump();
+        await tester.pump(const Duration(milliseconds: 400));
 
-      await tester.pump(const Duration(seconds: 31));
+        await tester.pump(const Duration(seconds: 31));
 
-      expect(find.textContaining('can only tap an Android phone'), findsOneWidget);
-    });
+        expect(
+          find.textContaining('can only tap an Android phone'),
+          findsOneWidget,
+        );
+      },
+    );
 
-    testWidgets('NFC switched off: the sheet says so and points at the QR', (tester) async {
+    testWidgets('NFC switched off: the sheet says so and points at the QR', (
+      tester,
+    ) async {
       final rig = _Rig();
       rig.nfc.startError = StateError('NFC is off');
       await tester.pumpWidget(rig.app());
@@ -298,12 +392,17 @@ void main() {
       await tester.pump();
       await tester.pump(const Duration(milliseconds: 400));
 
-      expect(find.textContaining('NFC is turned off or unavailable'), findsOneWidget);
+      expect(
+        find.textContaining('NFC is turned off or unavailable'),
+        findsOneWidget,
+      );
     });
   });
 
   group('sending', () {
-    testWidgets('locks the cheque, then offers the handoff over NFC and QR', (tester) async {
+    testWidgets('locks the cheque, then offers the handoff over NFC and QR', (
+      tester,
+    ) async {
       final rig = _Rig();
       await tester.pumpWidget(rig.app());
       await _pasteRecipient(tester, _link(amount: '25.50', nonce: 'req-1'));
@@ -352,7 +451,9 @@ void main() {
       await tester.pump();
     });
 
-    testWidgets('"Done" stops offering the payload and returns to the form', (tester) async {
+    testWidgets('"Done" stops offering the payload and returns to the form', (
+      tester,
+    ) async {
       final rig = _Rig();
       await tester.pumpWidget(rig.app());
       await _pasteRecipient(tester, _link(amount: '1', nonce: 'req-3'));
@@ -367,37 +468,50 @@ void main() {
       expect(find.text('Find recipient'), findsOneWidget);
     });
 
-    testWidgets('an iPhone sender gets a button for the second tap and starts a read on demand', (tester) async {
-      final rig = _Rig();
-      rig.nfc.canBeTag = false;
-      await tester.pumpWidget(rig.app());
-      await _pasteRecipient(tester, _link(amount: '2', nonce: 'req-ios'));
-      await _send(tester);
+    testWidgets(
+      'an iPhone sender gets a button for the second tap and starts a read on demand',
+      (tester) async {
+        final rig = _Rig();
+        rig.nfc.canBeTag = false;
+        await tester.pumpWidget(rig.app());
+        await _pasteRecipient(tester, _link(amount: '2', nonce: 'req-ios'));
+        await _send(tester);
 
-      expect(find.text('Payment sent'), findsOneWidget);
-      expect(find.byType(QrCard), findsOneWidget, reason: 'the QR is the always-available path');
-      expect(rig.nfc.started, isEmpty, reason: 'no automatic NFC session on an iPhone');
+        expect(find.text('Payment sent'), findsOneWidget);
+        expect(
+          find.byType(QrCard),
+          findsOneWidget,
+          reason: 'the QR is the always-available path',
+        );
+        expect(
+          rig.nfc.started,
+          isEmpty,
+          reason: 'no automatic NFC session on an iPhone',
+        );
 
-      await tester.tap(find.text("Tap receiver's phone"));
-      await tester.pump();
+        await tester.tap(find.text("Tap receiver's phone"));
+        await tester.pump();
 
-      expect(rig.nfc.started.single.role, NfcRole.reader);
-      final handoff = ChequeHandoff.tryParse(rig.nfc.started.single.offer)!;
-      expect(handoff.chequeId, _chequeId);
-      expect(handoff.nonce, 'req-ios');
+        expect(rig.nfc.started.single.role, NfcRole.reader);
+        final handoff = ChequeHandoff.tryParse(rig.nfc.started.single.offer)!;
+        expect(handoff.chequeId, _chequeId);
+        expect(handoff.nonce, 'req-ios');
 
-      // The write completing is "Delivered".
-      rig.nfc.delivered();
-      await tester.pump();
-      await tester.pump();
-      expect(find.text('Delivered'), findsOneWidget);
-      expect(find.text("Tap receiver's phone"), findsNothing);
+        // The write completing is "Delivered".
+        rig.nfc.delivered();
+        await tester.pump();
+        await tester.pump();
+        expect(find.text('Delivered'), findsOneWidget);
+        expect(find.text("Tap receiver's phone"), findsNothing);
 
-      await tester.tap(find.text('Done'));
-      await tester.pump();
-    });
+        await tester.tap(find.text('Done'));
+        await tester.pump();
+      },
+    );
 
-    testWidgets('without NFC the handoff is a QR the receiver can scan', (tester) async {
+    testWidgets('without NFC the handoff is a QR the receiver can scan', (
+      tester,
+    ) async {
       final rig = _Rig();
       rig.nfc.canBeTag = false;
       rig.nfc.canRead = false;
@@ -413,7 +527,9 @@ void main() {
       await tester.pump();
     });
 
-    testWidgets('a failed send offers no handoff and keeps the recipient', (tester) async {
+    testWidgets('a failed send offers no handoff and keeps the recipient', (
+      tester,
+    ) async {
       final rig = _Rig();
       rig.chequeApi.createError = StateError('insufficient');
       await tester.pumpWidget(rig.app());
@@ -426,24 +542,27 @@ void main() {
       expect(find.text('to GBBD...FLA5'), findsOneWidget);
     });
 
-    testWidgets('the server refusing a request that was paid elsewhere ends without a handoff', (tester) async {
-      final rig = _Rig();
-      rig.chequeApi.createError = ApiException(
-        code: 'cheque.request_used',
-        message: 'used',
-        httpStatus: 409,
-      );
-      await tester.pumpWidget(rig.app());
-      await _pasteRecipient(tester, _link(amount: '25.50', nonce: 'req-6'));
+    testWidgets(
+      'the server refusing a request that was paid elsewhere ends without a handoff',
+      (tester) async {
+        final rig = _Rig();
+        rig.chequeApi.createError = ApiException(
+          code: 'cheque.request_used',
+          message: 'used',
+          httpStatus: 409,
+        );
+        await tester.pumpWidget(rig.app());
+        await _pasteRecipient(tester, _link(amount: '25.50', nonce: 'req-6'));
 
-      await _send(tester);
+        await _send(tester);
 
-      expect(find.text('Payment sent'), findsNothing);
-      expect(rig.nfc.presented, isEmpty);
-      expect(
-        _container(tester).read(signingOverlayProvider).errorMessage,
-        'That payment request was already paid. Ask for a new one.',
-      );
-    });
+        expect(find.text('Payment sent'), findsNothing);
+        expect(rig.nfc.presented, isEmpty);
+        expect(
+          _container(tester).read(signingOverlayProvider).errorMessage,
+          'That payment request was already paid. Ask for a new one.',
+        );
+      },
+    );
   });
 }
