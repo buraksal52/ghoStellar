@@ -1,7 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 
-import '../../../core/config/pay_asset.dart';
 import '../../../core/theme/app_colors.dart';
 
 class AppDrawer extends StatelessWidget {
@@ -15,9 +14,7 @@ class AppDrawer extends StatelessWidget {
       (Icons.north_rounded, 'Send', '/send'),
       (Icons.south_rounded, 'Receive', '/receive'),
       (Icons.pool_rounded, 'Pool', '/pool'),
-      // The bank ramp trades fiat for the app's asset; it needs an issued
-      // asset (SEP-6/24), so it has nothing to do for a native deployment.
-      if (!PayAsset.configured.isNative) (Icons.account_balance_rounded, 'Bank', '/anchor'),
+      (Icons.account_balance_rounded, 'Bank', '/anchor'),
       (Icons.bar_chart_rounded, 'Activity', '/activity'),
       (Icons.settings_rounded, 'Settings', '/settings'),
     ];

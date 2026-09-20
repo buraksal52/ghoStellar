@@ -8,7 +8,7 @@ import '../../../core/utils/amount_formatter.dart';
 import '../../../state/home_providers.dart';
 import '../../../state/sync_providers.dart';
 
-/// The one balance the app talks about is [PayAsset.configured] (USDC). XLM
+/// The one balance the app talks about is [PayAsset.configured] (XLM). XLM
 /// only backs network fees and is never shown as an amount — a second unit
 /// next to the USDC figure made a funded-but-USDC-less wallet look like it
 /// could pay or use the pool. A low fee balance only raises a hint.

@@ -101,8 +101,8 @@ func main() {
 	chequeSvc := cheque.NewService(cheque.Config{
 		EscrowContractID:  envx.MustGet("PAY_ESCROW_CONTRACT_ID"),
 		TokenContractID:   envx.MustGet("ASSET_SAC_CONTRACT_ID"),
-		AssetCode:         envx.Get("ASSET_CODE", "USDC"),
-		AssetIssuer:       envx.Get("ASSET_ISSUER", "GBBD47IF6LWK7P7MDEVSCWR7DPUWV3NY3DTQEVFL4NAT4AQH3ZLLFLA5"),
+		AssetCode:         envx.Get("ASSET_CODE", "native"),
+		AssetIssuer:       envx.Get("ASSET_ISSUER", ""),
 		Decimals:          uint8(envx.GetInt("ASSET_DECIMALS", 7)),
 		NetworkPassphrase: envx.Get("NETWORK_PASSPHRASE", stellarx.TestNetworkPassphrase),
 	}, pool, chainGW)
@@ -113,13 +113,13 @@ func main() {
 	txHandler := tx.NewHandler(txSvc)
 
 	// ---- anchor ---------------------------------------------------------------
-	anchorDomain := envx.Get("ANCHOR_DOMAIN", "tr-mock-anchor.fly.dev")
+	anchorDomain := envx.Get("ANCHOR_DOMAIN", "pay-mock-anchor")
 	anchorClient := anchor.NewClient(nethost.Client(nethost.AllowList{anchorDomain: true}))
 	anchorSvc := anchor.NewService(anchor.Config{
 		AnchorID:     envx.Get("ANCHOR_ID", "default"),
 		AnchorDomain: anchorDomain,
-		AssetCode:    envx.Get("ASSET_CODE", "USDC"),
-		AssetIssuer:  envx.Get("ASSET_ISSUER", "GBBD47IF6LWK7P7MDEVSCWR7DPUWV3NY3DTQEVFL4NAT4AQH3ZLLFLA5"),
+		AssetCode:    envx.Get("ASSET_CODE", "native"),
+		AssetIssuer:  envx.Get("ASSET_ISSUER", ""),
 		Decimals:     uint8(envx.GetInt("ASSET_DECIMALS", 7)),
 	}, pool, anchorClient, chainGW, logger)
 	anchorHandler := anchor.NewHandler(anchorSvc, logger)

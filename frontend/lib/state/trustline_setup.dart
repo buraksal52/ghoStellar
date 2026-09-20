@@ -76,7 +76,7 @@ class TrustlineSetup {
       // A failed first load is exactly what the refresh below retries.
     }
     await _ref.read(syncProvider.notifier).refresh();
-    // A new trustline adds a USDC entry to the account's balances.
+    // An issued-asset trustline adds an entry to the account's balances.
     _ref.invalidate(balancesProvider);
     final synced = _ref.read(syncProvider).value;
     if (synced != null && !synced.trustlineReady) {

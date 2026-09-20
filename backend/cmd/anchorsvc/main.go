@@ -36,7 +36,7 @@ func main() {
 	dsn := envx.Get("DATABASE_URL", "postgres://postgres:postgres@localhost:5434/localpayment?sslmode=disable")
 	pool := dbx.ConnectAsync(ctx, dsn, logger)
 
-	anchorDomain := envx.Get("ANCHOR_DOMAIN", "tr-mock-anchor.fly.dev")
+	anchorDomain := envx.Get("ANCHOR_DOMAIN", "pay-mock-anchor")
 	// SSRF allow-list contains ONLY the operator-configured anchor domain —
 	// never one derived from a request (architecture.md §10).
 	allowedHosts := nethost.AllowList{anchorDomain: true}
@@ -52,8 +52,8 @@ func main() {
 	svc := anchor.NewService(anchor.Config{
 		AnchorID:     envx.Get("ANCHOR_ID", "default"),
 		AnchorDomain: anchorDomain,
-		AssetCode:    envx.Get("ASSET_CODE", "USDC"),
-		AssetIssuer:  envx.Get("ASSET_ISSUER", "GBBD47IF6LWK7P7MDEVSCWR7DPUWV3NY3DTQEVFL4NAT4AQH3ZLLFLA5"),
+		AssetCode:    envx.Get("ASSET_CODE", "native"),
+		AssetIssuer:  envx.Get("ASSET_ISSUER", ""),
 		Decimals:     uint8(envx.GetInt("ASSET_DECIMALS", 7)),
 	}, pool, anchorClient, chainGW, logger)
 	handler := anchor.NewHandler(svc, logger)

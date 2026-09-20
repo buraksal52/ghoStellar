@@ -351,11 +351,25 @@ func TestWithdrawPaymentXDR_RejectsBadInput(t *testing.T) {
 	}
 }
 
-func TestWithdrawPaymentXDR_NoIssuerConfigured(t *testing.T) {
+func TestWithdrawPaymentXDR_NativeAssetUsesNativePayment(t *testing.T) {
 	svc, _, owner := withdrawTestService(t)
+	svc.cfg.AssetCode = "native"
 	svc.cfg.AssetIssuer = ""
-	if _, err := svc.WithdrawPaymentXDR(context.Background(), owner, testIssuer(t), "id", "1", "5"); err == nil {
-		t.Fatal("expected an error when no asset issuer is configured")
+	xdrStr, err := svc.WithdrawPaymentXDR(context.Background(), owner, testIssuer(t), "id", "1", "5")
+	if err != nil {
+		t.Fatalf("WithdrawPaymentXDR: %v", err)
+	}
+	genericTx, err := txnbuild.TransactionFromXDR(xdrStr)
+	if err != nil {
+		t.Fatalf("decode xdr: %v", err)
+	}
+	tx, ok := genericTx.Transaction()
+	if !ok {
+		t.Fatal("expected a simple transaction")
+	}
+	pay, ok := tx.Operations()[0].(*txnbuild.Payment)
+	if !ok || !pay.Asset.IsNative() {
+		t.Fatalf("payment asset = %#v, want native XLM", tx.Operations()[0])
 	}
 }
 

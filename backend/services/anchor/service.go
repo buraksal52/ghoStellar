@@ -330,9 +330,6 @@ func (s *Service) TrustlineXDR(ctx context.Context, owner string) (string, error
 // anchor returned from GET /withdraw. Like TrustlineXDR the backend never
 // signs — the device signs and pay-tx-service submits.
 func (s *Service) WithdrawPaymentXDR(ctx context.Context, owner, destination, memoType, memo, amountStr string) (string, error) {
-	if s.cfg.AssetIssuer == "" {
-		return "", fmt.Errorf("%s: anchor asset issuer not configured", ErrUpstreamFailed)
-	}
 	if !stellarx.IsValidAccountAddress(destination) {
 		return "", fmt.Errorf("%w: destination is not a valid Stellar account", errBadRequest)
 	}
@@ -354,10 +351,14 @@ func (s *Service) WithdrawPaymentXDR(ctx context.Context, owner, destination, me
 	if !account.Exists {
 		return "", errAccountNotFunded
 	}
+	asset := txnbuild.Asset(txnbuild.NativeAsset{})
+	if s.cfg.AssetIssuer != "" {
+		asset = txnbuild.CreditAsset{Code: s.cfg.AssetCode, Issuer: s.cfg.AssetIssuer}
+	}
 	op := &txnbuild.Payment{
 		Destination:   destination,
 		Amount:        amount.String(),
-		Asset:         txnbuild.CreditAsset{Code: s.cfg.AssetCode, Issuer: s.cfg.AssetIssuer},
+		Asset:         asset,
 		SourceAccount: owner,
 	}
 	tx, err := txnbuild.NewTransaction(txnbuild.TransactionParams{
@@ -406,6 +407,12 @@ func withdrawMemo(memoType, memo string) (txnbuild.Memo, error) {
 // wrongly left "active" by an earlier unverified confirm) and reported as
 // errTrustlineMissing.
 func (s *Service) ConfirmTrustline(ctx context.Context, owner string) error {
+	// Native XLM has no issuer or trustline. A funded native account is
+	// already ready to receive it, so callers keep one uniform API without
+	// creating a meaningless cache row.
+	if s.cfg.AssetIssuer == "" || s.cfg.AssetCode == "native" {
+		return nil
+	}
 	repo, err := s.repos()
 	if err != nil {
 		return err

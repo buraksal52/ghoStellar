@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # scripts/e2e.sh — testnet end-to-end happy path (plan's Doğrulama
-# scenario 1): two accounts, friendbot, trustline, fund the sender via the
-# TR Mock Anchor's SEP-6 deposit, write a cheque, lock, claim, assert
+# scenario 1): two accounts, Friendbot-funded native XLM, write a cheque,
+# lock, claim, assert
 # Claimed. See docs/reference/platform/anchor-entegrasyonu.md for the
 # SEP-6 flow this script drives.
 #
@@ -14,7 +14,7 @@
 set -euo pipefail
 
 EDGE="${1:-http://localhost:9080}"
-ASSET_CODE="${ASSET_CODE:-USDC}"
+ASSET_CODE="${ASSET_CODE:-native}"
 
 need() { command -v "$1" >/dev/null || { echo "missing dependency: $1" >&2; exit 1; }; }
 need stellar
