@@ -20,6 +20,7 @@ Kapsam ve kararların tam gerekçesi:
 | Platform mimarisi (bu depoda gerçekten var olan) | `docs/reference/platform/architecture.md` |
 | P2P çek/havuz akışı ve case kataloğu (referans, De-Fi'den) | `docs/reference/platform/p2p-cek-ve-havuz-mimarisi.md` |
 | Anchor (SEP-1/10/24) entegrasyon kararları | `docs/reference/platform/anchor-entegrasyonu.md` |
+| NFC + QR temaslı ödeme protokolü (Flutter istemci) | `docs/reference/platform/nfc-qr-temasli-odeme.md` |
 | Kasıtlı kapsam sınırlamaları ve açık işler | `SERVICE.md` |
 | Soroban kontratı | `contracts/soroban/pay-escrow/README.md` |
 | Paylaşılan Go paketleri | `backend/pkg/{money,httpx,authx,nethost,obs,dbx,envx,stellarx}` |

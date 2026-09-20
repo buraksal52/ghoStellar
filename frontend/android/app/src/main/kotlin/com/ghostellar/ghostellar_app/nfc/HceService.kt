@@ -6,18 +6,23 @@ import android.os.Bundle
 /**
  * Host Card Emulation service for the "Ready to Receive" NFC handshake.
  *
- * Responds to two APDU commands from [NfcService.startSendScan]'s reader
+ * Responds to two APDU commands from [NfcService.startScan]'s reader
  * session:
  *  - SELECT AID (00 A4 04 00 <len> <aid> 00) for our proprietary AID
  *    F047686F53746C — replies with success (90 00) if selected.
  *  - GET DATA (00 CA 00 00 00) — replies with the currently broadcasting
- *    Stellar address as UTF-8 bytes, followed by success (90 00), or a
+ *    payload as UTF-8 bytes, followed by success (90 00), or a
  *    "no data" status (6A 82) if nothing is being broadcast right now.
  *
- * The address to broadcast is set/cleared from Flutter via the
+ * The payload to broadcast (a payment-request or cheque-handoff URI, see
+ * `payment_uri.dart`) is set/cleared from Flutter via the
  * `ghostellar/nfc_hce` MethodChannel (see MainActivity), never hardcoded —
- * this service only ever emits whatever the app's current wallet address
- * is, for as long as the Receive screen has an active session.
+ * this service only ever emits whatever the app is currently offering, for
+ * as long as a Receive/Send session is active.
+ *
+ * After a successful GET DATA it fires [onPayloadRead], which is how the
+ * broadcaster learns "the other phone has it" and can move on to the next
+ * step of the flow.
  */
 class HceService : HostApduService() {
 
@@ -30,9 +35,13 @@ class HceService : HostApduService() {
         private val SW_NO_DATA = byteArrayOf(0x6A, 0x82.toByte())
         private val SW_UNKNOWN = byteArrayOf(0x6D, 0x00)
 
-        /** Set by Flutter when the Receive screen starts broadcasting; null when idle. */
+        /** Set by Flutter when a Receive/Send session starts broadcasting; null when idle. */
         @Volatile
         var currentPayload: ByteArray? = null
+
+        /** Set by MainActivity; invoked after a reader successfully received [currentPayload]. */
+        @Volatile
+        var onPayloadRead: (() -> Unit)? = null
     }
 
     override fun processCommandApdu(commandApdu: ByteArray?, extras: Bundle?): ByteArray {
@@ -41,6 +50,8 @@ class HceService : HostApduService() {
         return when (commandApdu[1]) {
             INS_SELECT -> {
                 val aidLen = commandApdu[4].toInt() and 0xFF
+                // A malformed APDU from an arbitrary reader must not crash the service.
+                if (commandApdu.size < 5 + aidLen) return SW_UNKNOWN
                 val aid = commandApdu.copyOfRange(5, 5 + aidLen)
                 if (aid.contentEquals(AID)) SW_SUCCESS else SW_UNKNOWN
             }
@@ -49,6 +60,7 @@ class HceService : HostApduService() {
                 if (payload == null) {
                     SW_NO_DATA
                 } else {
+                    onPayloadRead?.invoke()
                     payload + SW_SUCCESS
                 }
             }
