@@ -64,6 +64,11 @@ See `docs/reference/platform/anchor-entegrasyonu.md`.
 | `claim` | receiver | receiver | Requires `now < expires_at` |
 | `refund` | anyone | none (permissionless) | Requires `now >= expires_at` |
 | `force_collect` | receiver | sender (pre-signed auth entry) | Only in the last 24h before `expires_at`; bounces instead of reverting on insufficient balance |
-| `deposit` | owner | owner | Always allowed; resets the withdraw lock |
-| `withdraw` | owner | owner | Requires `now >= last_deposit_at + 1 week` |
+| `deposit` | owner | owner | Always allowed |
+| `withdraw` | owner | owner | Always allowed, limited by the recorded pool balance |
 | `bump_instance` | anyone | none | TTL housekeeping, called by pay-scheduler-service |
+
+Pool withdrawals have no time lock. The contract has no upgrade path, so
+changing this source affects newly deployed contracts only. A contract
+already deployed with the former seven-day rule will keep enforcing that rule
+for its existing pool balances until each balance's original unlock time.

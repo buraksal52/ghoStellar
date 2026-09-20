@@ -333,8 +333,6 @@ func writeChequeError(w http.ResponseWriter, err error) {
 		code, status = ErrTerminalState, http.StatusConflict
 	case errors.Is(err, errNotFound):
 		code, status = ErrNotFound, http.StatusNotFound
-	case errors.Is(err, errPoolWithdrawLocked):
-		code, status = ErrPoolWithdrawLocked, http.StatusConflict
 	case errors.Is(err, errChainUnavailable):
 		code, status = ErrChainUnavailable, http.StatusBadGateway
 	case errors.Is(err, errAccountNotFunded):

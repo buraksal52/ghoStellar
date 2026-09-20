@@ -18,12 +18,6 @@ import '../../state/signing_overlay_provider.dart';
 import '../../state/sync_providers.dart';
 import '../../state/wallet_providers.dart';
 
-/// Pool deposits lock withdrawals for a period after each deposit — the
-/// exact contract constant should be confirmed against
-/// contracts/soroban/pay-escrow before shipping; 7 days matches the
-/// design copy and SERVICE.md's description of the MVP contract.
-const _poolLockDays = 7;
-
 /// A known reason the pool action can't work right now, with an optional
 /// screen that fixes it.
 class _Blocker {
@@ -70,8 +64,7 @@ class _PoolPageState extends ConsumerState<PoolPage> {
     final overlay = ref.read(signingOverlayProvider.notifier);
     final log = ref.read(localActivityLogProvider);
 
-    // Failures (including `pool.withdraw_locked`) are caught by the overlay,
-    // which shows the ErrorCopy message — nothing is left to catch here.
+    // Failures are caught by the overlay, which shows the ErrorCopy message.
     await overlay.run((report) async {
       final xdr = _isDeposit ? await poolApi.depositXdr(amount) : await poolApi.withdrawXdr(amount);
       report(SigningStep.signing);
@@ -216,7 +209,7 @@ class _PoolPageState extends ConsumerState<PoolPage> {
                   children: [
                     Icon(Icons.schedule, size: 14, color: c.muted),
                     const SizedBox(width: 8),
-                    Flexible(child: Text((BigInt.tryParse(pool?.amountRaw ?? '0') ?? BigInt.zero) > BigInt.zero ? 'Withdrawals lock for $_poolLockDays days after deposit' : 'No funds in pool', style: TextStyle(fontSize: 13, color: c.textSecondary))),
+                    Text('Withdraw anytime when online', style: TextStyle(fontSize: 13, color: c.textSecondary)),
                   ],
                 ),
               ),
@@ -318,7 +311,7 @@ class _PoolPageState extends ConsumerState<PoolPage> {
         ),
         const SizedBox(height: 10),
         Center(
-          child: Text('Deposits reset the $_poolLockDays-day withdrawal timer.',
+          child: Text('Your pool balance is available to withdraw whenever you are online.',
               style: TextStyle(fontSize: 12, color: c.muted)),
         ),
         const SizedBox(height: 20),

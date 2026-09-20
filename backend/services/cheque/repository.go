@@ -243,12 +243,9 @@ func (r *Repository) GetPool(ctx context.Context, owner string) (PoolDeposit, bo
 }
 
 // RecordDeposit upserts the cache row after a deposit XDR has been
-// confirmed on-chain (Confirm handler) — the pool's own withdraw lock is
-// enforced by the contract itself (D6); this row is only the read-side
-// cache /sync serves quickly and the withdraw pre-check's data source.
-// last_deposit_at = now() (server wall-clock at confirm time) approximates
-// the contract's own ledger-close timestamp closely enough for a
-// fail-fast pre-check — see PoolDeposit.LastDepositAt's doc comment.
+// confirmed on-chain (Confirm handler) — this row is the read-side cache
+// /sync serves quickly. last_deposit_at and ledger are retained as deposit
+// history metadata; they do not restrict withdrawals.
 func (r *Repository) RecordDeposit(ctx context.Context, owner, amountRaw string, decimals uint8, ledgerSeq int64) error {
 	_, err := r.pool.Exec(ctx, `
 		INSERT INTO pay.pool_deposits (owner_address, amount_raw, decimals, last_deposit_ledger, last_deposit_at, ledger_seq)

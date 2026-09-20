@@ -50,11 +50,6 @@ use soroban_sdk::{contract, contracterror, contractimpl, contracttype, token, Ad
 /// A cheque's terms are valid for one week (p2p doc §0 rule 2 / §9.H1).
 pub const CHEQUE_VALIDITY_SECONDS: u64 = 7 * 24 * 60 * 60;
 
-/// A pool deposit re-locks withdrawal for one week from the *last* deposit
-/// (p2p doc §7 / §9.H2) — enforced here as an absolute deadline, not a
-/// duration a client could misreport.
-pub const POOL_LOCK_SECONDS: u64 = 7 * 24 * 60 * 60;
-
 /// force_collect only becomes callable in the last 24h before a cheque
 /// expires (plan's open assumption #5, answering p2p doc §10 G5): it exists
 /// to rescue a cheque the sender is about to let lapse, not to race ahead of
@@ -90,7 +85,8 @@ pub struct ChequeRecord {
 pub struct PoolRecord {
     pub token: Address,
     pub amount: i128,
-    pub last_deposit_at: u64, // unix seconds; withdraw's 1-week clock (§9.H2)
+    // Retained in persistent storage for compatibility with existing records.
+    pub last_deposit_at: u64,
 }
 
 #[derive(Clone)]
@@ -115,7 +111,7 @@ pub enum Error {
     AlreadyTerminal = 9,    // force_collect after this cheque already resolved one way or another
     ForceCollectTooEarly = 10, // before the last-24h window (G5)
     ForceCollectTooLate = 11,  // at/after expires_at
-    WithdrawLocked = 12,    // pool withdraw before last_deposit_at + 1 week
+    WithdrawLocked = 12,    // reserved legacy error code; withdrawals are not time-locked
     InsufficientPoolBalance = 13,
     MixedAsset = 14, // deposit() called with a different token than the pool already holds
 }
@@ -314,9 +310,7 @@ impl PayEscrow {
 
     // ---- Havuz (pool) ------------------------------------------------------
 
-    /// Adds to `owner`'s pool balance. Always free (p2p doc §7) — but it
-    /// resets the withdrawal clock to *now*, exactly as documented, so a
-    /// deposit while a countdown is already running restarts it.
+    /// Adds to `owner`'s pool balance. Funds remain withdrawable at any time.
     pub fn deposit(e: Env, owner: Address, token: Address, amount: i128) -> Result<(), Error> {
         owner.require_auth();
         if amount <= 0 {
@@ -338,7 +332,7 @@ impl PayEscrow {
 
         record.token = token;
         record.amount += amount;
-        record.last_deposit_at = e.ledger().timestamp();
+        record.last_deposit_at = e.ledger().timestamp(); // legacy metadata, not a withdrawal condition
         e.storage().persistent().set(&key, &record);
         e.storage()
             .persistent()
@@ -348,10 +342,7 @@ impl PayEscrow {
         Ok(())
     }
 
-    /// Withdraws from `owner`'s pool balance. Rejected on-chain — not just
-    /// by the backend — until at least one week has passed since the last
-    /// `deposit` (p2p doc §7 / §9.H2): "backend'e güvenilmez" applies here
-    /// exactly as it does to force_collect's conditions.
+    /// Withdraws from `owner`'s pool balance at any time.
     pub fn withdraw(e: Env, owner: Address, amount: i128) -> Result<(), Error> {
         owner.require_auth();
         if amount <= 0 {
@@ -368,11 +359,6 @@ impl PayEscrow {
         if amount > record.amount {
             return Err(Error::InsufficientPoolBalance);
         }
-        let now = e.ledger().timestamp();
-        if now < record.last_deposit_at + POOL_LOCK_SECONDS {
-            return Err(Error::WithdrawLocked);
-        }
-
         let token_client = token::Client::new(&e, &record.token);
         token_client.transfer(&e.current_contract_address(), &owner, &amount);
 

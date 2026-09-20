@@ -241,11 +241,8 @@ Postgres'te `NUMERIC(40,0)` + `decimals SMALLINT`, `DOUBLE PRECISION` yasak.
 
 ## 6. Kontrat + Servis Sınırındaki Sorumluluk Ayrımı
 
-Backend, kontratın kendi kendine yeten kontrollerini (D2, H2, G5)
-**tekrar etmez** — yalnızca kullanıcıya hızlı, açıklayıcı bir hata dönmek
-için önden ucuz bir kontrol yapar (örn. `pool.withdraw_locked`'ı ağ
-ücreti harcamadan önce yakalamak). Nihai doğruluk her zaman kontrattadır
-(D6): backend'e güvenilmez.
+Backend, kontratın kendi kendine yeten kontrollerini **tekrar etmez**.
+Nihai doğruluk her zaman kontrattadır (D6): backend'e güvenilmez.
 
 ## 7. MVP'de Bulunmayanlar
 

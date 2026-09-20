@@ -20,11 +20,7 @@ import (
 	"github.com/local-payment/backend/ports"
 )
 
-// Cheque validity (p2p doc §0 rule 2 / §9.H1) and the pool's withdraw lock
-// (§7 / §9.H2) — kept in sync with contracts/soroban/pay-escrow/src/lib.rs's
-// own constants; the contract is the actual enforcement point (D6), these
-// mirror them only for building correct unsigned XDR and readable /sync
-// countdowns.
+// Cheque validity (p2p doc §0 rule 2 / §9.H1), kept in sync with the contract.
 const (
 	chequeValidity = 7 * 24 * time.Hour
 	// Ledger close time varies; ~5s/ledger is Stellar's design target, used
@@ -578,29 +574,9 @@ func (s *Service) PoolDepositXDR(ctx context.Context, owner, amountStr string) (
 	return stellarx.AssembleInvocation(ctx, s.simulator(), s.cfg.NetworkPassphrase, owner, ownerAccount.Sequence, op)
 }
 
-// PoolWithdrawXDR builds the unsigned withdraw transaction. The contract —
-// not this service — is what actually rejects an early withdraw (H2,
-// "backend'e güvenilmez"); this only pre-checks so the device gets a fast,
-// friendly cheque.pool_withdraw_locked instead of paying a network fee to
-// find out on-chain.
+// PoolWithdrawXDR builds the unsigned withdraw transaction. Pool funds are
+// withdrawable at any time; balance and authorization remain contract-checked.
 func (s *Service) PoolWithdrawXDR(ctx context.Context, owner, amountStr string) (string, error) {
-	repo, err := s.repos()
-	if err != nil {
-		return "", err
-	}
-	pool, exists, err := repo.GetPool(ctx, owner)
-	if err != nil {
-		return "", err
-	}
-	if exists && !pool.LastDepositAt.IsZero() {
-		unlocksAt := pool.LastDepositAt.Add(chequeValidity) // same 1-week constant as §9.H2
-		if time.Now().Before(unlocksAt) {
-			return "", errPoolWithdrawLocked
-		}
-	}
-	// pool.LastDepositAt zero (row predates migration 000002, or was never
-	// set) skips this fast pre-check entirely — the contract's own
-	// WithdrawLocked check (D6) is the real enforcement point either way.
 	amount, err := money.ParseAmount(amountStr, s.asset(), s.cfg.Decimals)
 	if err != nil || amount.Raw.Sign() <= 0 {
 		return "", errInvalidAmount
@@ -842,7 +818,6 @@ var (
 	errExpired             = errors.New(ErrExpired)
 	errTerminalState       = errors.New(ErrTerminalState)
 	errNotFound            = errors.New(ErrNotFound)
-	errPoolWithdrawLocked  = errors.New(ErrPoolWithdrawLocked)
 	errBadRequest          = errors.New(ErrBadRequest)
 	errChainUnavailable    = errors.New(ErrChainUnavailable)
 	errAccountNotFunded    = errors.New(ErrAccountNotFunded)

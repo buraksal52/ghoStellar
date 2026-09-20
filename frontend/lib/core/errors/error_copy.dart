@@ -38,8 +38,6 @@ class ErrorCopy {
       'cheque.simulation_failed':
           'The network rejected this. Check that $asset is set up on your wallet and that you have enough $asset.',
       'cheque.bad_request': 'That request could not be processed. Please check it and try again.',
-      'pool.withdraw_locked':
-          'Your pool balance isn\'t withdrawable yet — deposits lock for a period after each deposit.',
       'chain.rpc_unavailable':
           'The Stellar network is temporarily unavailable. Try again shortly.',
       'cheque.db_not_ready': 'Service is starting up — try again in a moment.',

@@ -232,7 +232,6 @@ func TestWriteChequeError_Mapping(t *testing.T) {
 		{errExpired, http.StatusConflict, ErrExpired},
 		{errTerminalState, http.StatusConflict, ErrTerminalState},
 		{errNotFound, http.StatusNotFound, ErrNotFound},
-		{errPoolWithdrawLocked, http.StatusConflict, ErrPoolWithdrawLocked},
 		{errChainUnavailable, http.StatusBadGateway, ErrChainUnavailable},
 		{errBadRequest, http.StatusBadRequest, ErrBadRequest},
 		{errAccountNotFunded, http.StatusUnprocessableEntity, ErrAccountNotFunded},

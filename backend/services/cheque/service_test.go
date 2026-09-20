@@ -497,9 +497,6 @@ func TestPoolWithdrawXDR_UnfundedAccountRejected(t *testing.T) {
 	if err := repo.RecordDeposit(context.Background(), testSender, "100000000", testDecimals, 1); err != nil {
 		t.Fatalf("RecordDeposit: %v", err)
 	}
-	p := repo.pools[testSender]
-	p.LastDepositAt = time.Now().Add(-8 * 24 * time.Hour) // past the lock window
-	repo.pools[testSender] = p
 
 	chain := &portstest.FakeChain{
 		GetAccountFunc: func(ctx context.Context, address string) (ports.AccountInfo, error) {
@@ -512,7 +509,7 @@ func TestPoolWithdrawXDR_UnfundedAccountRejected(t *testing.T) {
 	}
 }
 
-func TestPoolWithdrawXDR_LockedThenUnlocked(t *testing.T) {
+func TestPoolWithdrawXDR_ImmediatelyAfterDeposit(t *testing.T) {
 	repo := newFakeRepo()
 	svc := newServiceWithRepo(testConfig(), repo, fundedChain(t, 1))
 	ctx := context.Background()
@@ -521,33 +518,8 @@ func TestPoolWithdrawXDR_LockedThenUnlocked(t *testing.T) {
 		t.Fatalf("RecordDeposit: %v", err)
 	}
 
-	// Still within the 1-week lock.
-	if _, err := svc.PoolWithdrawXDR(ctx, testSender, "10"); !errors.Is(err, errPoolWithdrawLocked) {
-		t.Fatalf("got %v, want errPoolWithdrawLocked", err)
-	}
-
-	// Move the deposit's clock back past the lock window.
-	p := repo.pools[testSender]
-	p.LastDepositAt = time.Now().Add(-8 * 24 * time.Hour)
-	repo.pools[testSender] = p
-
 	if _, err := svc.PoolWithdrawXDR(ctx, testSender, "10"); err != nil {
-		t.Fatalf("expected unlocked withdraw to succeed, got %v", err)
-	}
-}
-
-func TestPoolWithdrawXDR_ZeroLastDepositAtSkipsPreCheck(t *testing.T) {
-	repo := newFakeRepo()
-	svc := newServiceWithRepo(testConfig(), repo, fundedChain(t, 1))
-	ctx := context.Background()
-
-	// A pool row exists but predates migration 000002 (LastDepositAt is the
-	// zero time) — the fast pre-check must be skipped entirely, deferring to
-	// the contract's own enforcement.
-	repo.pools[testSender] = PoolDeposit{OwnerAddress: testSender, AmountRaw: "100000000", Decimals: testDecimals}
-
-	if _, err := svc.PoolWithdrawXDR(ctx, testSender, "10"); err != nil {
-		t.Fatalf("expected pre-check to be skipped, got %v", err)
+		t.Fatalf("expected immediate withdraw to succeed, got %v", err)
 	}
 }
 
