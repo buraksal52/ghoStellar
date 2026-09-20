@@ -21,7 +21,7 @@ Kapsam ve kararların tam gerekçesi:
 | P2P çek/havuz akışı ve case kataloğu (referans, De-Fi'den) | `docs/reference/platform/p2p-cek-ve-havuz-mimarisi.md` |
 | Anchor (SEP-1/10/24) entegrasyon kararları | `docs/reference/platform/anchor-entegrasyonu.md` |
 | NFC + QR temaslı ödeme protokolü (Flutter istemci) | `docs/reference/platform/nfc-qr-temasli-odeme.md` |
-| Kasıtlı kapsam sınırlamaları ve açık işler | `SERVICE.md` |
+| Kasıtlı kapsam sınırlamaları ve açık işler | `LIMITATIONS.md` |
 | Soroban kontratı | `contracts/soroban/pay-escrow/README.md` |
 | Paylaşılan Go paketleri | `backend/pkg/{money,httpx,authx,nethost,obs,dbx,envx,stellarx}` |
 
@@ -38,7 +38,7 @@ Kapsam ve kararların tam gerekçesi:
   imzasız XDR üretir. Belgelenmiş tek istisna: `pay-scheduler-service`'in
   keeper anahtarı `refund()`/`bump_instance()` çağrılarını doğrudan submit
   eder — fee-payer-only, kimsenin parasını hareket ettirmez (bkz.
-  SERVICE.md #15).
+  LIMITATIONS.md #15).
 - **Yalnızca `pay-chain-gateway` Horizon/Soroban'a çıkar.**
 - **Backend hiçbir zaman özel anahtar tutmaz** — ne kullanıcının, ne
   anchor'ın JWT'sinin. Tek istisna: `pay-scheduler-service`'in keeper
@@ -60,7 +60,7 @@ Kapsam ve kararların tam gerekçesi:
   iade, zorla tahsil) **tek kontratta**; classic Claimable Balance MVP'de
   kullanılmaz (bkz. plan, "Kritik Mimari Karar").
 - `force_collect`'in ön-yetki XDR'ı (`pkg/stellarx.BuildForceCollectAuthEntry`)
-  canlı ağda henüz doğrulanmadı — bkz. `SERVICE.md` madde 2.
+  canlı ağda henüz doğrulanmadı — bkz. `LIMITATIONS.md` madde 2.
 - Compose dosyasındaki `name: local-payment` değerini mevcut kurulumun
   uyumluluk kimliği olarak koru. ghoStellar ürün adıdır; Compose proje adı ve
   Postgres hacim adları mevcut yerel veriyi korumak için legacy kalmıştır.
