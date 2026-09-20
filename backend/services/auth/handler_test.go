@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -103,6 +104,30 @@ func TestHandler_Token_HappyPathAndBadSignature(t *testing.T) {
 			t.Fatalf("got status %d, want 401", rec.Code)
 		}
 	})
+}
+
+func TestHandler_Token_RepositoryFailureIsNotReportedAsBadSignature(t *testing.T) {
+	repo := newFakeRepo()
+	repo.failOn["UpsertUser"] = errors.New("database unavailable")
+	svc, _ := testServiceAndServerWithRepo(t, repo)
+	h := NewHandler(svc)
+	clientKP, err := keypair.Random()
+	if err != nil {
+		t.Fatal(err)
+	}
+	unsignedXDR, err := svc.Challenge(clientKP.Address())
+	if err != nil {
+		t.Fatalf("Challenge: %v", err)
+	}
+	signedXDR := signChallenge(t, unsignedXDR, clientKP)
+	body, _ := json.Marshal(tokenRequest{Transaction: signedXDR})
+	req := httptest.NewRequest("POST", "/auth/token", bytes.NewReader(body))
+	rec := httptest.NewRecorder()
+	h.Token(rec, req)
+
+	if rec.Code != http.StatusInternalServerError {
+		t.Fatalf("got status %d, want 500", rec.Code)
+	}
 }
 
 func TestHandler_Refresh_MissingTokenRejected(t *testing.T) {

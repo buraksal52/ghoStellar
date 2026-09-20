@@ -1,11 +1,8 @@
 package auth
 
 import (
-	"crypto/sha256"
 	"encoding/json"
 	"errors"
-	"fmt"
-	"log/slog"
 	"net/http"
 
 	"github.com/local-payment/backend/pkg/authx"
@@ -51,19 +48,11 @@ func (h *Handler) Token(w http.ResponseWriter, r *http.Request) {
 	}
 	pair, _, err := h.svc.VerifyAndMint(r.Context(), req.Transaction)
 	if err != nil {
-		digest := sha256.Sum256([]byte(req.Transaction))
-		category := "other"
-		if errors.Is(err, errInvalidChallenge) {
-			category = "challenge_invalid"
-		} else if errors.Is(err, errInvalidSignature) {
-			category = "client_signature_invalid"
+		if errors.Is(err, errInvalidChallenge) || errors.Is(err, errInvalidSignature) {
+			httpx.WriteError(w, http.StatusUnauthorized, ErrInvalidSignature, "challenge verification failed", nil)
+			return
 		}
-		slog.Warn("temporary SEP-10 rejection diagnostic",
-			"category", category,
-			"transaction_sha256_prefix", fmt.Sprintf("%x", digest[:6]),
-			"transaction_bytes", len(req.Transaction),
-		)
-		httpx.WriteError(w, http.StatusUnauthorized, ErrInvalidSignature, "challenge verification failed", nil)
+		httpx.WriteError(w, http.StatusInternalServerError, "auth.internal_error", "authentication service unavailable", nil)
 		return
 	}
 	httpx.WriteData(w, http.StatusOK, pair)
