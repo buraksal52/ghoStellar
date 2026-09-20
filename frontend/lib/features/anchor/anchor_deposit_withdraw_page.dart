@@ -6,6 +6,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import 'package:uuid/uuid.dart';
 
+import '../../core/config/pay_asset.dart';
 import '../../core/errors/api_error.dart';
 import '../../core/errors/error_copy.dart';
 import '../../core/theme/app_colors.dart';
@@ -21,8 +22,8 @@ import '../../state/signing_overlay_provider.dart';
 import '../../state/sync_providers.dart';
 import '../../state/wallet_providers.dart';
 
-/// Fiat leg of the TR anchor. Deposits are wired in this currency; the
-/// on-chain leg is `AnchorInfo.assetCode` (USDC).
+/// Fiat leg of the local mock anchor. Deposits are wired in this currency;
+/// the on-chain leg is native XLM.
 const _fiatCode = 'TRY';
 
 /// Stellar assets carry 7 decimals; the backend ledger stores raw units.
