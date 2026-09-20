@@ -16,15 +16,19 @@ class AccountBalances {
   /// Native XLM balance, decimal string (e.g. "1248.7300000").
   final String native;
 
-  /// Non-native balances (e.g. USDC), keyed by asset code.
+  /// Non-native balances (e.g. USDC), keyed by asset code. Includes both the
+  /// platform asset ([PayAsset.configured], if it's non-native) and any
+  /// separate anchor asset the wallet has a trustline for.
   final Map<String, String> other;
 
   final bool exists;
 
-  /// The app deals in ONE asset ([PayAsset.configured], native XLM by default)
-  /// — cheques, the pool and the bank ramp all use it. For a non-native
-  /// deployment, [native] is otherwise only the network-fee balance, so
-  /// screens show this getter as "the" balance.
+  /// The platform deals in ONE asset ([PayAsset.configured], native XLM by
+  /// default) — cheques and the pool use it. A deployment's anchor can ramp a
+  /// different asset (e.g. USDC) through the bank; that one lives in [other]
+  /// under its own code and is shown separately (see `BalanceCard`). For a
+  /// non-native platform asset, [native] is otherwise only the network-fee
+  /// balance, so screens show this getter as "the" (platform) balance.
   bool get payAssetIsNative => PayAsset.configured.isNative;
 
   /// Balance of the app's one asset; `'0'` when the account holds none (no

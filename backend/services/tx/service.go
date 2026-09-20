@@ -97,17 +97,33 @@ func (s *Service) Submit(ctx context.Context, req SubmitRequest) (SubmitResponse
 		result, submitErr = s.chain.SubmitClassic(ctx, req.SignedXDR)
 	}
 
-	state := "failed"
-	resultCode := ""
-	if submitErr == nil {
-		resultCode = result.ResultCode
-		if result.Successful {
-			state = "success"
-		} else if resultCode == "PENDING" {
-			state = "submitted"
+	if submitErr != nil {
+		// This is pay-chain-gateway/Horizon/Soroban itself being unreachable
+		// or erroring — never the network's own verdict on the transaction.
+		// Caching it as the key's permanent, replayable "done" result would
+		// mean every retry (notably the offline-payment queue's 15s loop)
+		// gets this SAME transient failure back forever via
+		// GetIdempotentResponse, even long after the outage clears. Release
+		// the key instead so a retry with the same Idempotency-Key starts a
+		// genuinely fresh attempt (SERVICE.md #14/#23).
+		resultCode := submitErr.Error()
+		if err := repo.ReleaseSubmission(ctx, req.IdempotencyKey, resultCode); err != nil {
+			return SubmitResponse{}, fmt.Errorf("tx: release submission: %w", err)
 		}
-	} else {
-		resultCode = submitErr.Error()
+		_ = repo.InsertAudit(ctx, req.StellarAddress, "tx.submission_failed", map[string]any{
+			"idempotencyKey": req.IdempotencyKey, "purpose": req.Purpose, "kind": req.Kind, "resultCode": resultCode,
+		})
+		return SubmitResponse{}, fmt.Errorf("%s: %w", ErrSubmitFailed, submitErr)
+	}
+
+	// A genuine verdict from the network — successful or a real rejection —
+	// is exactly what D3's idempotency cache exists to make replay-safe.
+	state := "failed"
+	resultCode := result.ResultCode
+	if result.Successful {
+		state = "success"
+	} else if resultCode == "PENDING" {
+		state = "submitted"
 	}
 
 	resp := SubmitResponse{Hash: result.Hash, Successful: result.Successful, ResultCode: resultCode}
@@ -121,9 +137,6 @@ func (s *Service) Submit(ctx context.Context, req SubmitRequest) (SubmitResponse
 		"idempotencyKey": req.IdempotencyKey, "purpose": req.Purpose, "kind": req.Kind,
 		"hash": result.Hash, "state": state, "resultCode": resultCode,
 	})
-	if submitErr != nil {
-		return SubmitResponse{}, fmt.Errorf("%s: %w", ErrSubmitFailed, submitErr)
-	}
 	return resp, nil
 }
 

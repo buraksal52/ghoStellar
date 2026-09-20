@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/rand"
 	"errors"
+	"math/big"
 	"strings"
 	"testing"
 	"time"
@@ -14,6 +15,7 @@ import (
 	"github.com/stellar/go-stellar-sdk/xdr"
 
 	"github.com/local-payment/backend/pkg/dbx"
+	"github.com/local-payment/backend/pkg/stellarx"
 	"github.com/local-payment/backend/ports"
 	"github.com/local-payment/backend/ports/portstest"
 )
@@ -407,6 +409,133 @@ func TestClaimXDR(t *testing.T) {
 				t.Error("expected a non-empty claim XDR on the happy path")
 			}
 		})
+	}
+}
+
+// chequeRecordResultXDR builds a get_cheque simulateTransaction ResultXDR
+// the way pay-escrow's ChequeRecord is documented to encode (see
+// pkg/stellarx/chequerecord_test.go's buildScMap/buildUnitEnum, duplicated
+// here rather than exported — this is a cheque-package-only test need).
+func chequeRecordResultXDR(t *testing.T, c Cheque, chainState string) string {
+	t.Helper()
+	sym := func(s string) xdr.ScVal {
+		v, err := stellarx.ScSymbol(s)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return v
+	}
+	addr := func(a string) xdr.ScVal {
+		v, err := stellarx.ScAddress(a)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return v
+	}
+	amount, ok := new(big.Int).SetString(c.AmountRaw, 10)
+	if !ok {
+		t.Fatalf("bad AmountRaw %q", c.AmountRaw)
+	}
+	amountSc, err := stellarx.ScI128(amount)
+	if err != nil {
+		t.Fatal(err)
+	}
+	expiresAtSc, err := stellarx.ScUint64(uint64(c.ExpiresAt.Unix()))
+	if err != nil {
+		t.Fatal(err)
+	}
+	entries := xdr.ScMap{
+		{Key: sym("sender"), Val: addr(c.SenderAddress)},
+		{Key: sym("receiver"), Val: addr(c.ReceiverAddress)},
+		{Key: sym("token"), Val: addr(c.TokenContract)},
+		{Key: sym("amount"), Val: amountSc},
+		{Key: sym("expires_at"), Val: expiresAtSc},
+		{Key: sym("state"), Val: sym(chainState)},
+	}
+	record, err := xdr.NewScVal(xdr.ScValTypeScvMap, &entries)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resultXDR, err := xdr.MarshalBase64(record)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return resultXDR
+}
+
+// TestClaimXDR_RepairsFromChainWhenLockConfirmWasLost is SERVICE.md #1's
+// regression test for ClaimXDR: the sender's confirm-lock ("the caller's
+// word") can be lost to a network blip after the lock transaction itself
+// already landed on chain. A receiver must still be able to claim — not be
+// stuck behind a permanent errTerminalState — once the contract's own
+// get_cheque says Funded.
+func TestClaimXDR_RepairsFromChainWhenLockConfirmWasLost(t *testing.T) {
+	repo := newFakeRepo()
+	c := seedCheque(t, repo, StateImzaliRezerve)
+	chain := fundedChain(t, 1)
+	chain.SimulateTransactionFunc = func(ctx context.Context, unsignedXDR string) (ports.SimulateResult, error) {
+		return ports.SimulateResult{Success: true, TransactionDataXDR: emptySorobanData(t), ResultXDR: chequeRecordResultXDR(t, c, "Funded")}, nil
+	}
+	svc := newServiceWithRepo(testConfig(), repo, chain)
+
+	xdrStr, err := svc.ClaimXDR(context.Background(), c.ID, testReceiver)
+	if err != nil {
+		t.Fatalf("ClaimXDR: %v", err)
+	}
+	if xdrStr == "" {
+		t.Error("expected a non-empty claim XDR once the chain confirms Funded")
+	}
+	repaired, getErr := repo.GetCheque(context.Background(), c.ID)
+	if getErr != nil {
+		t.Fatalf("GetCheque: %v", getErr)
+	}
+	if repaired.State != StateHavuzda {
+		t.Errorf("local state = %v, want %v (repaired from chain)", repaired.State, StateHavuzda)
+	}
+}
+
+// TestClaimXDR_AlreadyClaimedOnChainIsNotTerminal is the counterpart: a
+// receiver whose own earlier claim submitted successfully but whose
+// ConfirmClaim call back to the backend then failed must see
+// errAlreadyClaimed (recognizable as "you already got this"), not a
+// generic errTerminalState indistinguishable from every other closed case.
+func TestClaimXDR_AlreadyClaimedOnChainIsNotTerminal(t *testing.T) {
+	repo := newFakeRepo()
+	c := seedCheque(t, repo, StateImzaliRezerve)
+	chain := fundedChain(t, 1)
+	chain.SimulateTransactionFunc = func(ctx context.Context, unsignedXDR string) (ports.SimulateResult, error) {
+		return ports.SimulateResult{Success: true, TransactionDataXDR: emptySorobanData(t), ResultXDR: chequeRecordResultXDR(t, c, "Claimed")}, nil
+	}
+	svc := newServiceWithRepo(testConfig(), repo, chain)
+
+	_, err := svc.ClaimXDR(context.Background(), c.ID, testReceiver)
+	if !errors.Is(err, errAlreadyClaimed) {
+		t.Fatalf("got %v, want errAlreadyClaimed", err)
+	}
+	repaired, getErr := repo.GetCheque(context.Background(), c.ID)
+	if getErr != nil {
+		t.Fatalf("GetCheque: %v", getErr)
+	}
+	if repaired.State != StateTalepEdildi {
+		t.Errorf("local state = %v, want %v (repaired from chain)", repaired.State, StateTalepEdildi)
+	}
+}
+
+// TestClaimXDR_ChainUnreadableStaysTerminal pins today's behavior when the
+// chain can't be read at all (RPC hiccup, decode failure): the existing
+// errTerminalState refusal for a pre-HAVUZDA cheque, not a false repair.
+func TestClaimXDR_ChainUnreadableStaysTerminal(t *testing.T) {
+	repo := newFakeRepo()
+	c := seedCheque(t, repo, StateImzaliRezerve)
+	chain := fundedChain(t, 1)
+	chain.SimulateTransactionFunc = func(ctx context.Context, unsignedXDR string) (ports.SimulateResult, error) {
+		return ports.SimulateResult{}, errors.New("soroban rpc: unavailable")
+	}
+	svc := newServiceWithRepo(testConfig(), repo, chain)
+
+	_, err := svc.ClaimXDR(context.Background(), c.ID, testReceiver)
+	if !errors.Is(err, errTerminalState) {
+		t.Fatalf("got %v, want errTerminalState", err)
 	}
 }
 

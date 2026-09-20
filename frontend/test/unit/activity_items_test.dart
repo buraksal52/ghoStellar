@@ -61,7 +61,7 @@ void main() {
 
   group('ActivityItem.fromAnchorTransaction', () {
     test('a deposit still waiting on the wire has no amount, only its status', () {
-      final item = ActivityItem.fromAnchorTransaction(_tx());
+      final item = ActivityItem.fromAnchorTransaction(_tx(), assetCode: 'USDC');
 
       expect(item.title, 'Deposit from Bank');
       expect(item.category, 'anchor');
@@ -71,12 +71,15 @@ void main() {
       expect(item.isNegative, isFalse);
     });
 
-    test('a completed deposit shows what arrived, as a credit', () {
+    test('a completed deposit shows what arrived, as a credit, in the anchor\'s own asset', () {
       final item = ActivityItem.fromAnchorTransaction(
         _tx(state: 'completed', amount: '20000000', decimals: 7, updatedAt: '2026-09-20T09:30:00Z'),
+        assetCode: 'USDC',
       );
 
-      expect(item.amountDisplay, '+2 ${PayAsset.configured.label}');
+      // Never the platform asset ([PayAsset.configured]) — a bank transfer
+      // always moves the anchor's own asset.
+      expect(item.amountDisplay, '+2 USDC');
       expect(item.statusLabel, 'Completed');
       expect(item.timestamp, DateTime.parse('2026-09-20T09:30:00Z'));
     });
@@ -84,15 +87,16 @@ void main() {
     test('a withdrawal is a debit', () {
       final item = ActivityItem.fromAnchorTransaction(
         _tx(kind: 'withdraw', state: 'completed', amount: '55000000', decimals: 7),
+        assetCode: 'USDC',
       );
 
       expect(item.title, 'Withdrawal to Bank');
-      expect(item.amountDisplay, '−5.5 ${PayAsset.configured.label}');
+      expect(item.amountDisplay, '−5.5 USDC');
       expect(item.isNegative, isTrue);
     });
 
     test('an empty amount string is treated like no amount, not formatted', () {
-      final item = ActivityItem.fromAnchorTransaction(_tx(amount: '', decimals: 0));
+      final item = ActivityItem.fromAnchorTransaction(_tx(amount: '', decimals: 0), assetCode: 'USDC');
 
       expect(item.amountDisplay, isEmpty);
     });
@@ -100,6 +104,7 @@ void main() {
     test('falls back to startedAt when updatedAt is unreadable', () {
       final item = ActivityItem.fromAnchorTransaction(
         _tx(startedAt: '2026-09-19T10:00:00Z', updatedAt: 'not a date'),
+        assetCode: 'USDC',
       );
 
       expect(item.timestamp, DateTime.parse('2026-09-19T10:00:00Z'));
@@ -122,13 +127,19 @@ void main() {
       'too_large',
     ];
     for (final s in statuses) {
-      expect(anchorStatusShortLabel(s).length, lessThanOrEqualTo(18), reason: s);
+      expect(anchorStatusShortLabel(s, assetCode: 'USDC').length, lessThanOrEqualTo(18), reason: s);
     }
-    expect(anchorStatusShortLabel('pending_anchor'), 'Processing');
-    expect(anchorStatusShortLabel('error'), 'Failed');
+    expect(anchorStatusShortLabel('pending_anchor', assetCode: 'USDC'), 'Processing');
+    expect(anchorStatusShortLabel('error', assetCode: 'USDC'), 'Failed');
     // The Bank screen keeps the full sentence.
-    expect(anchorStatusLabel('pending_user_transfer_start', isDeposit: true), 'Waiting for your bank transfer');
-    expect(anchorStatusLabel('pending_user_transfer_start', isDeposit: false), 'Waiting for your USDC payment');
+    expect(
+      anchorStatusLabel('pending_user_transfer_start', isDeposit: true, assetCode: 'USDC'),
+      'Waiting for your bank transfer',
+    );
+    expect(
+      anchorStatusLabel('pending_user_transfer_start', isDeposit: false, assetCode: 'USDC'),
+      'Waiting for your USDC payment',
+    );
   });
 
   group('activityItemsProvider', () {
@@ -186,13 +197,11 @@ void main() {
       await log.append(LocalActivityEvent(
         kind: 'anchor_deposit',
         amount: '2.0000000',
-        assetCode: 'USDC',
         timestamp: DateTime.parse('2026-09-20T09:30:00Z'),
       ));
       await log.append(LocalActivityEvent(
         kind: 'pool_deposit',
         amount: '3',
-        assetCode: 'USDC',
         timestamp: DateTime.parse('2026-09-20T07:00:00Z'),
       ));
       final api = _LedgerApi()
@@ -201,7 +210,13 @@ void main() {
       final items = await feed(container(api));
 
       expect(items.where((i) => i.category == 'anchor'), hasLength(1));
-      expect(items.where((i) => i.category == 'pool'), hasLength(1), reason: 'pool events still come from the log');
+      final poolItems = items.where((i) => i.category == 'pool').toList();
+      expect(poolItems, hasLength(1), reason: 'pool events still come from the log');
+      // Regression: the pool is always in the platform's own asset, never
+      // whatever the anchor happens to use (USDC here) — even for an event
+      // logged before this device knew the difference.
+      expect(poolItems.single.amountDisplay, endsWith(' ${PayAsset.configured.label}'));
+      expect(poolItems.single.amountDisplay, isNot(contains('USDC')));
     });
 
     test('an unreachable anchor service leaves the cheques in place instead of failing the feed', () async {

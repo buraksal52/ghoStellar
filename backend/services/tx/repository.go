@@ -58,6 +58,31 @@ func (r *Repository) CompleteSubmission(ctx context.Context, key, txHash, state,
 	return err
 }
 
+// ReleaseSubmission undoes BeginSubmission's claim when the chain gateway
+// itself could not be reached (a network/RPC failure — the caller never got
+// the network's actual verdict), rather than caching that failure as the
+// key's permanent, replayable result. That used to be indistinguishable
+// from a genuine chain rejection: every retry (e.g. the offline-payment
+// queue's 15s loop) got the SAME cached failure back forever via
+// GetIdempotentResponse, even once the transient problem cleared. Deleting
+// the pending idempotency_keys row lets a retry with the SAME key start a
+// genuinely fresh BeginSubmission; pay.submissions is updated to 'failed'
+// as the historical record of the attempt but is never looked up by key on
+// the read path, so leaving it behind does not resurrect the cached result.
+func (r *Repository) ReleaseSubmission(ctx context.Context, key, resultCode string) error {
+	_, err := r.pool.Exec(ctx, `
+		UPDATE pay.submissions SET state = 'failed', result_code = $2, updated_at = now()
+		WHERE idempotency_key = $1
+	`, key, resultCode)
+	if err != nil {
+		return err
+	}
+	_, err = r.pool.Exec(ctx, `
+		DELETE FROM pay.idempotency_keys WHERE key = $1 AND status = 'pending'
+	`, key)
+	return err
+}
+
 func (r *Repository) GetSubmission(ctx context.Context, key string) (Submission, error) {
 	var s Submission
 	err := r.pool.QueryRow(ctx, `

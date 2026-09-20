@@ -6,10 +6,12 @@ import '../../core/theme/app_colors.dart';
 import '../../state/activity_providers.dart';
 import '../../state/anchor_providers.dart';
 import '../../state/home_providers.dart';
+import '../../state/offline_providers.dart';
 import '../../state/sync_providers.dart';
 import 'widgets/action_tile.dart';
 import 'widgets/balance_card.dart';
 import 'widgets/pending_claims_banner.dart';
+import 'widgets/pending_offline_payments_banner.dart';
 import 'widgets/recent_activity_list.dart';
 
 class HomePage extends ConsumerWidget {
@@ -19,6 +21,8 @@ class HomePage extends ConsumerWidget {
   Widget build(BuildContext context, WidgetRef ref) {
     final c = context.colors;
     final pendingClaims = ref.watch(pendingClaimsProvider);
+    final pendingOfflinePayments = ref.watch(pendingOfflinePaymentsProvider).value ?? const [];
+    final offlineQueueError = ref.watch(offlineQueueErrorProvider);
 
     return RefreshIndicator(
       onRefresh: () async {
@@ -93,6 +97,10 @@ class HomePage extends ConsumerWidget {
           if (pendingClaims.isNotEmpty) ...[
             const SizedBox(height: 22),
             PendingClaimsBanner(count: pendingClaims.length),
+          ],
+          if (pendingOfflinePayments.isNotEmpty || offlineQueueError != null) ...[
+            const SizedBox(height: 22),
+            PendingOfflinePaymentsBanner(count: pendingOfflinePayments.length, lastError: offlineQueueError),
           ],
           const SizedBox(height: 22),
           Row(

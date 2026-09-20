@@ -33,6 +33,13 @@ class ErrorCopy {
       'cheque.expired': 'This cheque has expired.',
       'cheque.terminal_state': 'This cheque can no longer be acted on.',
       'cheque.not_found': 'That cheque could not be found.',
+      // Chain-verified (SERVICE.md #1): the sender's lock isn't showing as
+      // funded on chain yet — a "not yet", worth trying again shortly.
+      'cheque.not_funded': 'This cheque is not ready to claim yet — try again in a moment.',
+      // Chain-verified: an earlier attempt's on-chain claim already
+      // succeeded; the app treats this as success and only shows it if
+      // that follow-up somehow still fails.
+      'cheque.already_claimed': 'This cheque was already claimed.',
       'cheque.account_not_funded':
           "Your wallet isn't set up yet — get test funds from Settings first.",
       'cheque.simulation_failed':
@@ -55,7 +62,9 @@ class ErrorCopy {
       'anchor.upstream_failed': 'The anchor could not complete this request.',
       'anchor.bad_request': 'That request to the anchor was invalid.',
       'anchor.db_not_ready': 'Service is starting up — try again in a moment.',
-      'anchor.trustline_missing': 'Set up $asset before continuing.',
+      // The anchor's own asset (USDC by default) is independent from
+      // [PayAsset.configured] — this can't reuse $asset above.
+      'anchor.trustline_missing': 'Set up the bank\'s asset in your wallet before continuing.',
       'auth.fund_failed': "Couldn't set up your wallet right now. Try again in a moment.",
       'anchor.account_not_funded':
           "Your wallet isn't set up yet — get test funds from Settings first.",

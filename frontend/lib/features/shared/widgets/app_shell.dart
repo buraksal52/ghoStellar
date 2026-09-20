@@ -106,9 +106,10 @@ class _AppShellState extends ConsumerState<AppShell> with WidgetsBindingObserver
   }
 
   /// A brand-new testnet wallet used to get network fees automatically, but
-  /// fees are invisible in a one-unit (USDC) app, so it looked like nothing
-  /// happened. Give it what it actually needs — once per wallet, never as a
-  /// retry loop: a failure is retried by hand from Settings → "Get test funds".
+  /// fees are invisible in a one-asset (native XLM) app, so it looked like
+  /// nothing happened. Give it what it actually needs — once per wallet,
+  /// never as a retry loop: a failure is retried by hand from Settings →
+  /// "Get test funds".
   Future<void> _maybeOfferStarterFunds() async {
     try {
       if (Env.networkLabel(ref.read(networkPassphraseProvider)) != 'Testnet') return;

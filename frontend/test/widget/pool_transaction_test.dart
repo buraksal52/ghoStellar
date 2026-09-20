@@ -1,7 +1,6 @@
 import "package:ghostellar_app/data/api/models/cheque_models.dart";
 
 import 'package:flutter/material.dart';
-import 'package:ghostellar_app/core/config/pay_asset.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:ghostellar_app/core/theme/app_colors.dart';
@@ -154,7 +153,9 @@ void main() {
         );
         final events = await LocalActivityLog().readAll();
         expect(events.length, success ? 1 : 0);
-        if (success) expect(events.single.assetCode, PayAsset.configured.code);
+        // The pool is always in the platform's one asset — no asset code is
+        // stored per event any more; it's derived at read time instead.
+        if (success) expect(events.single.kind, withdraw ? 'pool_withdraw' : 'pool_deposit');
         final container = ProviderScope.containerOf(
           tester.element(find.byType(PoolPage)),
         );

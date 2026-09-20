@@ -10,9 +10,11 @@ import 'package:ghostellar_app/data/api/models/cheque_models.dart';
 import 'package:ghostellar_app/data/api/endpoints/tx_api.dart';
 import 'package:ghostellar_app/data/api/models/sep6_models.dart';
 import 'package:ghostellar_app/data/api/models/tx_models.dart';
+import 'package:ghostellar_app/data/stellar/horizon_read_service.dart';
 import 'package:ghostellar_app/features/anchor/anchor_deposit_withdraw_page.dart';
 import 'package:ghostellar_app/state/anchor_providers.dart';
 import 'package:ghostellar_app/state/core_providers.dart';
+import 'package:ghostellar_app/state/home_providers.dart';
 import 'package:ghostellar_app/state/sync_providers.dart';
 import 'package:ghostellar_app/state/wallet_providers.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -177,6 +179,12 @@ Widget _app(_FakeAnchorApi api, {List<Override> extra = const []}) => ProviderSc
         primaryAnchorProvider.overrideWithValue(_anchor),
         anchorSessionProvider.overrideWith(_PresetSession.new),
         syncProvider.overrideWith(_FakeSync.new),
+        // Trustline readiness for the anchor's OWN asset (USDC here) comes
+        // from the account's own balances, independent of `/sync`'s
+        // platform-asset `trustlineReady` — an already-open USDC trustline.
+        balancesProvider.overrideWith(
+          (ref) async => const AccountBalances(native: '100', other: {'USDC': '10'}),
+        ),
       ],
       child: MaterialApp(
         theme: ThemeData(extensions: [AppColors.light]),

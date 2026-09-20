@@ -398,3 +398,29 @@ olmadığı için jenerik hataya düşüyordu. (1) bu madde, (2) dört fonksiyon
 eklenen `if !account.Exists { return errAccountNotFunded }` kontrolüyle
 kapatıldı — `cheque.CreateCheque`'in kendi (dolaylı, `hasSufficientBalance`
 üzerinden) yolu bilinçli olarak dokunulmadan bırakıldı.
+
+## 25. Anchor varlığı ile platform varlığı arasında takas yolu yok
+
+Platform tek bir varlıkta çalışır (`ASSET_CODE`/`ASSET_ISSUER`, varsayılan
+native XLM) — çek ve havuz yalnızca bunu kullanır
+(`backend/services/cheque/service.go`, `pkg/money`). Anchor ise kendi ayrı
+varlığında ramp yapar (`ANCHOR_ASSET_CODE`/`ANCHOR_ASSET_ISSUER`, varsayılan
+USDC — `backend/cmd/{anchorsvc,monolith}/main.go`), çünkü TR Mock Anchor
+(`tr-mock-anchor.fly.dev`) yalnızca USDC/TRY ramp ediyor, native XLM ramp
+edemiyor.
+
+Bu iki varlık arasında **hiçbir takas mekanizması yoktur.** Sonuç: bir
+kullanıcı bankadan (SEP-6) USDC yatırdığında bu USDC cüzdanında durur ama
+doğrudan çeke yazılamaz veya havuza yatırılamaz — önce kullanıcının kendisinin
+(uygulama dışında, örn. Stellar DEX üzerinde) XLM'e çevirmesi gerekir. Aynı
+şekilde havuzdan/çekten çekilen XLM doğrudan bankaya (USDC bekleyen bir
+withdraw akışına) gönderilemez.
+
+Bu, MVP'nin kasıtlı bir kapsam sınırlamasıdır — önceki bir sürüm bu takası
+DEX üzerinden otomatik yapmaya çalışıyordu
+(`frontend/lib/state/starter_funds.dart`'taki tarihsel not), ama testnet
+order-book likiditesine bağımlıydı ve uzun süre asılı kalabiliyor veya
+tamamen başarısız olabiliyordu; kaldırıldı. İstemci tarafı bu ayrımı dürüstçe
+gösterir: ana bakiye kartı platform varlığını (XLM), Bank ekranı ve ikincil
+bakiye satırı anchor varlığını (USDC) — `AnchorInfo.assetCode` üzerinden —
+ayrı ayrı etiketler; hiçbiri diğerinin yerine geçmez.

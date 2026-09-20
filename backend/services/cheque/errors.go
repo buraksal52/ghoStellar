@@ -28,4 +28,16 @@ const (
 	// its own code it fell into ErrBadRequest and the real cause never
 	// reached the user.
 	ErrSimulationFailed = "cheque.simulation_failed"
+	// ErrNotFunded: the cheque hasn't reached the contract as `Funded` yet
+	// per the chain's own get_cheque (SERVICE.md #1) — unlike
+	// ErrTerminalState, this is a "not yet" the caller may see clear up on
+	// its own (e.g. the lock transaction is still confirming), not a
+	// permanent refusal.
+	ErrNotFunded = "cheque.not_funded"
+	// ErrAlreadyClaimed: the chain's own get_cheque (SERVICE.md #1) already
+	// shows this cheque as Claimed — returned instead of ErrTerminalState
+	// specifically for ClaimXDR so a client whose earlier confirm-claim
+	// never landed (network blip right after a successful on-chain claim)
+	// can recognize its own past success instead of retrying forever.
+	ErrAlreadyClaimed = "cheque.already_claimed"
 )

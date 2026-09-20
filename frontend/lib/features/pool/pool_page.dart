@@ -92,7 +92,6 @@ class _PoolPageState extends ConsumerState<PoolPage> {
       await log.append(LocalActivityEvent(
         kind: _isDeposit ? 'pool_deposit' : 'pool_withdraw',
         amount: amount,
-        assetCode: PayAsset.configured.code,
         timestamp: DateTime.now(),
       ));
       ref.invalidate(activityItemsProvider);

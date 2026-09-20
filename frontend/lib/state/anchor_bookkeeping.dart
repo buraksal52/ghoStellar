@@ -56,8 +56,8 @@ class AnchorBookkeeping {
       );
       if (completed && assetAmount != null) {
         await sync.refresh();
-        // The deposit/withdrawal moved USDC on chain; the Horizon-backed
-        // balance card is not part of /sync.
+        // The deposit/withdrawal moved the anchor's own asset on chain; the
+        // Horizon-backed balance card is not part of /sync.
         _ref.invalidate(balancesProvider);
       }
     } catch (_) {

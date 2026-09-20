@@ -21,8 +21,7 @@ import 'signing_overlay_provider.dart';
 import 'sync_providers.dart';
 import 'wallet_providers.dart';
 
-/// Wall clock behind an override point, so expiry logic is testable.
-final clockProvider = Provider<DateTime Function()>((ref) => DateTime.now);
+export 'core_providers.dart' show clockProvider;
 
 /// Payment-request ids the server already holds a cheque of mine for, read
 /// from the same `/sync` the rest of the app polls — so "you already paid
@@ -296,10 +295,15 @@ class ReceiveSessionNotifier extends Notifier<ReceiveSessionState> {
   /// error — used by the session's happy path and the manual "Claim" button,
   /// where a person is watching. Returns false on failure.
   Future<bool> claim(String chequeId) async {
-    final keyPair = ref.read(walletProvider).keyPair;
-    if (keyPair == null) return false;
     final overlay = ref.read(signingOverlayProvider.notifier);
     final ok = await overlay.run<bool>((report) async {
+      final keyPair = ref.read(walletProvider).keyPair;
+      // Thrown INSIDE overlay.run (rather than returning false before it
+      // starts) so a locked wallet shows the overlay's error instead of the
+      // "Claim" button silently doing nothing.
+      if (keyPair == null) {
+        throw ApiException(code: 'auth.invalid_token', message: 'wallet is locked');
+      }
       await performClaim(ref, keyPair, chequeId, onStep: report);
       return true;
     });

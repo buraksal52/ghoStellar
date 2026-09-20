@@ -65,10 +65,19 @@ istekten değil); anchor'dan gelen durum değerini bağımsız doğrulamaz.
 Anchor'lı varlık klasik bir Stellar asset'i, trustline gerektirir. Bu,
 p2p dokümanının A4/F3 case'lerini gerçek bir onboarding adımına çevirir:
 
-- `POST /anchors/{id}/trustline-xdr` — imzasız `change_trust` operasyonu.
+- `POST /anchors/{id}/trustline-xdr` — imzasız `change_trust` operasyonu,
+  **anchor'ın kendi varlığı** (`ANCHOR_ASSET_CODE`/`ANCHOR_ASSET_ISSUER`,
+  aşağıya bakın) için.
 - Çek yazarken `pay-cheque-service`, alıcının trustline'ını
   `pay-chain-gateway` üzerinden kontrol eder → yoksa
-  `cheque.receiver_no_trustline`.
+  `cheque.receiver_no_trustline`. Bu, **platform varlığının**
+  (`ASSET_CODE`/`ASSET_ISSUER`) trustline'ıdır — anchor'ınkinden ayrı ve
+  bağımsız; platform varlığı native XLM iken (varsayılan) hiç gerekmez.
+
+İki trustline birbirinden bağımsızdır: bir kullanıcı yalnızca çek/havuz
+kullanacaksa (platform varlığı native XLM) hiç trustline açmaz; bankayı
+kullanacaksa yalnızca anchor'ın varlığı için trustline açar. Bkz.
+LIMITATIONS.md #25.
 
 ## Withdraw'ın submit yolu
 
@@ -90,19 +99,29 @@ taşımaz, yalnızca kendi imzasıyla "bu işlemi ağa gönderiyorum" der —
 
 ## TR Mock Anchor ayarları
 
-Varsayılan `ANCHOR_DOMAIN`, `ASSET_CODE` ve `ASSET_ISSUER` mock anchor testnet
-USDC değerleridir. Çek/Havuz kontratı USDC'yi Stellar Asset Contract üzerinden
-tuttuğundan `ASSET_SAC_CONTRACT_ID` ayrıca ayarlanır:
+`ANCHOR_DOMAIN`, `ANCHOR_ASSET_CODE`, `ANCHOR_ASSET_ISSUER` ve
+`ANCHOR_ASSET_DECIMALS` (`backend/cmd/{anchorsvc,monolith}/main.go`) mock
+anchor'ın kendi testnet USDC değerlerine varsayılan olur — TR Mock Anchor
+yalnızca USDC/TRY ramp edebildiği için bu üçlü **her zaman** USDC'yi işaret
+eder, platformun kendi `ASSET_CODE`/`ASSET_ISSUER`'ı ne olursa olsun (bkz.
+CLAUDE.md "Boş env var" kalıbının burada uygulanmayışı: ikisi kasıtlı olarak
+ayrı env grupları). Yalnızca platform varlığı da USDC ise (native XLM
+değilse) çek/havuz kontratı aynı SAC'yi kullanır ve `ASSET_SAC_CONTRACT_ID`
+ayrıca ayarlanır:
 
 ```sh
 stellar contract id asset --asset USDC:GBBD47IF6LWK7P7MDEVSCWR7DPUWV3NY3DTQEVFL4NAT4AQH3ZLLFLA5 --network testnet
 ```
 
 Komut çıktısını `deploy/.env` içindeki `ASSET_SAC_CONTRACT_ID` değerine koyun.
+Platform varlığı native XLM (varsayılan) iken bu adım gereksizdir — anchor'ın
+USDC'si zincirde klasik (SAC olmayan) bir Stellar asset'i olarak kalır ve
+kontrata hiç girmez (bkz. LIMITATIONS.md #25, takas yolu olmadığı için).
+
 USDC deposit limiti 50–3.000 TRY, withdraw alt limiti 1 USDC'dir. Deposit
-`pending_trust` durumunda kalırsa kullanıcı trustline açmalı; XDR'ı imzalatıp
-`pay-tx-service` üzerinden göndermelisiniz. Banka transferi simülasyon yolu
-yalnız mock anchor'a özeldir.
+`pending_trust` durumunda kalırsa kullanıcı **anchor'ın** trustline'ını
+açmalı; XDR'ı imzalatıp `pay-tx-service` üzerinden göndermelisiniz. Banka
+transferi simülasyon yolu yalnız mock anchor'a özeldir.
 
 ## Açık varsayım: `authorization_required` bayrağı
 

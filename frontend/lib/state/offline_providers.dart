@@ -5,9 +5,11 @@ import 'package:stellar_flutter_sdk/stellar_flutter_sdk.dart';
 
 import '../core/config/pay_asset.dart';
 import '../core/errors/api_error.dart';
+import '../core/errors/error_copy.dart';
 import '../data/api/models/tx_models.dart';
 import '../data/storage/offline_payment_store.dart';
 import '../data/stellar/offline_account_cache.dart';
+import '../data/stellar/offline_payment_builder.dart';
 import 'core_providers.dart';
 import 'sync_providers.dart';
 import 'wallet_providers.dart';
@@ -79,6 +81,19 @@ class OfflineSpentRequestIdsNotifier extends Notifier<Set<String>> {
 final offlineSpentRequestIdsProvider =
     NotifierProvider<OfflineSpentRequestIdsNotifier, Set<String>>(OfflineSpentRequestIdsNotifier.new);
 
+/// The last failure `PendingOfflinePaymentsNotifier.retryAll` hit, or the
+/// count of items it just permanently dropped — surfaced in the UI instead
+/// of failing silently (every earlier catch block here used to just `catch
+/// (_)`/re-queue with no trace). `null` once a round finishes clean.
+class OfflineQueueErrorNotifier extends Notifier<String?> {
+  @override
+  String? build() => null;
+
+  void set(String? message) => state = message;
+}
+
+final offlineQueueErrorProvider = NotifierProvider<OfflineQueueErrorNotifier, String?>(OfflineQueueErrorNotifier.new);
+
 /// A verified offline payment waiting for a `POST /tx/submit`, retried
 /// silently — same shape as `PendingHandoffsNotifier`, for the same reason
 /// (durable across restarts, no signing overlay for a background retry).
@@ -124,29 +139,44 @@ class PendingOfflinePaymentsNotifier extends AsyncNotifier<List<PendingOfflinePa
     try {
       final remaining = <PendingOfflinePayment>[];
       var changed = false;
+      String? lastError;
       for (final p in current) {
+        if (_isExpired(p)) {
+          // The builder's own TimeBounds (24h) has passed — Horizon will
+          // reject this with tx_too_late forever now; retrying it is
+          // pointless and would just poison the item's idempotency key.
+          changed = true;
+          lastError = 'An offline payment expired before it reached the network.';
+          continue;
+        }
         try {
           await _submit(p);
           changed = true; // Reached the network (or was already there) — drop it.
         } on ApiException catch (e) {
           if (_terminalSubmitCodes.contains(e.code)) {
             changed = true; // Can never succeed — drop it.
+            lastError = ErrorCopy.forException(e);
           } else {
             remaining.add(p); // Still offline/unreachable — keep it.
           }
-        } catch (_) {
+        } catch (e) {
           remaining.add(p);
+          lastError = 'Could not reach the network to send a pending offline payment.';
         }
       }
       if (changed) {
         state = AsyncData(remaining);
         await ref.read(offlinePaymentStoreProvider).writeQueue(remaining);
       }
+      ref.read(offlineQueueErrorProvider.notifier).set(lastError);
       if (remaining.isEmpty) _stopRetrying();
     } finally {
       _retrying = false;
     }
   }
+
+  bool _isExpired(PendingOfflinePayment p) =>
+      ref.read(clockProvider)().isAfter(p.receivedAt.add(OfflinePaymentBuilder.validity));
 
   Future<void> _submit(PendingOfflinePayment p) async {
     final networkPassphrase = ref.read(networkPassphraseProvider);

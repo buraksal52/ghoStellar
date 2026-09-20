@@ -13,7 +13,7 @@ class SigningOverlayState {
   final String? errorDetails;
 
   /// Replaces the step's stock wording (e.g. "Enabling USDC…" for a
-  /// multi-step flow, or "Added 24.1 USDC" on completion).
+  /// multi-step flow, or "Added 24.1 XLM" on completion).
   final String? label;
 
   static const idle = SigningOverlayState();

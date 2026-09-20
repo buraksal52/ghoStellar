@@ -676,7 +676,7 @@ void main() {
       expect(rig.nfc.presented, isEmpty);
       expect(
         _container(tester).read(signingOverlayProvider).errorMessage,
-        "You don't have enough balance to send this cheque.",
+        "You don't have enough balance for this transaction.",
       );
     });
 

@@ -2,8 +2,8 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
-import '../../core/config/pay_asset.dart';
 import '../../core/theme/app_colors.dart';
+import '../../state/anchor_providers.dart';
 import '../../state/signing_overlay_provider.dart';
 import '../../state/trustline_setup.dart';
 
@@ -23,6 +23,9 @@ class TrustlineSetupPage extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final c = context.colors;
+    // The trustline being set up is always the anchor's own asset, never the
+    // platform's [PayAsset.configured] — see `state/trustline_setup.dart`.
+    final assetCode = ref.watch(primaryAnchorProvider)?.assetCode;
     return ListView(
       children: [
         const SizedBox(height: 12),
@@ -39,12 +42,12 @@ class TrustlineSetupPage extends ConsumerWidget {
               child: Icon(Icons.shield_outlined, color: c.info, size: 22),
             ),
             const SizedBox(height: 14),
-            Text('Set up ${PayAsset.configured.label}', style: Theme.of(context).textTheme.headlineMedium),
+            Text('Set up ${assetCode ?? '…'}', style: Theme.of(context).textTheme.headlineMedium),
             const SizedBox(height: 8),
             SizedBox(
               width: 280,
               child: Text(
-                '${PayAsset.configured.label} must be enabled on your Stellar account before it can be held or received.',
+                '${assetCode ?? 'This asset'} must be enabled on your Stellar account before it can be held or received.',
                 textAlign: TextAlign.center,
                 style: TextStyle(fontSize: 14, height: 1.5, color: c.textSecondary),
               ),
@@ -71,7 +74,7 @@ class TrustlineSetupPage extends ConsumerWidget {
         SizedBox(
           height: 52,
           child: ElevatedButton(
-            onPressed: () => _signAndSetUp(ref, context),
+            onPressed: assetCode == null ? null : () => _signAndSetUp(ref, context),
             style: ElevatedButton.styleFrom(
               backgroundColor: c.primary,
               foregroundColor: c.primaryText,
