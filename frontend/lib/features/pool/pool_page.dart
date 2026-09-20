@@ -12,6 +12,7 @@ import '../../data/api/models/tx_models.dart';
 import '../../data/stellar/horizon_read_service.dart';
 import '../../data/storage/local_activity_log.dart';
 import '../../state/activity_providers.dart';
+import '../../state/connectivity_providers.dart';
 import '../../state/core_providers.dart';
 import '../../state/home_providers.dart';
 import '../../state/offline_providers.dart';
@@ -91,12 +92,24 @@ class _PoolPageState extends ConsumerState<PoolPage> {
           message: result.resultCode ?? 'transaction failed',
         );
       }
+      // The on-chain move has already happened: from here on nothing may
+      // make the page say "failed", or leave the balance stale with the
+      // amount still in the field — that invites a second tap, which builds a
+      // new transaction under a new idempotency key and moves the money
+      // twice. Refresh first (as SendPage does), and treat the backend
+      // confirmation as best effort: its cache reconciles against the chain
+      // on the next /sync anyway (`reconcilePoolWithChain`).
+      ref.invalidate(balancesProvider);
       report(SigningStep.confirming);
-      if (_isDeposit) {
-        final ledgerSeq = ref.read(syncProvider).value?.ledgerSeq ?? 0;
-        await poolApi.confirmDeposit(amount: amount, ledgerSeq: ledgerSeq);
-      } else {
-        await poolApi.confirmWithdraw(amount: amount);
+      try {
+        if (_isDeposit) {
+          final ledgerSeq = ref.read(syncProvider).value?.ledgerSeq ?? 0;
+          await poolApi.confirmDeposit(amount: amount, ledgerSeq: ledgerSeq);
+        } else {
+          await poolApi.confirmWithdraw(amount: amount);
+        }
+      } catch (_) {
+        // Deliberately swallowed — see above.
       }
       await log.append(LocalActivityEvent(
         kind: _isDeposit ? 'pool_deposit' : 'pool_withdraw',
@@ -134,6 +147,13 @@ class _PoolPageState extends ConsumerState<PoolPage> {
     required PoolDeposit? pool,
     required String amount,
   }) {
+    // Deposit and withdraw are both Soroban calls built by the backend, so
+    // neither can work offline — say so up front instead of letting the tap
+    // sit through a connect timeout. Checked before the `balances == null`
+    // bail-out: offline, the Horizon balance read fails, so it IS null.
+    if (ref.watch(offlineModeProvider)) {
+      return const _Blocker("The pool needs a connection — it isn't available offline. It will work again once you're back online.");
+    }
     if (balances == null) return null;
     if (!balances.exists) {
       return const _Blocker('Your wallet isn\'t funded yet. Fund it from Settings first.', 'Open Settings', '/settings');

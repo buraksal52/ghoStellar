@@ -11,7 +11,9 @@ import '../data/storage/offline_payment_store.dart';
 import '../data/stellar/offline_account_cache.dart';
 import '../data/stellar/offline_payment_builder.dart';
 import '../data/stellar/offline_payment_verifier.dart';
+import 'auth_providers.dart';
 import 'core_providers.dart';
+import 'home_providers.dart';
 import 'sync_providers.dart';
 import 'wallet_providers.dart';
 
@@ -264,6 +266,8 @@ class PendingOfflinePaymentsNotifier extends AsyncNotifier<List<PendingOfflinePa
     try {
       final remaining = <PendingOfflinePayment>[];
       var changed = false;
+      var settledAny = false;
+      var reauthTried = false;
       String? lastError;
       for (final p in current) {
         if (_isExpired(p)) {
@@ -277,8 +281,23 @@ class PendingOfflinePaymentsNotifier extends AsyncNotifier<List<PendingOfflinePa
         try {
           await _submit(p);
           changed = true; // Reached the network (or was already there) — drop it.
+          settledAny = true;
         } on ApiException catch (e) {
-          if (_terminalSubmitCodes.contains(e.code)) {
+          if (e.code == 'auth.invalid_token' && !reauthTried) {
+            // Back online but the session is gone (an offline cold start
+            // never had one, or a failed refresh cleared it): sign in again
+            // once and retry this item, instead of 401-ing every 15s forever.
+            reauthTried = true;
+            try {
+              await ref.read(authProvider.notifier).ensureSession();
+              await _submit(p);
+              changed = true;
+              settledAny = true;
+            } catch (_) {
+              remaining.add(p);
+              lastError = ErrorCopy.forCode('auth.invalid_token');
+            }
+          } else if (_terminalSubmitCodes.contains(e.code)) {
             changed = true; // Can never succeed — drop it.
             lastError = ErrorCopy.forException(e);
           } else if (e.code == 'tx.submit_failed' && e.message == 'tx_too_late') {
@@ -324,6 +343,13 @@ class PendingOfflinePaymentsNotifier extends AsyncNotifier<List<PendingOfflinePa
         await ref.read(offlinePaymentStoreProvider).writeQueue(remaining);
       }
       ref.read(offlineQueueErrorProvider.notifier).set(lastError);
+      if (settledAny) {
+        // A queued payment just reached the network: the balances (and the
+        // cheque/pool snapshot) on screen are now stale, and nothing else
+        // would tell the UI — the banner just disappears.
+        ref.invalidate(balancesProvider);
+        unawaited(ref.read(syncProvider.notifier).refresh());
+      }
       if (remaining.isEmpty) _stopRetrying();
     } finally {
       _retrying = false;

@@ -74,6 +74,8 @@ class _AppShellState extends ConsumerState<AppShell> with WidgetsBindingObserver
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
+    _syncReconnectProbe(ref.read(offlineModeProvider));
+    ref.listenManual(offlineModeProvider, (_, offline) => _syncReconnectProbe(offline));
     _comeOnline();
     // After the first frame: the signing overlay this may show is part of it.
     WidgetsBinding.instance.addPostFrameCallback((_) => unawaited(_maybeOfferStarterFunds()));
@@ -81,8 +83,27 @@ class _AppShellState extends ConsumerState<AppShell> with WidgetsBindingObserver
 
   @override
   void dispose() {
+    _reconnectTimer?.cancel();
     WidgetsBinding.instance.removeObserver(this);
     super.dispose();
+  }
+
+  static const _reconnectProbeInterval = Duration(seconds: 15);
+  Timer? _reconnectTimer;
+
+  /// While in offline mode, quietly probe for the network every
+  /// [_reconnectProbeInterval] so the wallet re-activates on its own —
+  /// re-login, `/sync`, and the pending-payment queue — without waiting for
+  /// an app resume or a tap on the banner's Retry. `ApiClient`'s reachability
+  /// callback flips [offlineModeProvider] back the moment one request lands,
+  /// which stops this timer.
+  void _syncReconnectProbe(bool offline) {
+    if (offline) {
+      _reconnectTimer ??= Timer.periodic(_reconnectProbeInterval, (_) => _retryConnection());
+    } else {
+      _reconnectTimer?.cancel();
+      _reconnectTimer = null;
+    }
   }
 
   @override
@@ -148,9 +169,7 @@ class _AppShellState extends ConsumerState<AppShell> with WidgetsBindingObserver
   /// [offlineModeProvider] itself the moment any request gets through.
   Future<void> _retryConnection() async {
     try {
-      if (!(ref.read(authProvider).value ?? false)) {
-        await ref.read(authProvider.notifier).login();
-      }
+      await ref.read(authProvider.notifier).ensureSession();
       await ref.read(syncProvider.notifier).refresh();
       _comeOnline();
     } catch (_) {

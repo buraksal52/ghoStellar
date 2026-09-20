@@ -10,6 +10,7 @@ import 'package:ghostellar_app/data/api/models/tx_models.dart';
 import 'package:ghostellar_app/data/stellar/horizon_read_service.dart';
 import 'package:ghostellar_app/data/storage/local_activity_log.dart';
 import 'package:ghostellar_app/features/pool/pool_page.dart';
+import 'package:ghostellar_app/state/connectivity_providers.dart';
 import 'package:ghostellar_app/state/core_providers.dart';
 import 'package:ghostellar_app/state/home_providers.dart';
 import 'package:ghostellar_app/state/signing_overlay_provider.dart';
@@ -20,6 +21,8 @@ import 'package:stellar_flutter_sdk/stellar_flutter_sdk.dart';
 import '../support/fakes.dart';
 
 class _Pool extends Fake implements PoolApi {
+  _Pool({this.confirmError});
+  final Object? confirmError;
   final confirmed = <String>[];
   @override
   Future<String> depositXdr(String amount) async => 'deposit';
@@ -30,11 +33,13 @@ class _Pool extends Fake implements PoolApi {
     required String amount,
     required int ledgerSeq,
   }) async {
+    if (confirmError != null) throw confirmError!;
     confirmed.add('deposit');
   }
 
   @override
   Future<void> confirmWithdraw({required String amount}) async {
+    if (confirmError != null) throw confirmError!;
     confirmed.add('withdraw');
   }
 }
@@ -174,4 +179,67 @@ void main() {
       });
     }
   }
+
+  Widget poolApp(_Pool pool) => ProviderScope(
+        overrides: [
+          poolApiProvider.overrideWithValue(pool),
+          txApiProvider.overrideWithValue(
+            _Tx(const SubmitResponse(hash: 'hash', successful: true, resultCode: 'SUCCESS', replayed: false)),
+          ),
+          walletProvider.overrideWith(() => UnlockedWallet(KeyPair.random())),
+          stellarSigningServiceProvider.overrideWithValue(FakeSigning()),
+          syncProvider.overrideWith(_Sync.new),
+          balancesProvider.overrideWith(
+            (ref) async => const AccountBalances(native: '999', other: {'USDC': '12'}),
+          ),
+        ],
+        child: MaterialApp(
+          theme: ThemeData(extensions: [AppColors.light]),
+          home: const Scaffold(body: PoolPage()),
+        ),
+      );
+
+  for (final withdraw in [false, true]) {
+    testWidgets(
+      '${withdraw ? 'withdraw' : 'deposit'}: a failed backend confirmation after the on-chain move is not shown as a failure',
+      (tester) async {
+        await tester.binding.setSurfaceSize(const Size(800, 1200));
+        addTearDown(() => tester.binding.setSurfaceSize(null));
+        final pool = _Pool(confirmError: StateError('confirm unavailable'));
+        await tester.pumpWidget(poolApp(pool));
+        await tester.pumpAndSettle();
+        if (withdraw) {
+          await tester.tap(find.text('Withdraw').first);
+          await tester.pumpAndSettle();
+        }
+        await tester.enterText(find.byType(TextField), '2');
+        await tester.pump();
+        await tester.tap(find.byType(ElevatedButton));
+        await tester.pumpAndSettle();
+
+        final container = ProviderScope.containerOf(tester.element(find.byType(PoolPage)));
+        // The money already moved: success, the move is logged, and the
+        // amount is cleared so a second tap can't move it twice.
+        expect(container.read(signingOverlayProvider).step, SigningStep.done);
+        final events = await LocalActivityLog().readAll();
+        expect(events.single.kind, withdraw ? 'pool_withdraw' : 'pool_deposit');
+        expect(tester.widget<TextField>(find.byType(TextField)).controller!.text, isEmpty);
+      },
+    );
+  }
+
+  testWidgets('offline: the pool says it needs a connection and the button is disabled', (tester) async {
+    await tester.binding.setSurfaceSize(const Size(800, 1200));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+    await tester.pumpWidget(poolApp(_Pool()));
+    await tester.pumpAndSettle();
+    ProviderScope.containerOf(tester.element(find.byType(PoolPage)))
+        .read(offlineModeProvider.notifier)
+        .markOffline();
+    await tester.enterText(find.byType(TextField), '2');
+    await tester.pumpAndSettle();
+
+    expect(find.textContaining('needs a connection'), findsOneWidget);
+    expect(tester.widget<ElevatedButton>(find.byType(ElevatedButton)).onPressed, isNull);
+  });
 }

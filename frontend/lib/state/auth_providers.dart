@@ -41,6 +41,18 @@ class AuthNotifier extends AsyncNotifier<bool> {
     });
   }
 
+  /// Makes sure there is a usable session, logging in again only when the
+  /// stored tokens are gone (never had them — an offline cold start — or
+  /// `ApiClient` cleared them after a failed refresh). A no-op while the
+  /// wallet is locked or still offline: callers (the offline-payment retry
+  /// queue, the shell's reconnect probe) simply try again on their next tick.
+  Future<void> ensureSession() async {
+    final store = ref.read(secureWalletStoreProvider);
+    if (await store.readAccessToken() != null) return;
+    if (ref.read(walletProvider).keyPair == null) return;
+    await login();
+  }
+
   Future<void> logout() async {
     final store = ref.read(secureWalletStoreProvider);
     await store.clearAll();

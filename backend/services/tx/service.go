@@ -18,6 +18,10 @@ import (
 
 var ErrDBNotReadyErr = errors.New(ErrDBNotReady)
 
+// resultCodeBadSeq is Horizon's tx_bad_seq — see Submit for why it is the one
+// chain rejection that is not cached as the idempotency key's final result.
+const resultCodeBadSeq = "tx_bad_seq"
+
 type Service struct {
 	repos func() (txRepo, error)
 	chain ports.ChainGateway
@@ -114,6 +118,25 @@ func (s *Service) Submit(ctx context.Context, req SubmitRequest) (SubmitResponse
 			"idempotencyKey": req.IdempotencyKey, "purpose": req.Purpose, "kind": req.Kind, "resultCode": resultCode,
 		})
 		return SubmitResponse{}, fmt.Errorf("%s: %w", ErrSubmitFailed, submitErr)
+	}
+
+	// tx_bad_seq is a genuine verdict, but not a final one for THIS envelope:
+	// an offline payment signed ahead of the chain (another queued payment
+	// from the same account hasn't landed yet) becomes valid the moment the
+	// transactions in front of it do. Caching it as the key's permanent
+	// result would replay this rejection forever without ever asking the
+	// network again, so release the key like a transient failure and hand the
+	// verdict back uncached — the next retry with the same key reaches
+	// Horizon afresh. Every other rejection stays cached below.
+	if !result.Successful && result.ResultCode == resultCodeBadSeq {
+		if err := repo.ReleaseSubmission(ctx, req.IdempotencyKey, result.ResultCode); err != nil {
+			return SubmitResponse{}, fmt.Errorf("tx: release submission: %w", err)
+		}
+		_ = repo.InsertAudit(ctx, req.StellarAddress, "tx.submission_retryable", map[string]any{
+			"idempotencyKey": req.IdempotencyKey, "purpose": req.Purpose, "kind": req.Kind,
+			"hash": result.Hash, "resultCode": result.ResultCode,
+		})
+		return SubmitResponse{Hash: result.Hash, Successful: false, ResultCode: result.ResultCode}, nil
 	}
 
 	// A genuine verdict from the network — successful or a real rejection —

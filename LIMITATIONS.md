@@ -632,3 +632,74 @@ kuyruk kaleminde ölü kalır. Bu kabul edilebilir: gönderenin kuyruğu ödemey
 zaten zincire taşıyor, alıcı bakiyesini `/sync`/Horizon'dan normal şekilde
 görüyor; alıcı tarafındaki mesaj artık bunu ima ediyor ("if you received it,
 ask the sender to reopen theirs").
+
+## 30. [Kapatıldı] Soğuk açılışta internet yokken uygulama Send ekranına hiç ulaşamıyordu; internet gelince kuyruk yeniden oturum açamıyordu
+
+Çevrimdışı ödeme altyapısı (imzalı klasik ödeme, NFC/QR devri, kalıcı kuyruk)
+hazırdı ama ona giden yol kapalıydı. Kök nedenler:
+
+- `AuthGatePage`, SEP-10 `login()` **ve** `/sync` başarılı olmadan
+  `/home`'a geçmiyordu; ağ hatasında "Could not connect" duvarı gösteriyordu.
+  `/send` yalnızca `/home` sonrası açılan shell'de olduğundan, internet yokken
+  soğuk açılışta Send'e erişmek imkânsızdı. `accountSnapshotProvider` de yalnızca
+  shell içinden dolduğu için cache hiç oluşmuyordu.
+- Çevrimdışı dal yalnızca online cheque denemesi `network.error` fırlatınca
+  (yaklaşık 10 sn connect timeout'undan sonra) devreye giriyordu; ham
+  `DioException`/`SocketException`/`TimeoutException` fallback'i hiç tetiklemiyordu.
+- Internet geri geldiğinde `ApiClient` yenileme başarısız olan 401'de token'ları
+  siliyor ama `authProvider` "giriş yapılmış" önbelleğini koruyordu; hiçbir yer
+  `login()`'i yeniden çalıştırmıyordu, kuyruk `auth.invalid_token` ile sonsuza
+  dek 401 alıyordu.
+- Backend, `tx_bad_seq`'i idempotency anahtarının kalıcı sonucu olarak
+  cache'liyordu: zincirin ilerisinde imzalanmış bir çevrimdışı ödeme
+  (öncekiler inmemişken), öncekiler indikten sonra bile Horizon'a hiç yeniden
+  gönderilmiyor, 24 saatte ölüyordu.
+- Sunucudan hata yanıtı (401/409/5xx) almak "ağ ayakta" sayılmıyordu; çevrimdışı
+  şerit ve Send'in çevrimdışı hızlı yolu online iken bile takılı kalabiliyordu.
+- Pool withdraw/deposit: zincirde başarılı olduktan sonra `confirm-*` düşerse
+  ekran "başarısız" diyor, bakiye yenilenmiyor, tutar alanda kalıyor, yeniden
+  basış yeni idempotency key'iyle ikinci çekim yapıyordu. Çevrimdışıyken de
+  ~10 sn beklenip genel hata gösteriliyordu.
+
+Kapatıldı:
+
+- `AuthGatePage`: ağ hatası + cihaz daha önce online olmuş (token **veya**
+  önbellekte hesap snapshot'ı var) → duvar yerine `offlineModeProvider`
+  işaretlenip `/home`'a geçilir. Hiç online olmamış cüzdan (ya da ağ dışı
+  hata: geçersiz imza vb.) eskisi gibi duvarı görür.
+- `isNetworkFailure` tek sınıflandırıcı; `ApiClient.onReachability` herhangi bir
+  HTTP yanıtında (hata dahil) "online", yanıtsız hatada "offline" der.
+  `offlineModeProvider` açıkken Send online denemeyi tamamen atlayıp doğrudan
+  çevrimdışı imzalar; nonce'suz (yapıştırılmış adres) istekte açık bir mesaj verir.
+- Son başarılı `/sync`'in ağ passphrase'i diske yazılır; `/sync` hiç
+  yüklenmemiş bir çevrimdışı açılışta da doğru ağ id'siyle imzalanır.
+- `AuthNotifier.ensureSession()` + `ApiClient.onSessionExpired` (→
+  `authProvider` invalidate): kuyruk `auth.invalid_token` alırsa bir kez yeniden
+  giriş yapıp aynı kalemi yeniden dener. `AppShell` çevrimdışı modda 15 sn'de bir
+  sessizce (`ensureSession` + `/sync` + kuyruk) internet arar ve şeridi kaldırır.
+- Kuyruktaki bir ödeme oturunca `balancesProvider` ve `/sync` tazelenir.
+- Backend: `tx_bad_seq` idempotency anahtarında cache'lenmez (anahtar serbest
+  bırakılır, yanıt geri verilir); `tx_too_late`, `tx_failed` vb. kalıcı retler
+  eskisi gibi cache'lenir.
+- Pool: zincir başarısından hemen sonra bakiye tazelenir, `confirm-*` başarısız
+  olsa da ekran başarı gösterir (backend cache'i bir sonraki `/sync`te zincirle
+  eşitlenir); çevrimdışıyken pool sayfası açıklayıcı bir blokerle butonu kapatır.
+- `OfflinePaymentVerifier.verify`, `describe()` refaktöründen sonra tek-op
+  olmayan / ödeme olmayan zarfı `malformedXdr` diye raporluyordu;
+  `notASingleClassicPayment` ayrımı geri getirildi.
+
+Kalan sınırlar (bilinçli):
+
+- Backend çevrimdışı klasik ödemenin içeriğini doğrulamaz (tek `PAYMENT` op mu,
+  hedef/varlık ne). Alıcı da gönderenin imzalı zarfını submit ettiği için
+  "kaynak hesap == JWT hesabı" kuralı akışı bozar; doğru çözüm tek-payment-op +
+  varlık allowlist'idir — ayrı iş. Şu an tek zorlayıcı Horizon'un imza kontrolü.
+- Kuyruk süresi `receivedAt + 24sa` ile ölçülür, zarfın kendi `maxTime`'ı ile değil
+  (alıcıda saatler geç `tx_too_late` bildirilebilir). `tx_insufficient_balance`
+  için terminal işlem yoktur (24 saat boyunca yeniden denenir). Alıcı kopyası
+  ilk `tx_bad_seq`'te düşer.
+- Pool: 1.5 XLM ücret payı altına inen bir cüzdan withdraw yapamaz (backend aynı
+  kuralı uygular); `confirm-withdraw` tx hash taşımaz; `PENDING` sonucunun
+  sonradan başarılı olması yalnızca sonraki `/sync` reconcile'ıyla görülür.
+- Gerçek cihazda iki telefonla uçtan uca (uçak modu → QR/NFC → internet gelince
+  submit) henüz denenmedi (bkz. `docs/reference/platform/nfc-qr-temasli-odeme.md` §7).

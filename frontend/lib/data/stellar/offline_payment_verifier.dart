@@ -99,8 +99,8 @@ class OfflinePaymentVerifier {
     required String networkPassphrase,
     DateTime? now,
   }) {
-    final parsed = _parse(signedXdr);
-    if (parsed == null) return const OfflineVerifyResult.rejected(OfflineVerifyFailure.malformedXdr);
+    final (parsed, parseFailure) = _parseOrFailure(signedXdr);
+    if (parsed == null) return OfflineVerifyResult.rejected(parseFailure!);
     final (tx, op) = parsed;
 
     if (op.destination.accountId != expectedDestination) {
@@ -171,19 +171,26 @@ class OfflinePaymentVerifier {
     );
   }
 
-  static (Transaction, PaymentOperation)? _parse(String signedXdr) {
+  static (Transaction, PaymentOperation)? _parse(String signedXdr) => _parseOrFailure(signedXdr).$1;
+
+  /// The parsed transaction and its one payment operation, or — when there is
+  /// none — WHY: unparseable/fee-bump is [OfflineVerifyFailure.malformedXdr],
+  /// a well-formed transaction that isn't exactly one payment is
+  /// [OfflineVerifyFailure.notASingleClassicPayment]. [verify] reports the
+  /// distinction; [describe] only needs to know there is no envelope.
+  static ((Transaction, PaymentOperation)?, OfflineVerifyFailure?) _parseOrFailure(String signedXdr) {
     final Transaction tx;
     try {
       final parsed = AbstractTransaction.fromEnvelopeXdrString(signedXdr);
-      if (parsed is! Transaction) return null;
+      if (parsed is! Transaction) return (null, OfflineVerifyFailure.malformedXdr);
       tx = parsed;
     } catch (_) {
-      return null;
+      return (null, OfflineVerifyFailure.malformedXdr);
     }
-    if (tx.operations.length != 1) return null;
+    if (tx.operations.length != 1) return (null, OfflineVerifyFailure.notASingleClassicPayment);
     final op = tx.operations.single;
-    if (op is! PaymentOperation) return null;
-    return (tx, op);
+    if (op is! PaymentOperation) return (null, OfflineVerifyFailure.notASingleClassicPayment);
+    return ((tx, op), null);
   }
 
   bool _verifiedBy(Transaction tx, String accountId, String networkPassphrase) {

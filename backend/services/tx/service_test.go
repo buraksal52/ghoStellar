@@ -241,12 +241,13 @@ func TestSubmit_KeyInFlightStillRejectsConcurrentCall(t *testing.T) {
 // TestSubmit_ChainRejectionIsCachedAsTerminal is the counterpart: once the
 // chain itself has spoken (submitErr == nil, whether or not the transaction
 // was accepted), that IS the network's verdict — D3's idempotency cache
-// must still make it replay-safe, unlike a gateway-level error.
+// must still make it replay-safe, unlike a gateway-level error. tx_too_late
+// stands in for "final": the signed TimeBounds can never become valid again.
 func TestSubmit_ChainRejectionIsCachedAsTerminal(t *testing.T) {
 	repo := newFakeRepo()
 	chain := &portstest.FakeChain{
 		SubmitClassicFunc: func(ctx context.Context, signedXDR string) (ports.SubmitResult, error) {
-			return ports.SubmitResult{Hash: "hash-1", Successful: false, ResultCode: "tx_bad_seq"}, nil
+			return ports.SubmitResult{Hash: "hash-1", Successful: false, ResultCode: "tx_too_late"}, nil
 		},
 	}
 	svc := newServiceWithRepo(repo, chain)
@@ -256,7 +257,7 @@ func TestSubmit_ChainRejectionIsCachedAsTerminal(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Submit: %v", err)
 	}
-	if first.Successful || first.ResultCode != "tx_bad_seq" {
+	if first.Successful || first.ResultCode != "tx_too_late" {
 		t.Fatalf("got %+v, want a recorded rejection", first)
 	}
 	if repo.keyStatus["key-1"] != "done" {
@@ -272,6 +273,46 @@ func TestSubmit_ChainRejectionIsCachedAsTerminal(t *testing.T) {
 	}
 	if chain.SubmitClassicCalls != 1 {
 		t.Fatalf("chain was called %d times, want exactly 1", chain.SubmitClassicCalls)
+	}
+}
+
+// TestSubmit_BadSeqIsNotCachedSoALaterRetryReachesTheChain: an offline payment
+// signed ahead of the chain gets tx_bad_seq until the payments in front of it
+// land. That verdict must reach the caller but must NOT become the key's
+// permanent result, or the payment could never settle once its predecessor
+// does.
+func TestSubmit_BadSeqIsNotCachedSoALaterRetryReachesTheChain(t *testing.T) {
+	repo := newFakeRepo()
+	chain := &portstest.FakeChain{}
+	chain.SubmitClassicFunc = func(ctx context.Context, signedXDR string) (ports.SubmitResult, error) {
+		if chain.SubmitClassicCalls == 1 {
+			return ports.SubmitResult{Hash: "hash-1", Successful: false, ResultCode: "tx_bad_seq"}, nil
+		}
+		return ports.SubmitResult{Hash: "hash-1", Successful: true}, nil
+	}
+	svc := newServiceWithRepo(repo, chain)
+	req := SubmitRequest{IdempotencyKey: "key-1", Kind: KindClassic, SignedXDR: "AAAA=="}
+
+	first, err := svc.Submit(context.Background(), req)
+	if err != nil {
+		t.Fatalf("Submit: %v", err)
+	}
+	if first.Successful || first.ResultCode != "tx_bad_seq" || first.Replayed {
+		t.Fatalf("got %+v, want the uncached tx_bad_seq verdict", first)
+	}
+	if repo.keyStatus["key-1"] == "done" {
+		t.Fatal("tx_bad_seq must not leave the key in 'done'")
+	}
+
+	second, err := svc.Submit(context.Background(), req)
+	if err != nil {
+		t.Fatalf("retry Submit: %v", err)
+	}
+	if second.Replayed || !second.Successful {
+		t.Fatalf("got %+v, want a fresh, successful submission", second)
+	}
+	if chain.SubmitClassicCalls != 2 {
+		t.Fatalf("chain was called %d times, want 2 (the retry must reach it)", chain.SubmitClassicCalls)
 	}
 }
 

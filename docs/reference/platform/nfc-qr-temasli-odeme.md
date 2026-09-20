@@ -125,7 +125,22 @@ güvenmez, her şeyi `tx` alanındaki imzalı XDR'dan yeniden çıkarır
 `network.error` ile başarısız olursa **ve** talep bir nonce taşıyorsa
 (taranmış/dokunulmuş bir talep — elle yapıştırılan çıplak adreste nonce
 olmadığı için offline yol hiç sunulmaz, çünkü alıcının bellekte eşleştirecek
-bir talebi yoktur).
+bir talebi yoktur). Uygulama zaten çevrimdışı moda girmişse
+(`offlineModeProvider`) online deneme hiç yapılmaz, doğrudan bu yola geçilir.
+
+**Uygulamaya çevrimdışı girmek:** soğuk açılışta `AuthGatePage` ağ hatası alırsa
+ve cihaz daha önce online olmuşsa (saklı oturum ya da önbellekte hesap
+snapshot'ı) duvar yerine shell'e çevrimdışı modda girer; üstte bir şerit görünür.
+Hiç online olmamış bir cüzdan çevrimdışı ödeme yapamaz (elinde imzalanacak
+sequence/bakiye yoktur).
+
+**İnternet gelince:** kuyruktaki imzalı zarf `POST /tx/submit` ile gönderilir
+(idempotency anahtarı zarf hash'i, gönderen ve alıcı yarışsa da tek ödeme).
+Çevrimdışı moddayken `AppShell` 15 sn'de bir sessizce internet arar; oturum
+düşmüşse yeniden SEP-10 girişi yapılır (`AuthNotifier.ensureSession`), ödeme
+oturunca bakiyeler tazelenir. Zincirin ilerisinde imzalanmış bir zarf
+`tx_bad_seq` alırsa backend bunu kalıcı sonuç olarak cache'lemez; öncekiler
+indiğinde aynı anahtarla yeniden denenir.
 
 **Kullanıcıya açıkça söylenen ödünler:** para escrow'da değil; klasik bir
 `Payment` operasyonu doğrudan alıcının hesabına gider. 7 günlük iade garantisi

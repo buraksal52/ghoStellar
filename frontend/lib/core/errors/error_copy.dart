@@ -29,6 +29,7 @@ class ErrorCopy {
           'That payment request was already paid. Ask for a new one.',
       'cheque.invalid_request_id': 'That payment request isn\'t valid.',
       'network.error': 'No connection. Check your internet and try again.',
+      'client.bad_response': 'The server sent something unexpected. Please try again.',
       'cheque.invalid_amount': 'Enter a valid amount.',
       'cheque.expired': 'This cheque has expired.',
       'cheque.terminal_state': 'This cheque can no longer be acted on.',

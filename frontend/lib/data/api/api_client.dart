@@ -9,7 +9,7 @@ import '../storage/secure_wallet_store.dart';
 /// bearer token, and retries exactly once on a 401 by refreshing the token
 /// pair — never loops.
 class ApiClient {
-  ApiClient({required SecureWalletStore walletStore, Dio? dio, this.onReachability})
+  ApiClient({required SecureWalletStore walletStore, Dio? dio, this.onReachability, this.onSessionExpired})
       : _walletStore = walletStore,
         _dio = dio ??
             Dio(BaseOptions(
@@ -48,6 +48,7 @@ class ApiClient {
               }
             } else {
               await _walletStore.clearTokens();
+              onSessionExpired?.call();
             }
           }
           handler.next(error);
@@ -65,6 +66,12 @@ class ApiClient {
   /// `offlineModeProvider` in `core_providers.dart`; `null` in tests that
   /// construct `ApiClient` directly.
   final void Function(bool online)? onReachability;
+
+  /// Called after a 401 whose token refresh also failed and the stored
+  /// tokens were cleared — the session is gone until a fresh SEP-10 login.
+  /// Wired to `authProvider` in `core_providers.dart`, so its cached "already
+  /// authenticated" answer doesn't outlive the tokens it was derived from.
+  final void Function()? onSessionExpired;
 
   bool _isRetry(RequestOptions options) => options.extra['retried'] == true;
 
@@ -97,6 +104,9 @@ class ApiClient {
   /// (`GET /anchors`, `GET /anchors/{id}/transactions`), `null` for
   /// endpoints with no meaningful payload.
   dynamic _unwrap(Response<dynamic> response) {
+    // A response of any shape (even an `{"error":...}` envelope) proves the
+    // gateway is reachable.
+    onReachability?.call(true);
     final body = response.data;
     if (body is! Map<String, dynamic>) {
       throw ApiException(
@@ -141,12 +151,10 @@ class ApiClient {
         queryParameters: query,
         options: Options(extra: {if (noAuth) 'noAuth': true}, headers: headers),
       );
-      final result = _unwrap(response);
-      onReachability?.call(true);
-      return result;
+      return _unwrap(response);
     } on DioException catch (e) {
       final ex = _fromDioException(e);
-      if (ex.code == 'network.error') onReachability?.call(false);
+      if (e.response == null) onReachability?.call(false);
       throw ex;
     }
   }
@@ -163,17 +171,18 @@ class ApiClient {
         data: body,
         options: Options(extra: {if (noAuth) 'noAuth': true}, headers: headers),
       );
-      final result = (_unwrap(response) as Map<String, dynamic>?) ?? const {};
-      onReachability?.call(true);
-      return result;
+      return (_unwrap(response) as Map<String, dynamic>?) ?? const {};
     } on DioException catch (e) {
       final ex = _fromDioException(e);
-      if (ex.code == 'network.error') onReachability?.call(false);
+      if (e.response == null) onReachability?.call(false);
       throw ex;
     }
   }
 
   ApiException _fromDioException(DioException e) {
+    // Any HTTP response — even a 401/409/5xx — proves the gateway is
+    // reachable; only "no response at all" means offline.
+    if (e.response != null) onReachability?.call(true);
     final data = e.response?.data;
     if (data is Map<String, dynamic> && data.containsKey('error')) {
       final err = data['error'] as Map<String, dynamic>;

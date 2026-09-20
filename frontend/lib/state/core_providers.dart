@@ -12,6 +12,7 @@ import '../data/stellar/horizon_read_service.dart';
 import '../data/stellar/mnemonic_service.dart';
 import '../data/stellar/stellar_signing_service.dart';
 import '../data/storage/secure_wallet_store.dart';
+import 'auth_providers.dart';
 import 'connectivity_providers.dart';
 import 'sync_providers.dart';
 
@@ -33,6 +34,9 @@ final apiClientProvider = Provider((ref) {
       final notifier = ref.read(offlineModeProvider.notifier);
       online ? notifier.markOnline() : notifier.markOffline();
     },
+    // The tokens are gone: drop authProvider's cached "already logged in" so
+    // the next `ensureSession()` really logs in again.
+    onSessionExpired: () => ref.invalidate(authProvider),
   );
 });
 
