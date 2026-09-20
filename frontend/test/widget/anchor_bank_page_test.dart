@@ -31,6 +31,14 @@ class _FakeAnchorApi extends Fake implements AnchorApi {
   String status = 'pending_user_transfer_start';
   String? amountOut;
   Object? depositError;
+
+  /// What the backend's anchor ledger lists (`GET /anchors/{id}/transactions`).
+  List<AnchorTransaction> ledger = const [];
+
+  /// Thrown by [sep6Transaction] when set — an anchor that cannot be reached.
+  Object? statusError;
+  final statusChecks = <String>[];
+  var ledgerFetches = 0;
   final reports = <Map<String, Object?>>[];
   final depositCalls = <Map<String, String>>[];
 
@@ -50,8 +58,11 @@ class _FakeAnchorApi extends Fake implements AnchorApi {
   }
 
   @override
-  Future<Sep6Transaction> sep6Transaction(String anchorId, String anchorToken, String txId) async =>
-      Sep6Transaction(id: txId, status: status, amountIn: '100.00', amountOut: amountOut);
+  Future<Sep6Transaction> sep6Transaction(String anchorId, String anchorToken, String txId) async {
+    statusChecks.add(txId);
+    if (statusError != null) throw statusError!;
+    return Sep6Transaction(id: txId, status: status, amountIn: '100.00', amountOut: amountOut);
+  }
 
   @override
   Future<void> sep6SimulateBankTransfer(String anchorId, String anchorToken, String txId,
@@ -67,7 +78,10 @@ class _FakeAnchorApi extends Fake implements AnchorApi {
   }
 
   @override
-  Future<List<AnchorTransaction>> transactions(String anchorId) async => const [];
+  Future<List<AnchorTransaction>> transactions(String anchorId) async {
+    ledgerFetches++;
+    return ledger;
+  }
 }
 
 class _FakeWithdrawApi extends _FakeAnchorApi {
@@ -322,6 +336,91 @@ void main() {
       {'kind': 'withdraw', 'state': 'completed', 'amount': '50000000', 'decimals': 7, 'hash': 'abc123'},
     ]);
     await tester.pumpWidget(const SizedBox());
+  });
+
+  testWidgets('starting a transfer makes the ledger (and so Recent activity) look again', (tester) async {
+    final api = _FakeAnchorApi();
+    await tester.pumpWidget(_app(api));
+    await tester.pump();
+    final before = api.ledgerFetches;
+
+    await _enterAmountAndTap(tester, '100', 'Deposit');
+    await tester.pump();
+
+    expect(api.depositCalls, hasLength(1));
+    expect(api.ledgerFetches, greaterThan(before), reason: 'the backend opened a row for it');
+  });
+
+  group('reconciling transfers left in flight', () {
+    AnchorTransaction row({String id = 'sep_old', String kind = 'deposit', String state = 'pending_user_transfer_start'}) =>
+        AnchorTransaction(
+          id: id,
+          anchorId: 'default',
+          kind: kind,
+          state: state,
+          startedAt: '2026-09-20T08:00:00Z',
+          updatedAt: '2026-09-20T08:00:00Z',
+        );
+
+    Future<void> open(WidgetTester tester, _FakeAnchorApi api) async {
+      await tester.pumpWidget(_app(api));
+      // ledger load -> anchor status -> report
+      for (var i = 0; i < 6; i++) {
+        await tester.pump();
+      }
+    }
+
+    testWidgets('a deposit the anchor has since completed is reported to the ledger', (tester) async {
+      final api = _FakeAnchorApi()
+        ..ledger = [row()]
+        ..status = 'completed'
+        ..amountOut = '2.0000000';
+      await open(tester, api);
+
+      expect(api.statusChecks, ['sep_old']);
+      expect(api.reports.single['kind'], 'deposit');
+      expect(api.reports.single['state'], 'completed');
+      expect(api.reports.single['amount'], '20000000');
+      expect(api.reports.single['decimals'], 7);
+    });
+
+    testWidgets('a row whose status has not moved is not reported again', (tester) async {
+      final api = _FakeAnchorApi()..ledger = [row()]; // anchor still says pending_user_transfer_start
+      await open(tester, api);
+
+      expect(api.statusChecks, ['sep_old']);
+      expect(api.reports, isEmpty);
+    });
+
+    testWidgets('rows already in a final state are not asked about', (tester) async {
+      final api = _FakeAnchorApi()
+        ..ledger = [row(id: 'a', state: 'completed'), row(id: 'b', state: 'expired'), row(id: 'c', state: 'error')];
+      await open(tester, api);
+
+      expect(api.statusChecks, isEmpty);
+      expect(api.reports, isEmpty);
+    });
+
+    testWidgets('an anchor that cannot be reached is ignored — the screen still works', (tester) async {
+      final api = _FakeAnchorApi()
+        ..ledger = [row()]
+        ..statusError = StateError('anchor down');
+      await open(tester, api);
+
+      expect(api.statusChecks, ['sep_old']);
+      expect(api.reports, isEmpty);
+      expect(tester.takeException(), isNull);
+      // Still usable: the start button is there and the recent list shows the row.
+      expect(find.widgetWithText(ElevatedButton, 'Deposit'), findsOneWidget);
+      expect(find.text('Recent bank activity'), findsOneWidget);
+    });
+
+    testWidgets('only the newest few are checked, so a long backlog does not flood the anchor', (tester) async {
+      final api = _FakeAnchorApi()..ledger = [for (var i = 0; i < 8; i++) row(id: 'sep_$i')];
+      await open(tester, api);
+
+      expect(api.statusChecks, ['sep_0', 'sep_1', 'sep_2', 'sep_3', 'sep_4']);
+    });
   });
 
   test('AnchorInfo parses a backend response that omits transferServer24', () {

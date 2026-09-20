@@ -2,16 +2,18 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
+import '../../../core/config/env.dart';
 import '../../../core/config/pay_asset.dart';
 import '../../../core/theme/app_colors.dart';
 import '../../../core/utils/amount_formatter.dart';
 import '../../../state/home_providers.dart';
 import '../../../state/sync_providers.dart';
+import '../../shared/starter_funds_action.dart';
 
-/// The one balance the app talks about is [PayAsset.configured] (USDC). XLM only
-/// backs network fees, so it is a secondary "fee balance" line — showing it
-/// as the headline number made a funded-but-USDC-less wallet look like it
-/// could pay or use the pool.
+/// The one balance the app talks about is [PayAsset.configured] (USDC). XLM
+/// only backs network fees and is never shown as an amount — a second unit
+/// next to the USDC figure made a funded-but-USDC-less wallet look like it
+/// could pay or use the pool. A low fee balance only raises a hint.
 class BalanceCard extends ConsumerWidget {
   const BalanceCard({super.key});
 
@@ -22,6 +24,7 @@ class BalanceCard extends ConsumerWidget {
     // null until /sync has answered: only an explicit `false` means "no
     // trustline", so the hint never flashes while loading.
     final trustlineReady = ref.watch(syncProvider).value?.trustlineReady;
+    final isTestnet = Env.networkLabel(ref.watch(networkPassphraseProvider)) == 'Testnet';
 
     return Container(
       padding: const EdgeInsets.all(18),
@@ -52,29 +55,31 @@ class BalanceCard extends ConsumerWidget {
                     ],
                   ),
                 ),
-                if (!b.exists)
+                if (isTestnet && !b.payAssetIsNative && !b.holdsPayAsset)
+                  // A wallet with no USDC on testnet: one button gets it
+                  // everything it needs (fees, USDC setup, USDC itself).
+                  Padding(
+                    padding: const EdgeInsets.only(top: 12),
+                    child: OutlinedButton(
+                      onPressed: () => runStarterFunds(ref),
+                      child: const Text('Get test funds'),
+                    ),
+                  )
+                else if (!b.exists)
                   _hint(c, 'Your wallet isn\'t funded yet — fund it from Settings.')
+                else if (b.feeBalanceLow)
+                  // No amount and no unit: the network fee balance is never
+                  // shown as a number, only flagged when it runs low.
+                  _hint(
+                    c,
+                    'Your network fee balance is low — get test funds from Settings →',
+                    onTap: () => context.go('/settings'),
+                  )
                 else if (!b.payAssetIsNative && trustlineReady == false)
                   _hint(
                     c,
                     'Set up ${PayAsset.configured.label} to receive funds →',
                     onTap: () => context.push('/anchor/trustline'),
-                  ),
-                if (b.exists && !b.payAssetIsNative)
-                  Padding(
-                    padding: const EdgeInsets.only(top: 16),
-                    child: Container(
-                      padding: const EdgeInsets.only(top: 14),
-                      decoration: BoxDecoration(border: Border(top: BorderSide(color: c.border))),
-                      child: Row(
-                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                        children: [
-                          Text('Network fee balance', style: TextStyle(color: c.textSecondary, fontSize: 14)),
-                          Text('${AmountFormatter.trimTrailingZeros(b.native)} XLM',
-                              style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w500)),
-                        ],
-                      ),
-                    ),
                   ),
               ],
             ),

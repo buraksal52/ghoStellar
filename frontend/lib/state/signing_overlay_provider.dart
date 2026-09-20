@@ -6,10 +6,14 @@ import '../core/errors/error_copy.dart';
 enum SigningStep { idle, preparing, signing, submitting, confirming, done, error }
 
 class SigningOverlayState {
-  const SigningOverlayState({this.step = SigningStep.idle, this.errorMessage});
+  const SigningOverlayState({this.step = SigningStep.idle, this.errorMessage, this.label});
 
   final SigningStep step;
   final String? errorMessage;
+
+  /// Replaces the step's stock wording (e.g. "Enabling USDC…" for a
+  /// multi-step flow, or "Added 24.1 USDC" on completion).
+  final String? label;
 
   static const idle = SigningOverlayState();
 }
@@ -22,8 +26,8 @@ class SigningOverlayNotifier extends Notifier<SigningOverlayState> {
   @override
   SigningOverlayState build() => SigningOverlayState.idle;
 
-  void setStep(SigningStep step) {
-    state = SigningOverlayState(step: step);
+  void setStep(SigningStep step, {String? label}) {
+    state = SigningOverlayState(step: step, label: label);
   }
 
   Future<T?> run<T>(Future<T> Function(void Function(SigningStep) report) action) async {

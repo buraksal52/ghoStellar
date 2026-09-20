@@ -149,139 +149,145 @@ class _RecipientResolverSheetState
     final c = context.colors;
     final address = ref.watch(walletProvider).publicKey;
 
-    return SingleChildScrollView(
-      padding: EdgeInsets.only(
-        left: 20,
-        right: 20,
-        top: 20,
-        bottom: MediaQuery.of(context).viewInsets.bottom + 20,
-      ),
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Text('Find recipient', style: Theme.of(context).textTheme.titleLarge),
-          const SizedBox(height: 16),
-          if (_nfc.isAvailable)
+    return SafeArea(
+      top: false,
+      child: SingleChildScrollView(
+        padding: EdgeInsets.only(
+          left: 20,
+          right: 20,
+          top: 20,
+          bottom: MediaQuery.of(context).viewInsets.bottom + 20,
+        ),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              'Find recipient',
+              style: Theme.of(context).textTheme.titleLarge,
+            ),
+            const SizedBox(height: 16),
+            if (_nfc.isAvailable)
+              SizedBox(
+                width: double.infinity,
+                height: 50,
+                child: OutlinedButton.icon(
+                  onPressed: _scanningNfc ? null : _scanNfc,
+                  icon: _scanningNfc
+                      ? const SizedBox(
+                          width: 16,
+                          height: 16,
+                          child: CircularProgressIndicator(strokeWidth: 2),
+                        )
+                      : const Icon(Icons.nfc),
+                  label: Text(
+                    _scanningNfc ? 'Hold near their phone…' : 'Tap their phone',
+                  ),
+                  style: OutlinedButton.styleFrom(
+                    side: BorderSide(color: c.border),
+                    foregroundColor: c.text,
+                  ),
+                ),
+              ),
+            const SizedBox(height: 10),
             SizedBox(
               width: double.infinity,
               height: 50,
               child: OutlinedButton.icon(
-                onPressed: _scanningNfc ? null : _scanNfc,
-                icon: _scanningNfc
-                    ? const SizedBox(
-                        width: 16,
-                        height: 16,
-                        child: CircularProgressIndicator(strokeWidth: 2),
-                      )
-                    : const Icon(Icons.nfc),
-                label: Text(
-                  _scanningNfc ? 'Hold near their phone…' : 'Tap their phone',
-                ),
+                onPressed: () => setState(() {
+                  _scanningQr = !_scanningQr;
+                  _showQr = false;
+                  _scanError = null;
+                }),
+                icon: const Icon(Icons.qr_code_scanner),
+                label: const Text('Scan QR Code'),
                 style: OutlinedButton.styleFrom(
                   side: BorderSide(color: c.border),
                   foregroundColor: c.text,
                 ),
               ),
             ),
-          const SizedBox(height: 10),
-          SizedBox(
-            width: double.infinity,
-            height: 50,
-            child: OutlinedButton.icon(
-              onPressed: () => setState(() {
-                _scanningQr = !_scanningQr;
-                _showQr = false;
-                _scanError = null;
-              }),
-              icon: const Icon(Icons.qr_code_scanner),
-              label: const Text('Scan QR Code'),
-              style: OutlinedButton.styleFrom(
-                side: BorderSide(color: c.border),
-                foregroundColor: c.text,
+            if (_scanningQr)
+              SizedBox(
+                height: 240,
+                child: MobileScanner(onDetect: _onQrDetected),
               ),
-            ),
-          ),
-          if (_scanningQr)
+            const SizedBox(height: 10),
             SizedBox(
-              height: 240,
-              child: MobileScanner(onDetect: _onQrDetected),
-            ),
-          const SizedBox(height: 10),
-          SizedBox(
-            width: double.infinity,
-            height: 50,
-            child: OutlinedButton.icon(
-              onPressed: address == null
-                  ? null
-                  : () => setState(() {
-                      _showQr = !_showQr;
-                      _scanningQr = false;
-                      _scanError = null;
-                    }),
-              icon: const Icon(Icons.qr_code_2),
-              label: Text(_showQr ? 'Hide QR code' : 'Show QR code'),
-              style: OutlinedButton.styleFrom(
-                side: BorderSide(color: c.border),
-                foregroundColor: c.text,
+              width: double.infinity,
+              height: 50,
+              child: OutlinedButton.icon(
+                onPressed: address == null
+                    ? null
+                    : () => setState(() {
+                        _showQr = !_showQr;
+                        _scanningQr = false;
+                        _scanError = null;
+                      }),
+                icon: const Icon(Icons.qr_code_2),
+                label: Text(_showQr ? 'Hide QR code' : 'Show QR code'),
+                style: OutlinedButton.styleFrom(
+                  side: BorderSide(color: c.border),
+                  foregroundColor: c.text,
+                ),
               ),
             ),
-          ),
-          if (_showQr && address != null) ...[
+            if (_showQr && address != null) ...[
+              const SizedBox(height: 14),
+              Center(child: QrCard(data: address)),
+              const SizedBox(height: 8),
+              Center(
+                child: Text(
+                  'Your wallet address',
+                  style: TextStyle(fontSize: 13, color: c.muted),
+                ),
+              ),
+            ],
+            if (_scanError != null)
+              Padding(
+                padding: const EdgeInsets.only(top: 8),
+                child: Text(
+                  _scanError!,
+                  style: TextStyle(fontSize: 13, color: c.negative),
+                ),
+              ),
             const SizedBox(height: 14),
-            Center(child: QrCard(data: address)),
-            const SizedBox(height: 8),
-            Center(
-              child: Text(
-                'Your wallet address',
-                style: TextStyle(fontSize: 13, color: c.muted),
+            TextField(
+              controller: _manualController,
+              onChanged: (_) {
+                if (_manualError != null) setState(() => _manualError = null);
+              },
+              decoration: InputDecoration(
+                hintText: 'Or paste recipient address or payment link',
+                errorText: _manualError,
+              ),
+            ),
+            const SizedBox(height: 10),
+            SizedBox(
+              width: double.infinity,
+              height: 50,
+              child: ElevatedButton(
+                onPressed: () {
+                  final v = _manualController.text.trim();
+                  if (v.isEmpty) return;
+                  final problem = _accept(v);
+                  if (problem != null) {
+                    setState(
+                      () => _manualError = PaymentRequest.tryParse(v) == null
+                          ? 'Enter a valid Stellar address (starts with G, 56 characters).'
+                          : problem,
+                    );
+                  }
+                },
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: c.primary,
+                  foregroundColor: c.primaryText,
+                ),
+                child: const Text('Use this address'),
               ),
             ),
           ],
-          if (_scanError != null)
-            Padding(
-              padding: const EdgeInsets.only(top: 8),
-              child: Text(
-                _scanError!,
-                style: TextStyle(fontSize: 13, color: c.negative),
-              ),
-            ),
-          const SizedBox(height: 14),
-          TextField(
-            controller: _manualController,
-            onChanged: (_) {
-              if (_manualError != null) setState(() => _manualError = null);
-            },
-            decoration: InputDecoration(
-              hintText: 'Or paste recipient address or payment link',
-              errorText: _manualError,
-            ),
-          ),
-          const SizedBox(height: 10),
-          SizedBox(
-            width: double.infinity,
-            height: 50,
-            child: ElevatedButton(
-              onPressed: () {
-                final v = _manualController.text.trim();
-                if (v.isEmpty) return;
-                final problem = _accept(v);
-                if (problem != null) {
-                  setState(
-                    () => _manualError = PaymentRequest.tryParse(v) == null
-                        ? 'Enter a valid Stellar address (starts with G, 56 characters).'
-                        : problem,
-                  );
-                }
-              },
-              style: ElevatedButton.styleFrom(
-                backgroundColor: c.primary,
-                foregroundColor: c.primaryText,
-              ),
-              child: const Text('Use this address'),
-            ),
-          ),
-        ],
+        ),
       ),
     );
   }

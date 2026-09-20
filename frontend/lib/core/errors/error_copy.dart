@@ -1,3 +1,5 @@
+import 'dart:convert';
+
 import 'api_error.dart';
 
 /// Maps every backend error code this app is expected to see to a
@@ -23,7 +25,7 @@ class ErrorCopy {
     'cheque.terminal_state': 'This cheque can no longer be acted on.',
     'cheque.not_found': 'That cheque could not be found.',
     'cheque.account_not_funded':
-        "Your wallet has no XLM yet — it needs a small test balance first. Fund it from Settings.",
+        "Your wallet isn't set up yet — get test funds from Settings first.",
     'cheque.simulation_failed':
         'The network rejected this. Check that USDC is set up on your wallet and that you have enough USDC.',
     'cheque.bad_request': 'That request could not be processed. Please check it and try again.',
@@ -47,8 +49,12 @@ class ErrorCopy {
     'anchor.bad_request': 'That request to the anchor was invalid.',
     'anchor.db_not_ready': 'Service is starting up — try again in a moment.',
     'anchor.trustline_missing': 'Set up USDC before continuing.',
+    'anchor.deposit_pending':
+        'The bank deposit is taking longer than expected. Check the Bank tab in a moment.',
+    'anchor.deposit_failed': 'The bank deposit could not be completed. Please try again.',
+    'auth.fund_failed': "Couldn't set up your wallet right now. Try again in a moment.",
     'anchor.account_not_funded':
-        "Your wallet has no XLM yet — it needs a small test balance first. Fund it from Settings.",
+        "Your wallet isn't set up yet — get test funds from Settings first.",
   };
 
   static String forCode(String code) =>
@@ -58,9 +64,9 @@ class ErrorCopy {
   /// (see `TxApi.submit`), worded for the user.
   static const Map<String, String> _submitResultMessages = {
     'tx_insufficient_balance':
-        'Your account doesn\'t have enough XLM to cover the reserve and network fee.',
+        'Your account doesn\'t have enough balance to cover the network fee and account reserve. Get test funds from Settings.',
     'tx_failed':
-        'The Stellar network rejected the transaction. Make sure your account has enough XLM for the reserve and fee.',
+        'The Stellar network rejected the transaction. Make sure your account has enough balance for the reserve and fee — you can get test funds from Settings.',
     'tx_bad_auth':
         'The transaction signature was not accepted. Check that the app is on the right Stellar network.',
     'tx_bad_seq': 'Your account changed while signing. Please try again.',
@@ -70,6 +76,18 @@ class ErrorCopy {
     if (e.code == 'tx.submit_failed') {
       final specific = _submitResultMessages[e.message];
       if (specific != null) return specific;
+    }
+    if (e.code == 'anchor.upstream_failed') {
+      // The anchor's own words when it refused (e.g. an amount outside its
+      // limits) — carried as an embedded `{"error": "..."}` body.
+      final body = RegExp(r'\{.*\}').firstMatch(e.message)?.group(0);
+      if (body != null) {
+        try {
+          final json = jsonDecode(body);
+          final msg = json is Map ? (json['error'] ?? json['message']) : null;
+          if (msg is String && msg.isNotEmpty) return msg;
+        } catch (_) {}
+      }
     }
     return forCode(e.code);
   }

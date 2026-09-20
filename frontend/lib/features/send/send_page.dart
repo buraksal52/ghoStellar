@@ -105,6 +105,9 @@ class _SendPageState extends ConsumerState<SendPage> {
     final request = await showModalBottomSheet<PaymentRequest>(
       context: context,
       isScrollControlled: true,
+      // See ReceivePage._openReceiveOptions: the shell's navigator would
+      // leave the app bar and bottom nav outside the scrim.
+      useRootNavigator: true,
       builder: (_) => RecipientResolverSheet(autoScanNfc: autoNfc),
     );
     if (request == null || !mounted) return;

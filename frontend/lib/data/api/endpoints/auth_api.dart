@@ -45,7 +45,7 @@ class AuthApi {
 
   /// Funds the caller's own account with free testnet XLM (best-effort — a
   /// no-op, not an error, on any non-testnet deployment or if the testnet
-  /// friendbot itself fails). Backs Settings' "Fund with testnet XLM": the
+  /// friendbot itself fails). Backs Settings' "Get test funds": the
   /// manual counterpart to the automatic fund-on-login
   /// (`services/auth/service.go`'s `fundIfNeeded`).
   Future<bool> fundTestnetXlm() async {

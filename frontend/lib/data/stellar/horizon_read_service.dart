@@ -2,6 +2,7 @@ import 'package:stellar_flutter_sdk/stellar_flutter_sdk.dart';
 
 import '../../core/config/env.dart';
 import '../../core/config/pay_asset.dart';
+import '../../core/utils/amount_formatter.dart';
 
 /// Reads account balances directly from Horizon testnet. This is the one
 /// deliberate exception to "the app only talks to the backend gateway": the
@@ -29,6 +30,27 @@ class AccountBalances {
   /// Balance of the app's one asset; `'0'` when the account holds none (no
   /// trustline yet, or the account doesn't exist).
   String get payAsset => payAssetIsNative ? native : (other[PayAsset.configured.code] ?? '0');
+
+  /// Whether the account holds any of the app's one asset. False for an
+  /// account without a trustline or without an on-chain existence.
+  bool get holdsPayAsset {
+    final raw = AmountFormatter.toRaw(payAsset, 7);
+    final value = raw == null ? null : BigInt.tryParse(raw);
+    return value != null && value > BigInt.zero;
+  }
+
+  /// Stellar needs a little XLM on every account for fees and the reserve
+  /// (1 base + 0.5 per trustline), but the app never shows XLM as an amount —
+  /// only this warning when it runs low. 2 XLM leaves room for the base
+  /// reserve, one trustline and a few fees. Integer math on the raw string.
+  static final BigInt _minFeeBalanceRaw = BigInt.from(20000000); // 2 XLM, 7 decimals
+
+  bool get feeBalanceLow {
+    if (!exists || payAssetIsNative) return false;
+    final raw = AmountFormatter.toRaw(native, 7);
+    final value = raw == null ? null : BigInt.tryParse(raw);
+    return value != null && value < _minFeeBalanceRaw;
+  }
 
   static const AccountBalances notFunded =
       AccountBalances(native: '0', other: {}, exists: false);

@@ -62,7 +62,10 @@ void main() {
     final funds = ErrorCopy.forException(
       ApiException(code: 'tx.submit_failed', message: 'tx_insufficient_balance'),
     );
-    expect(funds, contains('XLM'));
+    // The app shows one unit (USDC): the copy talks about the network fee and
+    // reserve, never about XLM.
+    expect(funds, contains('network fee'));
+    expect(funds, isNot(contains('XLM')));
 
     // An unknown result code falls back to the generic message.
     final unknown = ErrorCopy.forException(

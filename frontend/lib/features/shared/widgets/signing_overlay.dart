@@ -48,7 +48,8 @@ class SigningOverlay extends ConsumerWidget {
                     child: Icon(Icons.check, color: c.positive, size: 22),
                   ),
                   const SizedBox(height: 16),
-                  Text('Completed',
+                  Text(overlay.label ?? 'Completed',
+                      textAlign: TextAlign.center,
                       style: Theme.of(context).textTheme.titleLarge),
                   const SizedBox(height: 18),
                   SizedBox(
@@ -103,7 +104,7 @@ class SigningOverlay extends ConsumerWidget {
                   ),
                   const SizedBox(height: 16),
                   Text(
-                    _labels[overlay.step] ?? '',
+                    overlay.label ?? _labels[overlay.step] ?? '',
                     style: Theme.of(context)
                         .textTheme
                         .titleMedium

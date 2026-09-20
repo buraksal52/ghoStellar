@@ -73,6 +73,9 @@ class _ReceivePageState extends ConsumerState<ReceivePage> {
     final result = await showModalBottomSheet<Object>(
       context: context,
       isScrollControlled: true,
+      // The shell's own navigator only spans the padded page body, which
+      // leaves the app bar and bottom nav outside the scrim.
+      useRootNavigator: true,
       builder: (_) => HandoffScannerSheet(autoScanNfc: autoNfc),
     );
     if (result == null || !mounted) return;

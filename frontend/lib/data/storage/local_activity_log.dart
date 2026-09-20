@@ -2,14 +2,18 @@ import 'dart:convert';
 
 import 'package:shared_preferences/shared_preferences.dart';
 
-/// Client-observed-only log of pool/anchor actions this device has
-/// successfully submitted. There is no backend history endpoint for these
-/// (only a current-state snapshot), so this is a known, accepted gap — not
+/// Client-observed-only log of pool actions this device has successfully
+/// submitted. There is no backend history endpoint for these (only a
+/// current-state snapshot), so this is a known, accepted gap — not
 /// authoritative, and lost on reinstall or a second device. Cheque history
-/// itself comes from `/sync` and does not need this.
+/// comes from `/sync` and bank transfers from the anchor ledger
+/// (`GET /anchors/{id}/transactions`); neither needs this.
+///
+/// Builds before that change also wrote `anchor_deposit`/`anchor_withdraw`
+/// events; they may still be stored, and readers must ignore them.
 class LocalActivityEvent {
   const LocalActivityEvent({
-    required this.kind, // 'pool_deposit' | 'pool_withdraw' | 'anchor_deposit' | 'anchor_withdraw'
+    required this.kind, // 'pool_deposit' | 'pool_withdraw'
     required this.amount,
     required this.assetCode,
     required this.timestamp,

@@ -1,15 +1,22 @@
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:ghostellar_app/core/errors/api_error.dart';
+import 'package:ghostellar_app/data/api/endpoints/anchor_api.dart';
 import 'package:ghostellar_app/data/api/endpoints/auth_api.dart';
 import 'package:ghostellar_app/data/api/endpoints/cheque_api.dart';
 import 'package:ghostellar_app/data/api/endpoints/sync_api.dart';
 import 'package:ghostellar_app/data/api/endpoints/tx_api.dart';
+import 'package:ghostellar_app/data/api/models/anchor_models.dart';
 import 'package:ghostellar_app/data/api/models/cheque_models.dart';
+import 'package:ghostellar_app/data/api/models/sep6_models.dart';
 import 'package:ghostellar_app/data/api/models/tx_models.dart';
 import 'package:ghostellar_app/data/stellar/horizon_read_service.dart';
 import 'package:ghostellar_app/data/stellar/stellar_signing_service.dart';
+import 'package:ghostellar_app/state/anchor_providers.dart';
+import 'package:ghostellar_app/state/starter_funds.dart';
 import 'package:ghostellar_app/state/sync_providers.dart';
 import 'package:ghostellar_app/state/wallet_providers.dart';
-import 'package:stellar_flutter_sdk/stellar_flutter_sdk.dart';
+import 'package:stellar_flutter_sdk/stellar_flutter_sdk.dart' hide AnchorTransaction;
 
 export 'fake_nfc.dart';
 
@@ -215,3 +222,126 @@ class FakeAuthApi extends Fake implements AuthApi {
     return fundResult;
   }
 }
+
+
+// ---- starter funds ("Get test funds") --------------------------------------
+
+const testAnchor = AnchorInfo(
+  id: 'default',
+  domain: 'tr-mock-anchor.fly.dev',
+  signingKey: 'GSIGNING',
+  webAuthEndpoint: 'https://tr-mock-anchor.fly.dev/auth',
+  assetCode: 'USDC',
+  assetIssuer: 'GBBD47IF6LWK7P7MDEVSCWR7DPUWV3NY3DTQEVFL4NAT4AQH3ZLLFLA5',
+);
+
+/// An anchor session that is already logged in.
+class PresetAnchorSession extends AnchorSessionNotifier {
+  @override
+  String? build() => 'anchor-jwt';
+}
+
+/// The mock anchor as the starter-funds flow sees it: a trustline that opens
+/// on confirm, and a TRY deposit whose polled status walks through [statuses]
+/// (the last one repeats).
+class FakeStarterAnchorApi extends Fake implements AnchorApi {
+  /// Every call, in order: trustlineXdr, trustlineConfirm, deposit, simulate,
+  /// transaction, report.
+  final calls = <String>[];
+  bool trustlineConfirmed = false;
+  Object? depositError;
+  List<String> statuses = ['completed'];
+  String amountOut = '24.1000000';
+  String? depositedAmount;
+  Map<String, Object?>? report;
+  int polls = 0;
+
+  @override
+  Future<String> trustlineXdr(String anchorId) async {
+    calls.add('trustlineXdr');
+    return 'trustline-xdr';
+  }
+
+  @override
+  Future<void> trustlineConfirm(String anchorId) async {
+    calls.add('trustlineConfirm');
+    trustlineConfirmed = true;
+  }
+
+  @override
+  Future<Sep6Deposit> sep6Deposit(String anchorId, String anchorToken,
+      {required String assetCode, required String amount}) async {
+    calls.add('deposit');
+    if (depositError != null) throw depositError!;
+    depositedAmount = amount;
+    return const Sep6Deposit(id: 'sep_1', how: 'wire it', instructions: []);
+  }
+
+  @override
+  Future<void> sep6SimulateBankTransfer(String anchorId, String anchorToken, String txId,
+      {required String amount}) async {
+    calls.add('simulate');
+  }
+
+  @override
+  Future<Sep6Transaction> sep6Transaction(String anchorId, String anchorToken, String txId) async {
+    calls.add('transaction');
+    final status = statuses[polls < statuses.length ? polls : statuses.length - 1];
+    polls++;
+    return Sep6Transaction(
+      id: txId,
+      status: status,
+      amountIn: '1000.00',
+      amountOut: status == 'completed' ? amountOut : null,
+      stellarTransactionId: status == 'completed' ? 'stellar-hash' : null,
+    );
+  }
+
+  @override
+  Future<void> reportTransaction(String anchorId, String txId,
+      {required String kind, required String state, String? amount, int? decimals, String? stellarTxHash}) async {
+    calls.add('report');
+    report = {'kind': kind, 'state': state, 'amount': amount, 'decimals': decimals, 'hash': stellarTxHash};
+  }
+
+  @override
+  Future<List<AnchorTransaction>> transactions(String anchorId) async => const [];
+}
+
+/// /sync whose `trustlineReady` follows the fake anchor: false until the
+/// trustline has been confirmed, then true on the next refresh.
+class TrustlineAwareSync extends FakeSyncNotifier {
+  TrustlineAwareSync(this.anchor, {bool alreadyReady = false})
+      : super(const [], trustlineReady: alreadyReady);
+  final FakeStarterAnchorApi anchor;
+
+  @override
+  Future<void> refresh() async {
+    refreshes++;
+    state = AsyncData(syncResponse(const [], trustlineReady: trustlineReady || anchor.trustlineConfirmed));
+  }
+}
+
+/// Stands in for the whole flow in widget tests that only care that a screen
+/// starts it (and what the overlay then says).
+class FakeStarterFunds extends Fake implements StarterFunds {
+  int runs = 0;
+  Object? error;
+  String? usdcAdded = '24.1000000';
+  Duration? delay;
+  final labels = <String>[];
+
+  @override
+  Future<StarterFundsResult> run({void Function(String label)? progress}) async {
+    runs++;
+    const label = 'Preparing your wallet…';
+    labels.add(label);
+    progress?.call(label);
+    final wait = delay;
+    if (wait != null) await Future<void>.delayed(wait);
+    if (error != null) throw error!;
+    return StarterFundsResult(usdcAdded: usdcAdded);
+  }
+}
+
+ApiException apiError(String code, [String message = 'm']) => ApiException(code: code, message: message);

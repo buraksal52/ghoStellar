@@ -4,11 +4,16 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
+import '../../../core/config/env.dart';
 import '../../../core/theme/app_colors.dart';
 import '../../../core/theme/theme_provider.dart';
 import '../../../state/home_providers.dart';
 import '../../../state/inbox_providers.dart';
 import '../../../state/offline_providers.dart';
+import '../../../state/starter_funds.dart';
+import '../../../state/sync_providers.dart';
+import '../../../state/wallet_providers.dart';
+import '../starter_funds_action.dart';
 import 'app_drawer.dart';
 import 'signing_overlay.dart';
 
@@ -67,6 +72,8 @@ class _AppShellState extends ConsumerState<AppShell> with WidgetsBindingObserver
     super.initState();
     WidgetsBinding.instance.addObserver(this);
     _comeOnline();
+    // After the first frame: the signing overlay this may show is part of it.
+    WidgetsBinding.instance.addPostFrameCallback((_) => unawaited(_maybeOfferStarterFunds()));
   }
 
   @override
@@ -95,6 +102,29 @@ class _AppShellState extends ConsumerState<AppShell> with WidgetsBindingObserver
     ref.read(pendingOfflinePaymentsProvider.notifier).retryAll();
     ref.read(accountSnapshotProvider.notifier).refresh();
     unawaited(_hydrateOfflineSpentIdsOnce());
+  }
+
+  /// A brand-new testnet wallet used to get network fees automatically, but
+  /// fees are invisible in a one-unit (USDC) app, so it looked like nothing
+  /// happened. Give it what it actually needs — once per wallet, never as a
+  /// retry loop: a failure leaves the "Get test funds" button on Home.
+  Future<void> _maybeOfferStarterFunds() async {
+    try {
+      if (Env.networkLabel(ref.read(networkPassphraseProvider)) != 'Testnet') return;
+      final me = ref.read(walletProvider).publicKey;
+      if (me == null) return;
+      final flag = ref.read(starterFundsFlagProvider);
+      if (await flag.wasOffered(me)) return;
+
+      final balances = await ref.read(balancesProvider.future);
+      if (!mounted) return;
+      // Marked before running: a failed run must not repeat on every start.
+      await flag.markOffered(me);
+      if (balances.payAssetIsNative || balances.holdsPayAsset) return;
+      await runStarterFunds(ref);
+    } catch (_) {
+      // Best-effort convenience; the Home button is the manual path.
+    }
   }
 
   bool _hydratedOfflineSpentIds = false;

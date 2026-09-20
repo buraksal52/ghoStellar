@@ -2,11 +2,12 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_riverpod/misc.dart' show Override;
 import 'package:flutter_test/flutter_test.dart';
+import 'package:ghostellar_app/core/errors/error_copy.dart';
 import 'package:ghostellar_app/core/theme/app_colors.dart';
-import 'package:ghostellar_app/data/stellar/horizon_read_service.dart';
 import 'package:ghostellar_app/features/settings/settings_page.dart';
 import 'package:ghostellar_app/state/auth_providers.dart';
-import 'package:ghostellar_app/state/core_providers.dart';
+import 'package:ghostellar_app/state/signing_overlay_provider.dart';
+import 'package:ghostellar_app/state/starter_funds.dart';
 import 'package:ghostellar_app/state/sync_providers.dart';
 import 'package:ghostellar_app/state/wallet_providers.dart';
 import 'package:stellar_flutter_sdk/stellar_flutter_sdk.dart';
@@ -21,12 +22,11 @@ class _NoOpAuth extends AuthNotifier {
   Future<bool> build() async => true;
 }
 
-Widget _app(FakeAuthApi authApi, {String networkPassphrase = _testnet, FakeHorizonReadService? horizon}) {
+Widget _app(FakeStarterFunds funds, {String networkPassphrase = _testnet}) {
   return ProviderScope(
     overrides: <Override>[
       walletProvider.overrideWith(() => UnlockedWallet(KeyPair.random())),
-      horizonReadServiceProvider.overrideWithValue(horizon ?? FakeHorizonReadService()),
-      authApiProvider.overrideWithValue(authApi),
+      starterFundsProvider.overrideWithValue(funds),
       authProvider.overrideWith(_NoOpAuth.new),
       networkPassphraseProvider.overrideWithValue(networkPassphrase),
     ],
@@ -37,107 +37,101 @@ Widget _app(FakeAuthApi authApi, {String networkPassphrase = _testnet, FakeHoriz
   );
 }
 
+SigningOverlayState _overlay(WidgetTester tester) =>
+    ProviderScope.containerOf(tester.element(find.byType(SettingsPage))).read(signingOverlayProvider);
+
+Future<void> _tapFund(WidgetTester tester) async {
+  await tester.tap(find.text('Get test funds'));
+  await tester.pump();
+  await tester.pump();
+  await tester.pump();
+}
+
 void main() {
-  testWidgets('the fund button is shown on testnet and calls the API', (tester) async {
-    final authApi = FakeAuthApi();
-    await tester.pumpWidget(_app(authApi));
+  testWidgets('the button is shown on testnet and runs the whole starter-funds flow once', (tester) async {
+    final funds = FakeStarterFunds();
+    await tester.pumpWidget(_app(funds));
 
-    expect(find.text('Fund with testnet XLM'), findsOneWidget);
+    expect(find.text('Get test funds'), findsOneWidget);
+    await _tapFund(tester);
 
-    await tester.tap(find.text('Fund with testnet XLM'));
-    await tester.pump();
-    await tester.pump();
-    await tester.pump();
-
-    expect(authApi.fundCalls, 1);
-    expect(
-      find.text('Funded with XLM for network fees. Add USDC with a bank deposit to send or use the pool.'),
-      findsOneWidget,
-    );
+    expect(funds.runs, 1);
   });
 
-  testWidgets('a successful fund re-reads the balance so the UI does not keep showing 0', (tester) async {
-    final horizon = FakeHorizonReadService();
-    await tester.pumpWidget(_app(FakeAuthApi(), horizon: horizon));
+  testWidgets('what arrived is announced in the one unit the app has: USDC', (tester) async {
+    await tester.pumpWidget(_app(FakeStarterFunds()..usdcAdded = '24.1000000'));
 
-    await tester.tap(find.text('Fund with testnet XLM'));
-    await tester.pump();
-    await tester.pump();
-    await tester.pump();
+    await _tapFund(tester);
 
-    expect(horizon.fetchCalls, 1);
+    final overlay = _overlay(tester);
+    expect(overlay.step, SigningStep.done);
+    expect(overlay.label, 'Added 24.1 USDC to your wallet');
+    expect(overlay.label, isNot(contains('XLM')));
   });
 
-  testWidgets('the balance is re-read until Horizon can see the freshly funded account', (tester) async {
-    final horizon = FakeHorizonReadService([
-      AccountBalances.notFunded, // Horizon hasn't indexed the new account yet
-      FakeHorizonReadService.fundedBalances(),
-    ]);
-    await tester.pumpWidget(_app(FakeAuthApi(), horizon: horizon));
+  testWidgets('the overlay shows the step the flow is on while it works', (tester) async {
+    final funds = FakeStarterFunds()..delay = const Duration(milliseconds: 200);
+    await tester.pumpWidget(_app(funds));
 
-    await tester.tap(find.text('Fund with testnet XLM'));
+    await tester.tap(find.text('Get test funds'));
     await tester.pump();
     await tester.pump();
-    expect(horizon.fetchCalls, 1);
 
-    await tester.pump(const Duration(seconds: 2));
+    expect(_overlay(tester).step, isNot(SigningStep.done));
+    expect(_overlay(tester).label, 'Preparing your wallet…');
+
+    await tester.pump(const Duration(milliseconds: 250));
     await tester.pump();
-    await tester.pump();
-    expect(horizon.fetchCalls, 2);
   });
 
-  testWidgets('a failed fund does not touch balances', (tester) async {
-    final horizon = FakeHorizonReadService();
-    await tester.pumpWidget(_app(FakeAuthApi()..fundResult = false, horizon: horizon));
+  testWidgets('a step that fails is explained in plain words on the overlay', (tester) async {
+    await tester.pumpWidget(_app(FakeStarterFunds()..error = apiError('anchor.deposit_failed')));
 
-    await tester.tap(find.text('Fund with testnet XLM'));
-    await tester.pump();
-    await tester.pump();
+    await _tapFund(tester);
 
-    expect(horizon.fetchCalls, 0);
-  });
-
-  testWidgets('the fund button is hidden on a non-testnet network', (tester) async {
-    final authApi = FakeAuthApi();
-    await tester.pumpWidget(_app(authApi, networkPassphrase: _public));
-
-    expect(find.text('Fund with testnet XLM'), findsNothing);
-    expect(authApi.fundCalls, 0);
-  });
-
-  testWidgets('a failed fund attempt shows a friendly retry message', (tester) async {
-    final authApi = FakeAuthApi()..fundResult = false;
-    await tester.pumpWidget(_app(authApi));
-
-    await tester.tap(find.text('Fund with testnet XLM'));
-    await tester.pump();
-    await tester.pump();
-
-    expect(find.text("Couldn't fund the account right now. Try again in a moment."), findsOneWidget);
-  });
-
-  testWidgets('a thrown exception is treated the same as "not funded"', (tester) async {
-    final authApi = FakeAuthApi()..fundError = Exception('network down');
-    await tester.pumpWidget(_app(authApi));
-
-    await tester.tap(find.text('Fund with testnet XLM'));
-    await tester.pump();
-    await tester.pump();
-
-    expect(find.text("Couldn't fund the account right now. Try again in a moment."), findsOneWidget);
+    final overlay = _overlay(tester);
+    expect(overlay.step, SigningStep.error);
+    expect(overlay.errorMessage, ErrorCopy.forCode('anchor.deposit_failed'));
     expect(tester.takeException(), isNull);
   });
 
-  testWidgets('a second tap while funding is in flight is ignored', (tester) async {
-    final authApi = FakeAuthApi()..fundDelay = const Duration(milliseconds: 200);
-    await tester.pumpWidget(_app(authApi));
+  testWidgets('a bank deposit that is still pending points at the Bank tab, not at the wallet', (tester) async {
+    await tester.pumpWidget(_app(FakeStarterFunds()..error = apiError('anchor.deposit_pending')));
 
-    await tester.tap(find.text('Fund with testnet XLM'));
-    await tester.pump(); // rebuild with the button disabled, still in flight
-    await tester.tap(find.text('Fund with testnet XLM'));
+    await _tapFund(tester);
+
+    expect(_overlay(tester).errorMessage, contains('Bank tab'));
+  });
+
+  testWidgets('the button is hidden on a non-testnet network', (tester) async {
+    final funds = FakeStarterFunds();
+    await tester.pumpWidget(_app(funds, networkPassphrase: _public));
+
+    expect(find.text('Get test funds'), findsNothing);
+    expect(funds.runs, 0);
+  });
+
+  testWidgets('a second tap while the flow is in progress is ignored', (tester) async {
+    final funds = FakeStarterFunds()..delay = const Duration(milliseconds: 200);
+    await tester.pumpWidget(_app(funds));
+
+    await tester.tap(find.text('Get test funds'));
+    await tester.pump(); // rebuild with the row disabled, still in flight
+    await tester.tap(find.text('Get test funds'));
     await tester.pump(const Duration(milliseconds: 250));
     await tester.pump();
 
-    expect(authApi.fundCalls, 1);
+    expect(funds.runs, 1);
+  });
+
+  testWidgets('the row works again once the flow has finished (or failed)', (tester) async {
+    final funds = FakeStarterFunds()..error = apiError('anchor.deposit_failed');
+    await tester.pumpWidget(_app(funds));
+
+    await _tapFund(tester);
+    funds.error = null;
+    await _tapFund(tester);
+
+    expect(funds.runs, 2);
   });
 }

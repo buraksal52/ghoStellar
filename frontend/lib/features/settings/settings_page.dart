@@ -5,9 +5,9 @@ import 'package:go_router/go_router.dart';
 import '../../core/config/env.dart';
 import '../../core/theme/app_colors.dart';
 import '../../core/theme/theme_provider.dart';
+import '../shared/starter_funds_action.dart';
 import '../../state/auth_providers.dart';
 import '../../state/core_providers.dart';
-import '../../state/home_providers.dart';
 import '../../state/sync_providers.dart';
 import '../../state/wallet_providers.dart';
 
@@ -73,48 +73,19 @@ class _SettingsPageState extends ConsumerState<SettingsPage> {
     }
   }
 
-  /// Backed by `POST /auth/fund` (pay-auth-service), never a direct
-  /// client-side Horizon call — `services/auth/service.go`'s
-  /// `FundOwnAccount` is the one place that touches friendbot, matching
-  /// the automatic fund-on-login it shares its logic with (SERVICE.md #24).
-  /// This is the manual recovery path for a wallet that missed that (or is
-  /// already stuck, like the "Submitting to Stellar failed" trustline case).
-  Future<void> _fundWallet(BuildContext context) async {
+  /// "Get test funds": network fees (`POST /auth/fund` — pay-auth-service is
+  /// the one place that touches friendbot, SERVICE.md #24), the USDC
+  /// trustline, and a sandbox TRY→USDC bank deposit — so the wallet ends up
+  /// with USDC, the app's one unit, instead of a fee balance nobody can see.
+  /// The signing overlay shows the steps, the amount that arrived, or why it
+  /// failed.
+  Future<void> _fundWallet() async {
     if (_funding) return;
     setState(() => _funding = true);
-    bool funded;
     try {
-      funded = await ref.read(authApiProvider).fundTestnetXlm();
-    } catch (_) {
-      funded = false;
-    }
-    if (funded) await _refreshBalancesAfterFund();
-    if (!context.mounted) return;
-    setState(() => _funding = false);
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Text(
-          funded
-              ? 'Funded with XLM for network fees. Add USDC with a bank deposit to send or use the pool.'
-              : "Couldn't fund the account right now. Try again in a moment.",
-        ),
-      ),
-    );
-  }
-
-  /// Friendbot's transaction is confirmed before `/auth/fund` answers, but
-  /// Horizon can take a moment to serve the new account — so the first
-  /// re-read may still say "not found". Re-read a few times until it shows.
-  Future<void> _refreshBalancesAfterFund() async {
-    for (var attempt = 0; attempt < 4; attempt++) {
-      if (!mounted) return;
-      ref.invalidate(balancesProvider);
-      try {
-        if ((await ref.read(balancesProvider.future)).exists) return;
-      } catch (_) {
-        // A failed read is retried like a "not found" one.
-      }
-      await Future<void>.delayed(const Duration(seconds: 2));
+      await runStarterFunds(ref);
+    } finally {
+      if (mounted) setState(() => _funding = false);
     }
   }
 
@@ -150,7 +121,7 @@ class _SettingsPageState extends ConsumerState<SettingsPage> {
         row('Network', networkLabel, () {}),
         if (networkLabel == 'Testnet')
           InkWell(
-            onTap: _funding ? null : () => _fundWallet(context),
+            onTap: _funding ? null : _fundWallet,
             child: Container(
               padding: const EdgeInsets.symmetric(vertical: 17, horizontal: 2),
               decoration: BoxDecoration(border: Border(bottom: BorderSide(color: c.border))),
@@ -158,7 +129,7 @@ class _SettingsPageState extends ConsumerState<SettingsPage> {
                 children: [
                   Expanded(
                     child: Text(
-                      'Fund with testnet XLM',
+                      'Get test funds',
                       style: TextStyle(
                         fontSize: 15,
                         fontWeight: FontWeight.w500,

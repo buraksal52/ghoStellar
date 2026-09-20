@@ -347,10 +347,32 @@ Tasarım kararları:
   Cheque, havuz ve anchor (TRY ↔ USDC, SEP-6) hep `ASSET_CODE`/`PayAsset.configured`
   üzerinden çalışır. Friendbot yalnızca XLM verdiği için "funded" bir cüzdan
   havuza/cheque'e hazır **değildir**: önce USDC trustline'ı, sonra bank
-  sekmesinden TRY deposit'i gerekir. Arayüz bunu böyle gösterir — ana bakiye
-  USDC, XLM "Network fee balance" satırı; havuz sayfası trustline/USDC yoksa
-  nedenini ve çözüm ekranını söyler. (Eskiden havuz sayfası "XLM" yazıp
-  kontrat USDC çektiği için deposit simülasyonda sessizce düşüyordu.)
+  sekmesinden TRY deposit'i gerekir. Arayüz tek birim gösterir: **USDC**. XLM
+  (ağ ücreti + rezerv için her hesapta zorunlu) kullanıcıya hiçbir yerde
+  tutar/birim olarak yazılmaz — ne bakiye kartında, ne aktivitede, ne hata
+  metinlerinde; yalnızca `AccountBalances.feeBalanceLow` (< 2 XLM) Home'da
+  birimsiz bir "ağ ücreti bakiyeniz düşük" ipucu çıkarır. Havuz sayfası
+  trustline/USDC yoksa nedenini ve çözüm ekranını söyler. (Eskiden havuz
+  sayfası "XLM" yazıp kontrat USDC çektiği için deposit simülasyonda sessizce
+  düşüyordu.)
+- **"Get test funds" (yalnızca testnet) USDC getirir** — friendbot USDC veremez
+  (ihraççı bizim değil), bu yüzden istemcide `StarterFunds`
+  (`frontend/lib/state/starter_funds.dart`) tek akışta: (1) `POST /auth/fund`
+  ile ağ ücreti (hesap Horizon'da görünene kadar bakiye yeniden okunur),
+  (2) `trustlineReady` değilse USDC trustline'ı, (3) TR Mock Anchor'dan
+  1.000 TRY'lik SEP-6 deposit + sandbox `simulate-bank-transfer`, anchor final
+  duruma gelene kadar poll, `reportTransaction`. Her adım tekrarlanabilir;
+  kısmi başarıdan sonra yeniden basmak kaldığı yerden devam eder. Settings
+  satırı, Home kartındaki buton (testnet + USDC yok) ve yeni cüzdanın Home'a
+  ilk varışında **cüzdan başına bir kez** otomatik çalışma (bayrak
+  `ghoStellarStarterFundsOffered_<publicKey>`; başarısızlık kendi kendine
+  tekrar denenmez, kullanıcı butonla dener) aynı akışı kullanır. Giriş
+  sırasındaki sunucu tarafı `fundIfNeeded` XLM koymaya devam eder — fakat XLM
+  arayüzde görünmediğinden "hiçbir şey olmuyor" hissi vardı; asıl görünür
+  sonuç artık USDC. Mock anchor kapalıyken (1) ve (2) yine de yapılmış olur,
+  net bir hata gösterilir (`anchor.deposit_failed` / `anchor.deposit_pending`).
+  Banka işlemlerinin geçmişi backend anchor ledger'ındadır; yerel aktivite
+  loguna yazılmaz.
 - **Simülasyon hataları artık kendi kodunu taşır:** `cheque.simulation_failed`
   (422). Önceden `cheque.bad_request`'e düşüp istemcide "Something went wrong"
   olarak görünüyordu. Ham simülatör mesajı yanıtın `message` alanında kalır.

@@ -1,5 +1,4 @@
 import 'dart:async';
-import 'dart:convert';
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -11,14 +10,13 @@ import '../../core/errors/api_error.dart';
 import '../../core/errors/error_copy.dart';
 import '../../core/theme/app_colors.dart';
 import '../../core/utils/amount_formatter.dart';
+import '../../core/utils/anchor_status.dart';
 import '../../data/api/models/anchor_models.dart';
 import '../../data/api/models/sep6_models.dart';
 import '../../data/api/models/tx_models.dart';
-import '../../data/storage/local_activity_log.dart';
-import '../../state/activity_providers.dart';
+import '../../state/anchor_bookkeeping.dart';
 import '../../state/anchor_providers.dart';
 import '../../state/core_providers.dart';
-import '../../state/home_providers.dart';
 import '../../state/signing_overlay_provider.dart';
 import '../../state/sync_providers.dart';
 import '../../state/wallet_providers.dart';
@@ -28,7 +26,7 @@ import '../../state/wallet_providers.dart';
 const _fiatCode = 'TRY';
 
 /// Stellar assets carry 7 decimals; the backend ledger stores raw units.
-const _assetDecimals = 7;
+const _assetDecimals = anchorAssetDecimals;
 
 const _pollInterval = Duration(seconds: 3);
 
@@ -78,6 +76,18 @@ class _AnchorDepositWithdrawPageState extends ConsumerState<AnchorDepositWithdra
   bool _pollInFlight = false;
   int _pollCount = 0;
   bool _reported = false;
+  bool _reconciled = false;
+
+  @override
+  void initState() {
+    super.initState();
+    // The ledger may already be cached (the activity feed watches it) or
+    // arrive a moment later, once the anchor list has loaded.
+    ref.listenManual(anchorTransactionsProvider, (_, next) {
+      final txs = next.value;
+      if (txs != null) _reconcile(txs);
+    }, fireImmediately: true);
+  }
 
   @override
   void dispose() {
@@ -103,6 +113,7 @@ class _AnchorDepositWithdrawPageState extends ConsumerState<AnchorDepositWithdra
     // user may leave the screen meanwhile.
     final api = ref.read(anchorApiProvider);
     final session = ref.read(anchorSessionProvider.notifier);
+    final bookkeeping = ref.read(anchorBookkeepingProvider);
     setState(() {
       _busy = true;
       _error = null;
@@ -113,6 +124,8 @@ class _AnchorDepositWithdrawPageState extends ConsumerState<AnchorDepositWithdra
           anchor.id,
           (t) => api.sep6Deposit(anchor.id, t, assetCode: anchor.assetCode, amount: amount),
         );
+        // The backend has its ledger row now, whether or not we are still here.
+        bookkeeping.ledgerChanged();
         if (!mounted) return;
         _begin(anchor, _ActiveTx(kind: 'deposit', id: dep.id, amount: amount, deposit: dep));
       } else {
@@ -120,6 +133,7 @@ class _AnchorDepositWithdrawPageState extends ConsumerState<AnchorDepositWithdra
           anchor.id,
           (t) => api.sep6Withdraw(anchor.id, t, assetCode: anchor.assetCode, amount: amount),
         );
+        bookkeeping.ledgerChanged();
         if (!mounted) return;
         final active = _ActiveTx(kind: 'withdraw', id: w.id, amount: amount, withdraw: w);
         final hash = await _payAnchor(anchor, active);
@@ -133,6 +147,49 @@ class _AnchorDepositWithdrawPageState extends ConsumerState<AnchorDepositWithdra
       if (mounted) setState(() => _error = _errorText(e));
     } finally {
       if (mounted) setState(() => _busy = false);
+    }
+  }
+
+  /// Transfers the backend still lists as in flight — started here or by the
+  /// starter-funds flow, then left before they finished — are asked about once
+  /// with the anchor and reported, so the activity feed does not show them as
+  /// waiting forever. Best-effort: nothing here may surface an error or get in
+  /// the way of the transfer this screen is following.
+  Future<void> _reconcile(List<AnchorTransaction> txs) async {
+    final anchor = ref.read(primaryAnchorProvider);
+    // An empty ledger also comes back while the anchor list is still loading.
+    if (_reconciled || anchor == null) return;
+    _reconciled = true;
+
+    // Newest first; a few is plenty and keeps the anchor calls bounded.
+    final inFlight = txs.where((t) => !Sep6Transaction.terminalStatuses.contains(t.state)).take(5).toList();
+    if (inFlight.isEmpty) return;
+
+    final api = ref.read(anchorApiProvider);
+    final session = ref.read(anchorSessionProvider.notifier);
+    final bookkeeping = ref.read(anchorBookkeepingProvider);
+    for (final row in inFlight) {
+      if (!mounted) return;
+      if (_active?.id == row.id) continue; // the poll loop owns this one
+      try {
+        final tx = await session.withToken(anchor.id, (t) => api.sep6Transaction(anchor.id, t, row.id));
+        if (tx.status == row.state) continue;
+        final isDeposit = row.kind == 'deposit';
+        await bookkeeping.record(
+          anchorId: anchor.id,
+          txId: row.id,
+          kind: row.kind,
+          status: tx.status,
+          completed: tx.isCompleted,
+          // Same amounts `_finish` reports: what the anchor paid out for a
+          // deposit, what it received for a withdraw.
+          assetAmount: isDeposit ? tx.amountOut : tx.amountIn,
+          stellarTxHash: tx.stellarTransactionId,
+        );
+      } catch (_) {
+        // The anchor may not know this id any more, or the wallet may be
+        // locked; the row just stays as it is until the next visit.
+      }
     }
   }
 
@@ -221,42 +278,17 @@ class _AnchorDepositWithdrawPageState extends ConsumerState<AnchorDepositWithdra
   Future<void> _finish(String anchorId, _ActiveTx active, Sep6Transaction tx) async {
     if (_reported) return;
     _reported = true;
-    final api = ref.read(anchorApiProvider);
-    final log = ref.read(localActivityLogProvider);
-    final sync = ref.read(syncProvider.notifier);
-
-    // The on-chain amount: what the anchor paid out (deposit) or what we sent.
-    final asset = active.isDeposit ? tx.amountOut : active.amount;
-    final raw = asset == null ? null : AmountFormatter.toRaw(asset, _assetDecimals);
-    try {
-      await api.reportTransaction(
-        anchorId,
-        active.id,
-        kind: active.kind,
-        state: tx.status,
-        amount: raw,
-        decimals: raw == null ? null : _assetDecimals,
-        stellarTxHash: active.isDeposit ? tx.stellarTransactionId : active.paymentHash,
-      );
-      if (tx.isCompleted && asset != null) {
-        await log.append(LocalActivityEvent(
-          kind: 'anchor_${active.kind}',
-          amount: asset,
-          assetCode: 'USDC',
-          timestamp: DateTime.now(),
-        ));
-        await sync.refresh();
-        // The deposit/withdrawal moved USDC on chain; the Horizon-backed
-        // balance card is not part of /sync.
-        ref.invalidate(balancesProvider);
-      }
-    } catch (_) {
-      // Bookkeeping only — the anchor's own record is authoritative, and the
-      // transfer itself has already happened.
-    }
-    if (!mounted) return;
-    ref.invalidate(activityItemsProvider);
-    ref.invalidate(anchorTransactionsProvider);
+    await ref.read(anchorBookkeepingProvider).record(
+          anchorId: anchorId,
+          txId: active.id,
+          kind: active.kind,
+          status: tx.status,
+          completed: tx.isCompleted,
+          // The on-chain amount: what the anchor paid out (deposit) or what
+          // we sent (withdraw).
+          assetAmount: active.isDeposit ? tx.amountOut : active.amount,
+          stellarTxHash: active.isDeposit ? tx.stellarTransactionId : active.paymentHash,
+        );
   }
 
   /// Sandbox stand-in for the user's bank wire (the mock anchor's own
@@ -295,19 +327,7 @@ class _AnchorDepositWithdrawPageState extends ConsumerState<AnchorDepositWithdra
   /// The anchor's own words when it refused (e.g. an amount outside its
   /// limits), else the generic copy for the error code.
   String _errorText(Object e) {
-    if (e is ApiException) {
-      if (e.code == 'anchor.upstream_failed') {
-        final body = RegExp(r'\{.*\}').firstMatch(e.message)?.group(0);
-        if (body != null) {
-          try {
-            final json = jsonDecode(body);
-            final msg = json is Map ? (json['error'] ?? json['message']) : null;
-            if (msg is String && msg.isNotEmpty) return msg;
-          } catch (_) {}
-        }
-      }
-      return ErrorCopy.forException(e);
-    }
+    if (e is ApiException) return ErrorCopy.forException(e);
     return 'Something went wrong. Please try again.';
   }
 
@@ -469,7 +489,7 @@ class _AnchorDepositWithdrawPageState extends ConsumerState<AnchorDepositWithdra
                 child: Text(
                   active.timedOut && !active.isTerminal
                       ? 'Still processing — check Recent bank activity later'
-                      : _statusLabel(active.status, active.isDeposit),
+                      : anchorStatusLabel(active.status, isDeposit: active.isDeposit),
                   style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w600),
                 ),
               ),
@@ -597,7 +617,7 @@ class _AnchorDepositWithdrawPageState extends ConsumerState<AnchorDepositWithdra
                     children: [
                       Text(t.kind == 'deposit' ? 'Deposit' : 'Withdraw', style: const TextStyle(fontSize: 14)),
                       Text(
-                        _statusLabel(t.state, t.kind == 'deposit'),
+                        anchorStatusLabel(t.state, isDeposit: t.kind == 'deposit'),
                         style: TextStyle(fontSize: 12, color: c.muted),
                       ),
                     ],
@@ -675,17 +695,3 @@ class _AnchorDepositWithdrawPageState extends ConsumerState<AnchorDepositWithdra
     );
   }
 }
-
-String _statusLabel(String status, bool isDeposit) => switch (status) {
-      'pending_user_transfer_start' => isDeposit ? 'Waiting for your bank transfer' : 'Waiting for your USDC payment',
-      'pending_anchor' => 'The anchor is processing it',
-      'pending_stellar' => 'Sending on Stellar',
-      'pending_external' => 'Waiting on the bank',
-      'pending_trust' => 'Set up USDC to receive the funds',
-      'completed' => 'Completed',
-      'refunded' => 'Refunded',
-      'expired' => 'Expired',
-      'error' => 'Failed',
-      'no_market' || 'too_small' || 'too_large' => 'Amount not accepted',
-      _ => status.replaceAll('_', ' '),
-    };

@@ -4,6 +4,7 @@ import 'package:go_router/go_router.dart';
 
 import '../../core/theme/app_colors.dart';
 import '../../state/activity_providers.dart';
+import '../../state/anchor_providers.dart';
 import '../../state/home_providers.dart';
 import '../../state/sync_providers.dart';
 import 'widgets/action_tile.dart';
@@ -25,6 +26,10 @@ class HomePage extends ConsumerWidget {
         // re-read them explicitly — otherwise money that arrived on chain
         // keeps showing the old figure until the app is restarted.
         ref.invalidate(balancesProvider);
+        // The bank ledger lives on the backend too, and the activity feed
+        // watches it: without this a transfer started elsewhere never shows
+        // up in Recent activity until the app restarts.
+        ref.invalidate(anchorTransactionsProvider);
         await ref.read(syncProvider.notifier).refresh();
       },
       child: ListView(
