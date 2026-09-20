@@ -135,7 +135,9 @@ void main() {
           ),
         );
         await tester.pumpAndSettle();
-        expect(find.text('Available: 999 XLM'), findsOneWidget);
+        // 999 XLM balance minus the 1.5 XLM native reserve headroom
+        // (mirrors the backend's nativeReserveHeadroomRaw) = 997.5 spendable.
+        expect(find.text('Available: 997.5 XLM'), findsOneWidget);
         expect(find.text('USDC'), findsNothing);
         if (withdraw) {
           await tester.tap(find.text('Withdraw').first);

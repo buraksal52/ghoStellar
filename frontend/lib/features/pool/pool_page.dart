@@ -34,6 +34,14 @@ class PoolPage extends ConsumerStatefulWidget {
   ConsumerState<PoolPage> createState() => _PoolPageState();
 }
 
+/// Mirrors the backend's `nativeReserveHeadroomRaw`
+/// (`backend/services/cheque/service.go`) so the "Available" amount shown
+/// here never offers more than the backend will actually accept: Stellar's
+/// base reserve (1 XLM + 0.5/subentry) plus a fee buffer isn't spendable,
+/// but Horizon's raw native balance includes it. Only applies to the
+/// native asset — an issued asset carries no comparable reserve.
+final _nativeReserveHeadroomRaw = BigInt.from(15000000); // 1.5 XLM, 7 decimals
+
 class _PoolPageState extends ConsumerState<PoolPage> {
   bool _isDeposit = true;
   final _amountController = TextEditingController();
@@ -101,6 +109,20 @@ class _PoolPageState extends ConsumerState<PoolPage> {
     });
   }
 
+  /// The largest deposit the backend will actually accept, in raw units:
+  /// the account's balance minus Stellar's unspendable reserve for a native
+  /// asset (`nativeReserveHeadroomRaw` in `backend/services/cheque/service.go`),
+  /// or the plain balance for an issued asset (no comparable reserve). Shared
+  /// by `_blocker` and the "Available" label so the UI never offers more
+  /// than the backend will accept.
+  BigInt? _depositLimitRaw(AccountBalances balances, int decimals) {
+    final raw = AmountFormatter.toRaw(balances.payAsset, decimals);
+    final rawLimit = raw == null ? null : BigInt.tryParse(raw);
+    if (rawLimit == null || !balances.payAssetIsNative) return rawLimit;
+    final afterReserve = rawLimit - _nativeReserveHeadroomRaw;
+    return afterReserve.isNegative ? BigInt.zero : afterReserve;
+  }
+
   /// Why deposit/withdraw can't work right now, if we already know — so the
   /// user reads a reason instead of a failed simulation. This is UX only; the
   /// contract and backend stay the real enforcement. Returns null while the
@@ -122,8 +144,7 @@ class _PoolPageState extends ConsumerState<PoolPage> {
     final BigInt? limit;
     final String shortage;
     if (_isDeposit) {
-      final raw = AmountFormatter.toRaw(balances.payAsset, _decimals(pool));
-      limit = raw == null ? null : BigInt.tryParse(raw);
+      limit = _depositLimitRaw(balances, _decimals(pool));
       if (limit == BigInt.zero) {
         return balances.payAssetIsNative
             ? const _Blocker(
@@ -137,7 +158,12 @@ class _PoolPageState extends ConsumerState<PoolPage> {
                 '/anchor',
               );
       }
-      shortage = 'Not enough ${PayAsset.configured.label} — you have ${AmountFormatter.trimTrailingZeros(balances.payAsset)}.';
+      // `limit` (not the raw balance) is what's actually spendable — for a
+      // native asset it already has the reserve taken out, so this must
+      // name the same figure the "Available" line and the block above it
+      // show, not the larger raw balance the person can't fully use anyway.
+      shortage =
+          'Not enough ${PayAsset.configured.label} — you have ${AmountFormatter.trimTrailingZeros(AmountFormatter.fromRaw(limit.toString(), _decimals(pool)))}.';
     } else {
       limit = pool == null ? null : BigInt.tryParse(pool.amountRaw);
       if (limit == BigInt.zero) return const _Blocker('You have nothing in the pool to withdraw yet.');
@@ -166,7 +192,11 @@ class _PoolPageState extends ConsumerState<PoolPage> {
       amount: amountText,
     );
     final availableText = _isDeposit
-        ? (balances == null ? '—' : AmountFormatter.trimTrailingZeros(balances.payAsset))
+        ? (balances == null
+            ? '—'
+            : AmountFormatter.trimTrailingZeros(
+                AmountFormatter.fromRaw(_depositLimitRaw(balances, _decimals(pool))?.toString() ?? '0', _decimals(pool)),
+              ))
         : (pool == null ? '—' : AmountFormatter.trimTrailingZeros(AmountFormatter.fromRaw(pool.amountRaw, pool.decimals)));
 
     return ListView(

@@ -47,7 +47,9 @@ void main() {
     await tester.pumpWidget(_app());
     await _settle(tester);
 
-    expect(find.text('Available: 25.5 XLM'), findsOneWidget);
+    // 25.5 XLM balance minus the 1.5 XLM native reserve headroom (mirrors
+    // the backend's nativeReserveHeadroomRaw) = 24 spendable.
+    expect(find.text('Available: 24 XLM'), findsOneWidget);
     expect(find.text('XLM'), findsWidgets);
   });
 
@@ -82,17 +84,20 @@ void main() {
     expect(find.text('Open Settings →'), findsOneWidget);
   });
 
-  testWidgets('depositing more than the balance is blocked with the balance in the message', (tester) async {
+  testWidgets('depositing more than the spendable balance is blocked with that amount in the message', (tester) async {
     await tester.pumpWidget(_app());
     await _settle(tester);
 
-    await tester.enterText(find.byType(TextField), '25.5000001');
+    // 25.5 XLM balance minus the 1.5 XLM native reserve headroom = 24
+    // spendable — depositing the full raw balance must still be blocked,
+    // since Stellar's own reserve makes it undepositable.
+    await tester.enterText(find.byType(TextField), '25.5');
     await tester.pump();
 
-    expect(find.text('Not enough XLM — you have 25.5.'), findsOneWidget);
+    expect(find.text('Not enough XLM — you have 24.'), findsOneWidget);
     expect(_submitButton(tester).onPressed, isNull);
 
-    await tester.enterText(find.byType(TextField), '25.5');
+    await tester.enterText(find.byType(TextField), '24');
     await tester.pump();
     expect(_submitButton(tester).onPressed, isNotNull);
   });

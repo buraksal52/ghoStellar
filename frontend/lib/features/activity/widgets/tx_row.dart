@@ -45,26 +45,43 @@ class TxRow extends StatelessWidget {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Text(item.title, style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w500)),
+                Text(
+                  item.title,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w500),
+                ),
                 const SizedBox(height: 2),
                 Text(item.timeDisplay, style: TextStyle(fontSize: 12, color: c.muted)),
               ],
             ),
           ),
-          Column(
-            crossAxisAlignment: CrossAxisAlignment.end,
-            children: [
-              Text(
-                item.amountDisplay,
-                style: TextStyle(
-                  fontSize: 14,
-                  fontWeight: FontWeight.w600,
-                  color: item.isNegative ? c.text : c.positive,
+          const SizedBox(width: 12),
+          Flexible(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.end,
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Text(
+                  item.amountDisplay,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(
+                    fontSize: 14,
+                    fontWeight: FontWeight.w600,
+                    color: item.isNegative ? c.text : c.positive,
+                  ),
                 ),
-              ),
-              const SizedBox(height: 2),
-              Text(item.statusLabel, style: TextStyle(fontSize: 11, color: statusColor)),
-            ],
+                const SizedBox(height: 2),
+                Text(
+                  item.statusLabel,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  textAlign: TextAlign.end,
+                  style: TextStyle(fontSize: 11, color: statusColor),
+                ),
+              ],
+            ),
           ),
         ],
       ),

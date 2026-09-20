@@ -901,3 +901,30 @@ func TestPoolDepositXDR_NativeDoesNotRequireTrustline(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+// TestPoolDepositXDR_NativeReservesBaseBalance is the regression test for
+// the pool "the network rejected this" report: depositing an amount that
+// would leave the account below Stellar's own reserve must be refused with
+// the clearer errInsufficientBalance BEFORE ever reaching simulation, not
+// left to fail as an opaque contract-level token transfer rejection.
+func TestPoolDepositXDR_NativeReservesBaseBalance(t *testing.T) {
+	cfg := testConfig()
+	cfg.AssetCode, cfg.AssetIssuer = "native", ""
+	chain := fundedChain(t, 1)
+	// 10 XLM total; nativeReserveHeadroomRaw (1.5 XLM) must come off the top.
+	chain.GetAccountFunc = func(ctx context.Context, address string) (ports.AccountInfo, error) {
+		return ports.AccountInfo{Exists: true, Address: address, Sequence: 1,
+			Balances: []ports.Balance{{AssetCode: "native", Balance: "10.0000000"}}}, nil
+	}
+	svc := newServiceWithRepo(cfg, newFakeRepo(), chain)
+
+	if _, err := svc.PoolDepositXDR(context.Background(), testSender, "9"); !errors.Is(err, errInsufficientBalance) {
+		t.Fatalf("depositing into the reserve: got %v, want errInsufficientBalance", err)
+	}
+	if chain.SimulateTransactionCalls != 0 {
+		t.Fatal("a deposit that dips into the reserve must never reach simulation")
+	}
+	if _, err := svc.PoolDepositXDR(context.Background(), testSender, "8"); err != nil {
+		t.Fatalf("depositing comfortably within the reserve: %v", err)
+	}
+}

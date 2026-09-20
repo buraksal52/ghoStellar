@@ -792,6 +792,20 @@ func chequeStateMatchesChain(local State, present bool, chainState string) bool 
 
 // ---- helpers -----------------------------------------------------------
 
+// nativeReserveHeadroomRaw is a fixed 1.5 XLM (7-decimal raw units) held
+// back from a native-XLM balance check: Stellar's base reserve (1 XLM,
+// plus 0.5 XLM per subentry/trustline the account already carries) is not
+// spendable, and every submitted transaction also needs its own network
+// fee. Horizon's raw "native" balance figure includes that reserved
+// portion — comparing against it directly (as this function used to)
+// would approve a deposit/cheque amount that leaves the account unable to
+// pay its own reserve, and the contract's own token transfer would then
+// reject it in simulation ("the network rejected this") with no clearer
+// reason than the generic cheque.simulation_failed/insufficient_balance a
+// person already saw before submitting. Not applied to an issued asset,
+// which carries no comparable reserve of its own.
+var nativeReserveHeadroomRaw = big.NewInt(15_000_000)
+
 func hasSufficientBalance(acc ports.AccountInfo, assetCode, assetIssuer string, amount *big.Int, decimals uint8) bool {
 	for _, b := range acc.Balances {
 		if b.AssetCode != assetCode || (assetCode != "native" && b.AssetIssuer != assetIssuer) {
@@ -801,7 +815,11 @@ func hasSufficientBalance(acc ports.AccountInfo, assetCode, assetIssuer string, 
 		if err != nil {
 			return false
 		}
-		return bal.Raw.Cmp(amount) >= 0
+		spendable := bal.Raw
+		if assetCode == "native" {
+			spendable = new(big.Int).Sub(spendable, nativeReserveHeadroomRaw)
+		}
+		return spendable.Cmp(amount) >= 0
 	}
 	return false
 }
