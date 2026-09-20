@@ -49,9 +49,7 @@ class ErrorCopy {
     'anchor.bad_request': 'That request to the anchor was invalid.',
     'anchor.db_not_ready': 'Service is starting up — try again in a moment.',
     'anchor.trustline_missing': 'Set up USDC before continuing.',
-    'anchor.deposit_pending':
-        'The bank deposit is taking longer than expected. Check the Bank tab in a moment.',
-    'anchor.deposit_failed': 'The bank deposit could not be completed. Please try again.',
+    'starter.no_liquidity': 'No test USDC is available right now. Please try again in a moment.',
     'auth.fund_failed': "Couldn't set up your wallet right now. Try again in a moment.",
     'anchor.account_not_funded':
         "Your wallet isn't set up yet — get test funds from Settings first.",

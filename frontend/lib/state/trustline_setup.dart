@@ -49,9 +49,18 @@ class TrustlineSetup {
       xdr: signed,
     );
     report?.call(SigningStep.confirming);
-    // The backend checks the trustline on-chain and answers
-    // `anchor.trustline_missing` if it isn't there.
-    await anchorApi.trustlineConfirm(anchor.id);
+    await confirm();
+  }
+
+  /// Once the trustline is on-chain (however it got there): have the backend
+  /// check it and record it, then refresh what depends on it. The backend
+  /// answers `anchor.trustline_missing` if it isn't there.
+  Future<void> confirm() async {
+    final anchor = _ref.read(primaryAnchorProvider) ?? (await _ref.read(anchorsProvider.future)).firstOrNull;
+    if (anchor == null) {
+      throw ApiException(code: 'anchor.not_allowed', message: 'anchor not loaded');
+    }
+    await _ref.read(anchorApiProvider).trustlineConfirm(anchor.id);
     // Let a /sync that is still loading settle first, or its (older) answer
     // could land after the refresh below and hide the new trustline.
     try {

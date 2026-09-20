@@ -1,7 +1,6 @@
-import 'dart:async';
-
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:ghostellar_app/core/config/pay_asset.dart';
 import 'package:ghostellar_app/core/errors/api_error.dart';
 import 'package:ghostellar_app/data/api/endpoints/anchor_api.dart';
 import 'package:ghostellar_app/data/api/endpoints/auth_api.dart';
@@ -10,11 +9,9 @@ import 'package:ghostellar_app/data/api/endpoints/sync_api.dart';
 import 'package:ghostellar_app/data/api/endpoints/tx_api.dart';
 import 'package:ghostellar_app/data/api/models/anchor_models.dart';
 import 'package:ghostellar_app/data/api/models/cheque_models.dart';
-import 'package:ghostellar_app/data/api/models/sep6_models.dart';
 import 'package:ghostellar_app/data/api/models/tx_models.dart';
 import 'package:ghostellar_app/data/stellar/horizon_read_service.dart';
 import 'package:ghostellar_app/data/stellar/stellar_signing_service.dart';
-import 'package:ghostellar_app/state/anchor_providers.dart';
 import 'package:ghostellar_app/state/starter_funds.dart';
 import 'package:ghostellar_app/state/sync_providers.dart';
 import 'package:ghostellar_app/state/wallet_providers.dart';
@@ -198,6 +195,20 @@ class FakeHorizonReadService extends Fake implements HorizonReadService {
   /// The first this-many reads throw (Horizon unreachable / lagging).
   int failFirstReads = 0;
 
+  /// What Horizon quotes for selling native coin; null = no liquidity.
+  SwapQuote? quote = const SwapQuote(destinationAmount: '105.1817771');
+  final quoted = <String>[];
+  BigInt? sequence = BigInt.from(1000);
+
+  @override
+  Future<SwapQuote?> quoteFromNative(String sendAmount, PayAsset dest) async {
+    quoted.add(sendAmount);
+    return quote;
+  }
+
+  @override
+  Future<BigInt?> fetchSequence(String accountId) async => sequence;
+
   static AccountBalances fundedBalances({String native = '10000.0000000', Map<String, String> other = const {}}) =>
       AccountBalances(native: native, other: other);
 
@@ -210,21 +221,6 @@ class FakeHorizonReadService extends Fake implements HorizonReadService {
     final i = fetchCalls < responses.length ? fetchCalls : responses.length - 1;
     fetchCalls++;
     return responses[i];
-  }
-}
-
-/// Horizon as the starter-funds flow sees it: like [FakeHorizonReadService],
-/// plus a zero-balance USDC trustline appearing once the fake anchor has
-/// confirmed one.
-class TrustlineAwareHorizon extends FakeHorizonReadService {
-  TrustlineAwareHorizon(this.anchor, [super.responses]);
-  final FakeStarterAnchorApi anchor;
-
-  @override
-  Future<AccountBalances> fetchBalances(String accountId) async {
-    final b = await super.fetchBalances(accountId);
-    if (!b.exists || !anchor.trustlineConfirmed || b.other.containsKey('USDC')) return b;
-    return AccountBalances(native: b.native, other: {...b.other, 'USDC': '0.0000000'});
   }
 }
 
@@ -259,96 +255,19 @@ const testAnchor = AnchorInfo(
   assetIssuer: 'GBBD47IF6LWK7P7MDEVSCWR7DPUWV3NY3DTQEVFL4NAT4AQH3ZLLFLA5',
 );
 
-/// An anchor session that is already logged in.
-class PresetAnchorSession extends AnchorSessionNotifier {
-  @override
-  String? build() => 'anchor-jwt';
-}
-
-/// The mock anchor as the starter-funds flow sees it: a trustline that opens
-/// on confirm, and a TRY deposit whose polled status walks through [statuses]
-/// (the last one repeats).
+/// The anchor as the starter-funds flow sees it: only the backend's record of
+/// a trustline that is already on-chain.
 class FakeStarterAnchorApi extends Fake implements AnchorApi {
-  /// Every call, in order: trustlineXdr, trustlineConfirm, deposit, simulate,
-  /// transaction, report.
   final calls = <String>[];
   bool trustlineConfirmed = false;
-  Object? depositError;
-  List<String> statuses = ['completed'];
-  String amountOut = '24.1000000';
-  String? depositedAmount;
-  Map<String, Object?>? report;
-  int polls = 0;
-
-  /// The first this-many status polls fail (network blip / anchor down).
-  int pollFailures = 0;
-
-  @override
-  Future<({String transaction, String networkPassphrase})> challenge(String anchorId) async {
-    calls.add('challenge');
-    return (transaction: 'challenge-xdr', networkPassphrase: '');
-  }
-
-  @override
-  Future<String> token(String anchorId, String signedChallengeXdr) async {
-    calls.add('token');
-    return 'fresh-jwt';
-  }
-
-  @override
-  Future<String> trustlineXdr(String anchorId) async {
-    calls.add('trustlineXdr');
-    return 'trustline-xdr';
-  }
+  Object? confirmError;
 
   @override
   Future<void> trustlineConfirm(String anchorId) async {
     calls.add('trustlineConfirm');
+    if (confirmError != null) throw confirmError!;
     trustlineConfirmed = true;
   }
-
-  @override
-  Future<Sep6Deposit> sep6Deposit(String anchorId, String anchorToken,
-      {required String assetCode, required String amount}) async {
-    calls.add('deposit');
-    if (depositError != null) throw depositError!;
-    depositedAmount = amount;
-    return const Sep6Deposit(id: 'sep_1', how: 'wire it', instructions: []);
-  }
-
-  @override
-  Future<void> sep6SimulateBankTransfer(String anchorId, String anchorToken, String txId,
-      {required String amount}) async {
-    calls.add('simulate');
-  }
-
-  @override
-  Future<Sep6Transaction> sep6Transaction(String anchorId, String anchorToken, String txId) async {
-    calls.add('transaction');
-    if (pollFailures > 0) {
-      pollFailures--;
-      throw apiError('network.error');
-    }
-    final status = statuses[polls < statuses.length ? polls : statuses.length - 1];
-    polls++;
-    return Sep6Transaction(
-      id: txId,
-      status: status,
-      amountIn: '1000.00',
-      amountOut: status == 'completed' ? amountOut : null,
-      stellarTransactionId: status == 'completed' ? 'stellar-hash' : null,
-    );
-  }
-
-  @override
-  Future<void> reportTransaction(String anchorId, String txId,
-      {required String kind, required String state, String? amount, int? decimals, String? stellarTxHash}) async {
-    calls.add('report');
-    report = {'kind': kind, 'state': state, 'amount': amount, 'decimals': decimals, 'hash': stellarTxHash};
-  }
-
-  @override
-  Future<List<AnchorTransaction>> transactions(String anchorId) async => const [];
 }
 
 /// /sync whose `trustlineReady` follows the fake anchor: false until the
@@ -374,28 +293,14 @@ class FakeStarterFunds extends Fake implements StarterFunds {
   Duration? delay;
   final labels = <String>[];
 
-  /// When set, the flow reaches its "wait for the bank" step (the one the user
-  /// may leave) and stays there until [finish] completes.
-  Completer<void>? bankWait;
-
   @override
-  Future<StarterFundsResult> run({
-    void Function(String label)? progress,
-    void Function()? canContinueInBackground,
-  }) async {
+  Future<StarterFundsResult> run({void Function(String label)? progress}) async {
     runs++;
     const label = 'Preparing your wallet…';
     labels.add(label);
     progress?.call(label);
     final wait = delay;
     if (wait != null) await Future<void>.delayed(wait);
-    final bank = bankWait;
-    if (bank != null) {
-      progress?.call('Waiting for the bank…');
-      canContinueInBackground?.call();
-      await bank.future;
-      progress?.call('Sending on Stellar');
-    }
     if (error != null) throw error!;
     return StarterFundsResult(usdcAdded: usdcAdded);
   }

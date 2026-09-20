@@ -13,125 +13,171 @@ import 'package:stellar_flutter_sdk/stellar_flutter_sdk.dart' hide AnchorTransac
 
 import '../support/fakes.dart';
 
+const _usdcIssuer = 'GBBD47IF6LWK7P7MDEVSCWR7DPUWV3NY3DTQEVFL4NAT4AQH3ZLLFLA5';
+
 /// Everything the flow talks to, faked, plus the container to run it in.
 class _Harness {
-  _Harness({
-    List<AccountBalances>? balances,
-    bool trustlineAlreadyReady = false,
-    int maxPolls = 5,
-    int maxPollFailures = 3,
-  })  : anchor = FakeStarterAnchorApi(),
+  _Harness({List<AccountBalances>? balances})
+      : anchor = FakeStarterAnchorApi(),
         auth = FakeAuthApi(),
-        tx = FakeTxApi() {
-    horizon = TrustlineAwareHorizon(
-      anchor,
-      balances ??
-          [
-            FakeHorizonReadService.fundedBalances(
-              other: trustlineAlreadyReady ? {'USDC': '0.0000000'} : const {},
-            ),
-          ],
-    );
+        tx = FakeTxApi(),
+        horizon = FakeHorizonReadService(balances ?? [FakeHorizonReadService.fundedBalances()]),
+        wallet = KeyPair.random() {
     container = ProviderContainer(overrides: <Override>[
-      walletProvider.overrideWith(() => UnlockedWallet(KeyPair.random())),
+      walletProvider.overrideWith(() => UnlockedWallet(wallet)),
       authApiProvider.overrideWithValue(auth),
       anchorApiProvider.overrideWithValue(anchor),
       txApiProvider.overrideWithValue(tx),
       stellarSigningServiceProvider.overrideWithValue(FakeSigning()),
       horizonReadServiceProvider.overrideWithValue(horizon),
-      syncProvider.overrideWith(() => TrustlineAwareSync(anchor, alreadyReady: trustlineAlreadyReady)),
+      syncProvider.overrideWith(() => TrustlineAwareSync(anchor)),
       primaryAnchorProvider.overrideWithValue(testAnchor),
-      anchorSessionProvider.overrideWith(PresetAnchorSession.new),
-      starterFundsProvider.overrideWith(
-        (ref) => StarterFunds(
-          ref,
-          pollInterval: Duration.zero,
-          accountRetryDelay: Duration.zero,
-          maxPolls: maxPolls,
-          maxPollFailures: maxPollFailures,
-        ),
-      ),
+      starterFundsProvider.overrideWith((ref) => StarterFunds(ref, accountRetryDelay: Duration.zero)),
     ]);
   }
 
   final FakeStarterAnchorApi anchor;
   final FakeAuthApi auth;
   final FakeTxApi tx;
-  late final TrustlineAwareHorizon horizon;
+  final FakeHorizonReadService horizon;
+  final KeyPair wallet;
   late final ProviderContainer container;
 
   StarterFunds get funds => container.read(starterFundsProvider);
+
+  /// The (single) transaction that was submitted, as the network would read it.
+  Transaction get submittedTx {
+    final unsigned = tx.submitted.single.xdr.replaceFirst('signed-', '');
+    return AbstractTransaction.fromEnvelopeXdrString(unsigned) as Transaction;
+  }
 }
 
+/// A funded account that holds USDC (a zero balance still means "trustline").
+AccountBalances _withUsdc(String amount) => FakeHorizonReadService.fundedBalances(other: {'USDC': amount});
+
 void main() {
-  test('a brand-new wallet gets fees, a USDC trustline and USDC — in that order', () async {
-    final h = _Harness(
-      // Horizon doesn't serve the freshly funded account on the first read.
-      balances: [AccountBalances.notFunded, FakeHorizonReadService.fundedBalances()],
-    );
+  test('a brand-new wallet: fees from the faucet, then ONE transaction opens USDC and buys it', () async {
+    final h = _Harness(balances: [
+      AccountBalances.notFunded, // Horizon doesn't serve the fresh account yet
+      FakeHorizonReadService.fundedBalances(),
+      _withUsdc('105.1817771'),
+    ]);
     final labels = <String>[];
 
     final result = await h.funds.run(progress: labels.add);
 
     expect(h.auth.fundCalls, 1);
-    expect(h.horizon.fetchCalls, 2, reason: 'read again until the account shows');
-    expect(h.anchor.calls, [
-      'trustlineXdr',
-      'trustlineConfirm',
-      'deposit',
-      'simulate',
-      'transaction',
-      'report',
-    ]);
-    expect(h.tx.submitted.single.purpose, 'trustline');
+    expect(labels, ['Preparing your wallet…', 'Getting USDC…']);
+    expect(h.tx.submitted, hasLength(1), reason: 'trustline and trade travel together');
+    expect(h.tx.submitted.single.purpose, 'starter_swap');
     expect(h.tx.submitted.single.kind, TxKind.classic);
-    expect(h.anchor.depositedAmount, starterDepositTry);
-    expect(result.usdcAdded, '24.1000000');
-    expect(labels, [
-      'Preparing your wallet…',
-      'Enabling USDC…',
-      'Requesting a deposit…',
-      'Waiting for the bank…',
-    ]);
+
+    final ops = h.submittedTx.operations;
+    expect(ops, hasLength(2));
+    final trust = (ops[0] as ChangeTrustOperation).asset as AssetTypeCreditAlphaNum;
+    expect(trust.code, 'USDC');
+    expect(trust.issuerId, _usdcIssuer);
+
+    // What the wallet gained is read back, not assumed.
+    expect(result.usdcAdded, '105.1817771');
   });
 
-  test('the anchor ledger is told about the deposit, with the on-chain amount', () async {
-    final h = _Harness();
+  test('the trade sells native coin for USDC to the wallet itself, with a floor under the price', () async {
+    final h = _Harness(balances: [_withUsdc('0.0000000')]);
+
     await h.funds.run();
 
-    expect(h.anchor.report, {
-      'kind': 'deposit',
-      'state': 'completed',
-      'amount': '241000000', // 24.1 USDC, 7 decimals
-      'decimals': 7,
-      'hash': 'stellar-hash',
-    });
+    final pay = h.submittedTx.operations.single as PathPaymentStrictSendOperation;
+    expect(pay.sendAsset, isA<AssetTypeNative>());
+    expect(pay.sendAmount, starterSwapSend);
+    expect(pay.destination.accountId, h.wallet.accountId);
+    expect((pay.destAsset as AssetTypeCreditAlphaNum).code, 'USDC');
+    // 95 % of the quoted 105.1817771, in whole stroops.
+    expect(pay.destMin, '99.9226882');
+    expect(h.horizon.quoted, [starterSwapSend]);
   });
 
-  test('an already-open trustline is not opened again', () async {
-    final h = _Harness(trustlineAlreadyReady: true);
-    final labels = <String>[];
+  test('the transaction is built on the account\'s current sequence and expires soon', () async {
+    final h = _Harness(balances: [_withUsdc('0.0000000')]);
+    h.horizon.sequence = BigInt.from(4242);
 
-    await h.funds.run(progress: labels.add);
+    await h.funds.run();
 
-    expect(h.anchor.calls, isNot(contains('trustlineXdr')));
-    expect(h.tx.submitted, isEmpty);
-    expect(labels, isNot(contains('Enabling USDC…')));
-    expect(h.anchor.calls, contains('deposit'));
+    final tx = h.submittedTx;
+    expect(tx.sequenceNumber, BigInt.from(4243));
+    final now = DateTime.now().millisecondsSinceEpoch ~/ 1000;
+    expect(tx.preconditions!.timeBounds!.maxTime, greaterThan(now));
+    expect(tx.preconditions!.timeBounds!.maxTime, lessThan(now + 600));
   });
 
-  test('polls until the anchor reaches a final state', () async {
-    final h = _Harness(trustlineAlreadyReady: true);
-    h.anchor.statuses = ['pending_anchor', 'pending_stellar', 'completed'];
+  test('a wallet that already has the USDC trustline only trades — nothing to open or confirm', () async {
+    final h = _Harness(balances: [_withUsdc('0.0000000'), _withUsdc('105.1817771')]);
 
     final result = await h.funds.run();
 
-    expect(h.anchor.polls, 3);
-    expect(result.usdcAdded, '24.1000000');
+    expect(h.submittedTx.operations.single, isA<PathPaymentStrictSendOperation>());
+    expect(h.anchor.calls, isEmpty);
+    expect(result.usdcAdded, '105.1817771');
   });
 
-  group('failures name the step that failed', () {
-    test('friendbot says no and the account still does not exist → auth.fund_failed, nothing else runs', () async {
+  test('only what was gained is reported when the wallet already held some', () async {
+    final h = _Harness(balances: [_withUsdc('10.0000000'), _withUsdc('115.1817771')]);
+
+    final result = await h.funds.run();
+
+    expect(result.usdcAdded, '105.1817771');
+  });
+
+  test('the backend is told about a trustline the trade opened', () async {
+    final h = _Harness();
+
+    await h.funds.run();
+
+    expect(h.anchor.calls, ['trustlineConfirm']);
+    expect(h.container.read(syncProvider).value?.trustlineReady, isTrue);
+  });
+
+  test('a failed trustline bookkeeping call does not turn a successful top-up into a failure', () async {
+    final h = _Harness();
+    h.anchor.confirmError = apiError('anchor.trustline_missing');
+
+    final result = await h.funds.run();
+
+    expect(h.tx.submitted, hasLength(1));
+    expect(result, isA<StarterFundsResult>());
+  });
+
+  group('the faucet step', () {
+    test('an account with enough for fees is not sent to the faucet again', () async {
+      final h = _Harness(balances: [_withUsdc('1.0000000')]);
+      h.auth.fundResult = false; // friendbot would refuse it
+
+      await h.funds.run();
+
+      expect(h.auth.fundCalls, 0);
+    });
+
+    test('an account that is short on fees is topped up', () async {
+      final h = _Harness(balances: [FakeHorizonReadService.fundedBalances(native: '1.5000000')]);
+
+      await h.funds.run();
+
+      expect(h.auth.fundCalls, 1);
+    });
+
+    test('a Horizon that cannot be read yet does not stop the flow: the faucet is asked, Horizon retried',
+        () async {
+      final h = _Harness(balances: [AccountBalances.notFunded, FakeHorizonReadService.fundedBalances()]);
+      h.horizon.failFirstReads = 1;
+
+      await h.funds.run();
+
+      expect(h.auth.fundCalls, 1);
+      expect(h.tx.submitted, hasLength(1));
+    });
+
+    test('the faucet says no and the account still does not exist → auth.fund_failed, nothing is traded',
+        () async {
       final h = _Harness(balances: [AccountBalances.notFunded]);
       h.auth.fundResult = false;
 
@@ -139,7 +185,8 @@ void main() {
         h.funds.run(),
         throwsA(isA<ApiException>().having((e) => e.code, 'code', 'auth.fund_failed')),
       );
-      expect(h.anchor.calls, isEmpty);
+      expect(h.tx.submitted, isEmpty);
+      expect(h.horizon.quoted, isEmpty);
     });
 
     test('the fund call itself failing is reported when the account is still missing', () async {
@@ -151,160 +198,58 @@ void main() {
         throwsA(isA<ApiException>().having((e) => e.code, 'code', 'network.error')),
       );
     });
+  });
 
-    test('an account that already exists is fine even if friendbot would refuse it again', () async {
+  group('failures name what went wrong', () {
+    test('no liquidity → starter.no_liquidity, nothing is submitted', () async {
       final h = _Harness();
-      h.auth.fundResult = false; // friendbot: "already funded"
-
-      final result = await h.funds.run();
-
-      expect(result.usdcAdded, isNotNull);
-      expect(h.auth.fundCalls, 0, reason: 'nothing to fund, so friendbot is not even asked');
-    });
-
-    test('an account that is short on network fees is topped up', () async {
-      final h = _Harness(balances: [FakeHorizonReadService.fundedBalances(native: '1.5000000')]);
-
-      await h.funds.run();
-
-      expect(h.auth.fundCalls, 1);
-    });
-
-    test('a Horizon that cannot be read yet does not stop the flow: friendbot is asked and Horizon retried', () async {
-      final h = _Harness(balances: [AccountBalances.notFunded, FakeHorizonReadService.fundedBalances()]);
-      h.horizon.failFirstReads = 1;
-
-      final result = await h.funds.run();
-
-      expect(h.auth.fundCalls, 1);
-      expect(result.usdcAdded, isNotNull);
-    });
-
-    test('a bank deposit that never finishes is reported as pending, not as a failure to fund', () async {
-      final h = _Harness(trustlineAlreadyReady: true, maxPolls: 3);
-      h.anchor.statuses = ['pending_anchor'];
+      h.horizon.quote = null;
 
       await expectLater(
         h.funds.run(),
-        throwsA(isA<ApiException>().having((e) => e.code, 'code', 'anchor.deposit_pending')),
+        throwsA(isA<ApiException>().having((e) => e.code, 'code', 'starter.no_liquidity')),
       );
-      expect(h.anchor.polls, 3);
-      expect(h.anchor.report, isNull, reason: 'nothing final to record yet');
+      expect(h.tx.submitted, isEmpty);
     });
 
-    test('a deposit the anchor gives up on is recorded and reported as failed', () async {
-      final h = _Harness(trustlineAlreadyReady: true);
-      h.anchor.statuses = ['error'];
+    test('the network rejecting the trade (price moved past the floor) is surfaced and nothing is confirmed',
+        () async {
+      final h = _Harness();
+      h.tx.submitError = apiError('tx.submit_failed', 'op_under_dest_min');
 
       await expectLater(
         h.funds.run(),
-        throwsA(isA<ApiException>().having((e) => e.code, 'code', 'anchor.deposit_failed')),
+        throwsA(isA<ApiException>().having((e) => e.code, 'code', 'tx.submit_failed')),
       );
-      expect(h.anchor.report?['state'], 'error');
+      expect(h.anchor.calls, isEmpty);
     });
 
-    test('the anchor refusing the deposit surfaces its own error', () async {
-      final h = _Harness(trustlineAlreadyReady: true);
-      h.anchor.depositError = apiError('anchor.upstream_failed', '{"error":"amount too large"}');
+    test('an account Horizon has no sequence for is reported, not built on a guess', () async {
+      final h = _Harness();
+      h.horizon.sequence = null;
 
       await expectLater(
         h.funds.run(),
-        throwsA(isA<ApiException>().having((e) => e.code, 'code', 'anchor.upstream_failed')),
+        throwsA(isA<ApiException>().having((e) => e.code, 'code', 'auth.fund_failed')),
       );
+      expect(h.tx.submitted, isEmpty);
     });
   });
 
-  test('the trustline is read off Horizon: an account that has it is not asked to set it up again', () async {
-    final h = _Harness(trustlineAlreadyReady: true);
-
-    await h.funds.run();
-
-    expect(h.anchor.calls, isNot(contains('trustlineXdr')));
-    final sync = h.container.read(syncProvider.notifier) as TrustlineAwareSync;
-    expect(sync.refreshes, 1, reason: 'only the bookkeeping refresh after the deposit — no /sync before it');
-  });
-
-  test('the anchor login starts alongside the wallet setup, not after it', () async {
-    final h = _Harness();
-    h.container.read(anchorSessionProvider.notifier).clear();
-
-    await h.funds.run();
-
-    expect(h.container.read(anchorSessionProvider), 'fresh-jwt');
-    expect(h.anchor.calls.indexOf('challenge'), lessThan(h.anchor.calls.indexOf('trustlineXdr')));
-    expect(h.anchor.calls.where((c) => c == 'token'), hasLength(1), reason: 'one login, reused for every call');
-  });
-
-  group('waiting for the bank', () {
-    test('says what the anchor is doing, once per change, never for the final state', () async {
-      final h = _Harness(trustlineAlreadyReady: true);
-      h.anchor.statuses = ['pending_anchor', 'pending_anchor', 'pending_stellar', 'completed'];
-      final labels = <String>[];
-
-      await h.funds.run(progress: labels.add);
-
-      expect(labels.skip(labels.indexOf('Waiting for the bank…') + 1), [
-        'The anchor is processing it',
-        'Sending on Stellar',
-      ]);
-    });
-
-    test('announces the wait the user may walk away from, right when it starts', () async {
-      final h = _Harness(trustlineAlreadyReady: true);
-      final events = <String>[];
-
-      await h.funds.run(progress: events.add, canContinueInBackground: () => events.add('background'));
-
-      expect(events.last, 'background');
-      expect(events[events.length - 2], 'Waiting for the bank…');
-    });
-
-    test('a deposit the anchor holds for a trustline opens it once, then carries on', () async {
-      final h = _Harness(trustlineAlreadyReady: true);
-      h.anchor.statuses = ['pending_trust', 'pending_anchor', 'completed'];
-      final labels = <String>[];
-
-      final result = await h.funds.run(progress: labels.add);
-
-      expect(h.anchor.calls.where((c) => c == 'trustlineXdr'), hasLength(1));
-      expect(labels, contains('Enabling USDC…'));
-      expect(result.usdcAdded, '24.1000000');
-    });
-
-    test('a blip or two in the polling is ridden out', () async {
-      final h = _Harness(trustlineAlreadyReady: true);
-      h.anchor.pollFailures = 2;
-
-      final result = await h.funds.run();
-
-      expect(result.usdcAdded, '24.1000000');
-    });
-
-    test('an anchor that cannot be reached is reported at once, not after the whole wait', () async {
-      final h = _Harness(trustlineAlreadyReady: true, maxPolls: 50);
-      h.anchor.pollFailures = 99;
-
-      await expectLater(
-        h.funds.run(),
-        throwsA(isA<ApiException>().having((e) => e.code, 'code', 'network.error')),
-      );
-      expect(h.anchor.polls, 0, reason: 'every poll failed');
-      expect(h.anchor.calls.where((c) => c == 'transaction'), hasLength(3));
-    });
-  });
-
-  test('a retry after a failed deposit carries on: fees and trustline are not redone', () async {
-    final h = _Harness();
-    h.anchor.depositError = apiError('anchor.upstream_failed');
+  test('a retry after a failed trade just tries again: each attempt is its own idempotency key', () async {
+    final h = _Harness(balances: [
+      FakeHorizonReadService.fundedBalances(),
+      FakeHorizonReadService.fundedBalances(),
+      _withUsdc('105.1817771'),
+    ]);
+    h.tx.submitError = apiError('tx.submit_failed');
     await expectLater(h.funds.run(), throwsA(isA<ApiException>()));
-    expect(h.anchor.calls.where((c) => c == 'trustlineXdr'), hasLength(1));
 
-    h.anchor.depositError = null;
+    h.tx.submitError = null;
     final result = await h.funds.run();
 
-    expect(result.usdcAdded, '24.1000000');
-    expect(h.anchor.calls.where((c) => c == 'trustlineXdr'), hasLength(1),
-        reason: 'the trustline opened the first time');
-    expect(h.tx.submitted, hasLength(1));
+    expect(result.usdcAdded, isNotNull);
+    expect(h.tx.submitted, hasLength(2));
+    expect(h.tx.submitted[0].idempotencyKey, isNot(h.tx.submitted[1].idempotencyKey));
   });
 }

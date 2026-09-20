@@ -94,12 +94,12 @@ void main() {
   });
 
   testWidgets('a failed run is explained and is NOT retried by itself on the next start', (tester) async {
-    final funds = FakeStarterFunds()..error = apiError('anchor.deposit_failed');
+    final funds = FakeStarterFunds()..error = apiError('starter.no_liquidity');
 
     await _open(tester, _app(wallet, funds));
 
     expect(funds.runs, 1);
-    expect(find.text(ErrorCopy.forCode('anchor.deposit_failed')), findsOneWidget);
+    expect(find.text(ErrorCopy.forCode('starter.no_liquidity')), findsOneWidget);
 
     // Next start: same wallet, flag already written before the failed run.
     await tester.pumpWidget(const SizedBox());

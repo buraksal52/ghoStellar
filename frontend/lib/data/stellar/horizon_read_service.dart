@@ -60,6 +60,16 @@ class AccountBalances {
       AccountBalances(native: '0', other: {}, exists: false);
 }
 
+/// What Horizon says selling some native XLM for the app's asset would yield
+/// right now, and the route (intermediate assets) it would take.
+class SwapQuote {
+  const SwapQuote({required this.destinationAmount, this.path = const []});
+
+  /// Decimal string of the asset received.
+  final String destinationAmount;
+  final List<Asset> path;
+}
+
 class HorizonReadService {
   HorizonReadService({StellarSDK? sdk}) : _sdk = sdk ?? StellarSDK(Env.horizonUrl);
 
@@ -83,6 +93,27 @@ class HorizonReadService {
       rethrow;
     }
   }
+
+  /// The best route for selling [sendAmount] native XLM for [dest] (strict
+  /// send), or null when the order books and pools can't take that much.
+  Future<SwapQuote?> quoteFromNative(String sendAmount, PayAsset dest) async {
+    final destAsset = Asset.createNonNativeAsset(dest.code, dest.issuer!);
+    final page = await _sdk.strictSendPaths
+        .sourceAsset(Asset.NATIVE)
+        .sourceAmount(sendAmount)
+        .destinationAssets([destAsset])
+        .execute();
+    final records = page.records;
+    if (records.isEmpty) return null;
+    // Horizon lists the best route first.
+    final best = records.first;
+    return SwapQuote(destinationAmount: best.destinationAmount, path: best.path);
+  }
+
+  /// The account's current sequence number, for building a transaction
+  /// locally; null for an account that doesn't exist yet.
+  Future<BigInt?> fetchSequence(String accountId) async =>
+      (await fetchAccount(accountId))?.sequenceNumber;
 
   /// The full account record — sequence number included — for building an
   /// offline payment locally (`offline_payment_builder.dart`). `null` for an

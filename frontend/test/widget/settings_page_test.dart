@@ -1,5 +1,3 @@
-import 'dart:async';
-
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_riverpod/misc.dart' show Override;
@@ -87,22 +85,14 @@ void main() {
   });
 
   testWidgets('a step that fails is explained in plain words on the overlay', (tester) async {
-    await tester.pumpWidget(_app(FakeStarterFunds()..error = apiError('anchor.deposit_failed')));
+    await tester.pumpWidget(_app(FakeStarterFunds()..error = apiError('starter.no_liquidity')));
 
     await _tapFund(tester);
 
     final overlay = _overlay(tester);
     expect(overlay.step, SigningStep.error);
-    expect(overlay.errorMessage, ErrorCopy.forCode('anchor.deposit_failed'));
+    expect(overlay.errorMessage, ErrorCopy.forCode('starter.no_liquidity'));
     expect(tester.takeException(), isNull);
-  });
-
-  testWidgets('a bank deposit that is still pending points at the Bank tab, not at the wallet', (tester) async {
-    await tester.pumpWidget(_app(FakeStarterFunds()..error = apiError('anchor.deposit_pending')));
-
-    await _tapFund(tester);
-
-    expect(_overlay(tester).errorMessage, contains('Bank tab'));
   });
 
   testWidgets('the button is hidden on a non-testnet network', (tester) async {
@@ -127,7 +117,7 @@ void main() {
   });
 
   testWidgets('the row works again once the flow has finished (or failed)', (tester) async {
-    final funds = FakeStarterFunds()..error = apiError('anchor.deposit_failed');
+    final funds = FakeStarterFunds()..error = apiError('starter.no_liquidity');
     await tester.pumpWidget(_app(funds));
 
     await _tapFund(tester);
@@ -135,50 +125,5 @@ void main() {
     await _tapFund(tester);
 
     expect(funds.runs, 2);
-  });
-
-  group('the wait for the bank can be left', () {
-    testWidgets('the overlay offers "Continue in background" only once the flow is waiting on the bank',
-        (tester) async {
-      final funds = FakeStarterFunds()
-        ..delay = const Duration(milliseconds: 100)
-        ..bankWait = Completer<void>();
-      await tester.pumpWidget(_app(funds));
-
-      await tester.tap(find.text('Get test funds'));
-      await tester.pump();
-      expect(_overlay(tester).dismissible, isFalse, reason: 'wallet setup is short: no way out offered');
-
-      await tester.pump(const Duration(milliseconds: 150));
-      expect(_overlay(tester).label, 'Waiting for the bank…');
-      expect(_overlay(tester).dismissible, isTrue);
-
-      funds.bankWait!.complete();
-      await tester.pump();
-      await tester.pump();
-    });
-
-    testWidgets('dismissing it lets the flow finish quietly and announces the result when it arrives',
-        (tester) async {
-      final funds = FakeStarterFunds()..bankWait = Completer<void>();
-      await tester.pumpWidget(_app(funds));
-
-      await tester.tap(find.text('Get test funds'));
-      await tester.pump();
-      await tester.pump();
-      ProviderScope.containerOf(tester.element(find.byType(SettingsPage)))
-          .read(signingOverlayProvider.notifier)
-          .dismiss();
-      expect(_overlay(tester).step, SigningStep.idle);
-
-      funds.bankWait!.complete();
-      await tester.pump();
-      await tester.pump();
-
-      // The "Sending on Stellar" label of the flow did not pop the overlay
-      // back up; only the outcome did.
-      expect(_overlay(tester).step, SigningStep.done);
-      expect(_overlay(tester).label, 'Added 24.1 USDC to your wallet');
-    });
   });
 }

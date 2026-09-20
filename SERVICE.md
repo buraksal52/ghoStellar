@@ -356,32 +356,35 @@ Tasarım kararları:
   sayfası "XLM" yazıp kontrat USDC çektiği için deposit simülasyonda sessizce
   düşüyordu.)
 - **"Get test funds" (yalnızca testnet) USDC getirir** — friendbot USDC veremez
-  (ihraççı bizim değil), bu yüzden istemcide `StarterFunds`
-  (`frontend/lib/state/starter_funds.dart`) tek akışta: (1) ağ ücreti — hesap
-  zaten var ve ücret bakiyesi yeterliyse friendbot hiç çağrılmaz, aksi hâlde
-  `POST /auth/fund` ve hesap Horizon'da görünene kadar bakiye yeniden okunur,
-  (2) USDC trustline'ı — Horizon bakiyesinde (sıfır bakiyeli satır dahil)
-  yoksa kurulur, `/sync` turu gerekmez, (3) TR Mock Anchor'dan 1.000 TRY'lik
-  SEP-6 deposit + sandbox `simulate-bank-transfer`, anchor final duruma gelene
-  kadar 1 sn aralıkla poll (en çok 60 tur), `reportTransaction`. Anchor'ın
-  SEP-10 girişi (1) ve (2) ile **paralel** başlar. Anchor `pending_trust`
-  derse (trustline'ı bekliyor) trustline bir kez kurulup poll'a dönülür;
-  ard arda 3 poll hatası anchor'a ulaşılamıyor sayılır ve hemen raporlanır.
-  Her adım tekrarlanabilir; kısmi başarıdan sonra yeniden basmak kaldığı
-  yerden devam eder.
+  (ihraççı bizim değil), ama friendbot'un verdiği 10.000 native coin testnet
+  DEX'inde USDC'ye çevrilebilir (likidite var: 100 birim ≈ 105 USDC). İstemcide
+  `StarterFunds` (`frontend/lib/state/starter_funds.dart`) tek akışta:
+  (1) ağ ücreti — hesap zaten var ve ücret bakiyesi yeterliyse friendbot hiç
+  çağrılmaz, aksi hâlde `POST /auth/fund` ve hesap Horizon'da görünene kadar
+  bakiye yeniden okunur; (2) Horizon `paths/strict-send` ile 100 native coin için
+  fiyat/rota alınır; (3) **tek işlem, tek imza**: USDC trustline'ı yoksa
+  `ChangeTrust` + `PathPaymentStrictSend` (hedef = kendi hesabı, alt sınır =
+  teklifin %95'i, 5 dk geçerlilik). İşlem `StarterSwapBuilder`
+  (`lib/data/stellar/starter_swap_builder.dart`) ile istemcide kurulur/imzalanır,
+  `pay-tx-service` `POST /tx/submit` (`kind: classic`, `purpose: starter_swap`)
+  ile gönderir — backend değişikliği yoktur. Trustline bu işlemle açıldıysa
+  backend kaydı için `trustlineConfirm` (en iyi çaba: USDC zaten cüzdanda). Kullanıcı
+  yalnızca USDC'nin geldiğini görür ("Added 105.16 USDC to your wallet", miktar
+  sonrasında bakiye okunarak hesaplanır); native coin hiçbir yerde gösterilmez.
+  Testnet'te gerçek hesapla uçtan uca doğrulandı (~10 sn, tek işlem). Mock
+  anchor (TRY) bu akışta **yoktur**: fiat deposit anchor girişi + deposit +
+  simüle havale + ödeme zinciri gerektiriyordu (yavaş, takılıyordu); TRY yine
+  Bank sekmesinden yapılır. Likidite yoksa `starter.no_liquidity`, fiyat alt sınırın
+  altına düşerse ağ reddi (`tx.submit_failed`) gösterilir; tekrar basmak yeni bir
+  işlem dener (her deneme ayrı idempotency anahtarı).
   Tetikleyiciler: yalnızca Settings satırı (Home kartında buton **yok**) ve
   yeni cüzdanın Home'a ilk varışında **cüzdan başına bir kez** otomatik çalışma
   (bayrak `ghoStellarStarterFundsOffered_<publicKey>`; başarısızlık kendi
-  kendine tekrar denenmez, kullanıcı Settings'ten dener). Banka bekleme adımı
-  overlay'de "Continue in background" sunar: kapatılırsa akış sessizce sürer,
-  sonuç (veya hata) bittiğinde yine gösterilir. `ApiClient` artık zaman aşımı
-  taşır (bağlanma 10 sn, gönderme/alma 30 sn; Dio'nun varsayılanı sonsuzdu) ve
-  `balancesProvider` Riverpod 3'ün otomatik yeniden denemesini kullanmaz
-  (başarısız okuma dakikalarca "yükleniyor" kalıyordu). Giriş sırasındaki
-  sunucu tarafı `fundIfNeeded` XLM koymaya devam eder — fakat XLM arayüzde
-  görünmediğinden "hiçbir şey olmuyor" hissi vardı; asıl görünür sonuç artık
-  USDC. Mock anchor kapalıyken (1) ve (2) yine de yapılmış olur, net bir hata
-  gösterilir (`anchor.deposit_failed` / `anchor.deposit_pending`).
+  kendine tekrar denenmez, kullanıcı Settings'ten dener). `ApiClient` artık
+  zaman aşımı taşır (bağlanma 10 sn, gönderme/alma 30 sn; Dio'nun varsayılanı
+  sonsuzdu) ve `balancesProvider` Riverpod 3'ün otomatik yeniden denemesini
+  kullanmaz (başarısız okuma dakikalarca "yükleniyor" kalıyordu). Giriş
+  sırasındaki sunucu tarafı `fundIfNeeded` native coin koymaya devam eder.
   Banka işlemlerinin geçmişi backend anchor ledger'ındadır; yerel aktivite
   loguna yazılmaz.
 - **Simülasyon hataları artık kendi kodunu taşır:** `cheque.simulation_failed`

@@ -6,12 +6,7 @@ import '../core/errors/error_copy.dart';
 enum SigningStep { idle, preparing, signing, submitting, confirming, done, error }
 
 class SigningOverlayState {
-  const SigningOverlayState({
-    this.step = SigningStep.idle,
-    this.errorMessage,
-    this.label,
-    this.dismissible = false,
-  });
+  const SigningOverlayState({this.step = SigningStep.idle, this.errorMessage, this.label});
 
   final SigningStep step;
   final String? errorMessage;
@@ -19,10 +14,6 @@ class SigningOverlayState {
   /// Replaces the step's stock wording (e.g. "Enabling USDC…" for a
   /// multi-step flow, or "Added 24.1 USDC" on completion).
   final String? label;
-
-  /// A long wait the user may walk away from ("Continue in background"): the
-  /// flow keeps running, the overlay just stops covering the app.
-  final bool dismissible;
 
   static const idle = SigningOverlayState();
 }
@@ -35,12 +26,9 @@ class SigningOverlayNotifier extends Notifier<SigningOverlayState> {
   @override
   SigningOverlayState build() => SigningOverlayState.idle;
 
-  void setStep(SigningStep step, {String? label, bool dismissible = false}) {
-    state = SigningOverlayState(step: step, label: label, dismissible: dismissible);
+  void setStep(SigningStep step, {String? label}) {
+    state = SigningOverlayState(step: step, label: label);
   }
-
-  /// Nothing on screen — also true once the user dismissed a long wait.
-  bool get isIdle => state.step == SigningStep.idle;
 
   Future<T?> run<T>(Future<T> Function(void Function(SigningStep) report) action) async {
     setStep(SigningStep.preparing);
