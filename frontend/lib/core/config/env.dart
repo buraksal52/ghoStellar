@@ -27,22 +27,20 @@ class Env {
     defaultValue: 'https://horizon-testnet.stellar.org',
   );
 
-  /// The asset cheques are written in. Must match the backend's
-  /// `ASSET_CODE` / `ASSET_ISSUER` (`backend/cmd/chequesvc/main.go`; default
-  /// USDC issued by the testnet issuer below). Override with
-  /// `--dart-define=PAY_ASSET_CODE=... --dart-define=PAY_ASSET_ISSUER=...`;
-  /// an empty issuer means native XLM.
-  ///
-  /// UNVERIFIED against the live deployment — see docs/reference/platform/
-  /// nfc-qr-temasli-odeme.md. If the deployed `ASSET_CODE` differs, these two
-  /// constants are the only thing to change.
+  /// The asset cheques are written in: native XLM by default (an empty issuer
+  /// means native), matching the backend's `ASSET_CODE=native` /
+  /// `ASSET_ISSUER=` (`backend/cmd/chequesvc/main.go`). The code is only the
+  /// on-screen label for native. Override with
+  /// `--dart-define=PAY_ASSET_CODE=... --dart-define=PAY_ASSET_ISSUER=...` to
+  /// point a build at an issued-asset deployment (code **and** issuer must then
+  /// match the backend's).
   static const String payAssetCode = String.fromEnvironment(
     'PAY_ASSET_CODE',
-    defaultValue: 'USDC',
+    defaultValue: 'XLM',
   );
   static const String payAssetIssuer = String.fromEnvironment(
     'PAY_ASSET_ISSUER',
-    defaultValue: 'GBBD47IF6LWK7P7MDEVSCWR7DPUWV3NY3DTQEVFL4NAT4AQH3ZLLFLA5',
+    defaultValue: '',
   );
 
   /// Production backend. Override with `--dart-define=GATEWAY_BASE_URL=...`

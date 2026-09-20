@@ -343,40 +343,36 @@ Tasarım kararları:
   `FRIENDBOT_URL`'i (varsayılan `https://friendbot.stellar.org`) doğrudan
   çağırır ve host'u allow-list'e eklenir. Boş değer = fund kapalı
   (`chain.funding_disabled`, "boş env var = özellik kapalı" kalıbı).
-- **Uygulamanın tek varlığı USDC; XLM yalnızca ağ ücreti bakiyesidir.**
-  Cheque, havuz ve anchor (TRY ↔ USDC, SEP-6) hep `ASSET_CODE`/`PayAsset.configured`
-  üzerinden çalışır. Friendbot yalnızca XLM verdiği için "funded" bir cüzdan
-  havuza/cheque'e hazır **değildir**: önce USDC trustline'ı, sonra bank
-  sekmesinden TRY deposit'i gerekir. Arayüz tek birim gösterir: **USDC**. XLM
-  (ağ ücreti + rezerv için her hesapta zorunlu) kullanıcıya hiçbir yerde
-  tutar/birim olarak yazılmaz — ne bakiye kartında, ne aktivitede, ne hata
-  metinlerinde; yalnızca `AccountBalances.feeBalanceLow` (< 2 XLM) Home'da
-  birimsiz bir "ağ ücreti bakiyeniz düşük" ipucu çıkarır. Havuz sayfası
-  trustline/USDC yoksa nedenini ve çözüm ekranını söyler. (Eskiden havuz
-  sayfası "XLM" yazıp kontrat USDC çektiği için deposit simülasyonda sessizce
-  düşüyordu.)
-- **"Get test funds" (yalnızca testnet) USDC getirir** — friendbot USDC veremez
-  (ihraççı bizim değil), ama friendbot'un verdiği 10.000 native coin testnet
-  DEX'inde USDC'ye çevrilebilir (likidite var: 100 birim ≈ 105 USDC). İstemcide
-  `StarterFunds` (`frontend/lib/state/starter_funds.dart`) tek akışta:
-  (1) ağ ücreti — hesap zaten var ve ücret bakiyesi yeterliyse friendbot hiç
-  çağrılmaz, aksi hâlde `POST /auth/fund` ve hesap Horizon'da görünene kadar
-  bakiye yeniden okunur; (2) Horizon `paths/strict-send` ile 100 native coin için
-  fiyat/rota alınır; (3) **tek işlem, tek imza**: USDC trustline'ı yoksa
-  `ChangeTrust` + `PathPaymentStrictSend` (hedef = kendi hesabı, alt sınır =
-  teklifin %95'i, 5 dk geçerlilik). İşlem `StarterSwapBuilder`
-  (`lib/data/stellar/starter_swap_builder.dart`) ile istemcide kurulur/imzalanır,
-  `pay-tx-service` `POST /tx/submit` (`kind: classic`, `purpose: starter_swap`)
-  ile gönderir — backend değişikliği yoktur. Trustline bu işlemle açıldıysa
-  backend kaydı için `trustlineConfirm` (en iyi çaba: USDC zaten cüzdanda). Kullanıcı
-  yalnızca USDC'nin geldiğini görür ("Added 105.16 USDC to your wallet", miktar
-  sonrasında bakiye okunarak hesaplanır); native coin hiçbir yerde gösterilmez.
-  Testnet'te gerçek hesapla uçtan uca doğrulandı (~10 sn, tek işlem). Mock
-  anchor (TRY) bu akışta **yoktur**: fiat deposit anchor girişi + deposit +
-  simüle havale + ödeme zinciri gerektiriyordu (yavaş, takılıyordu); TRY yine
-  Bank sekmesinden yapılır. Likidite yoksa `starter.no_liquidity`, fiyat alt sınırın
-  altına düşerse ağ reddi (`tx.submit_failed`) gösterilir; tekrar basmak yeni bir
-  işlem dener (her deneme ayrı idempotency anahtarı).
+- **Uygulamanın tek varlığı native XLM.** `ASSET_CODE=native` /
+  `ASSET_ISSUER=` (boş) / `ASSET_SAC_CONTRACT_ID=<testnet native SAC>` ile
+  cheque, havuz hep native üzerinden çalışır; frontend varsayılanı
+  `PayAsset.configured` (`frontend/lib/core/config/env.dart`) de aynı şekilde
+  boş issuer'lıdır. Trustline kavramı yok — her hesap zaten native tutar —
+  bu yüzden `TrustlineSetup` (`frontend/lib/state/trustline_setup.dart`) ve
+  "Set up …" ekranı native modda no-op/erişilemez. Bank sekmesi (TRY↔asset
+  SEP-6 rampası) issued bir varlık gerektirdiği için native dağıtımda
+  **bilinçli olarak gizli/devre dışıdır** (`app_drawer.dart`,
+  `home_page.dart`, `anchor_deposit_withdraw_page.dart`). Bir dağıtım issued
+  bir varlığa (örn. USDC) dönerse `ASSET_CODE`/`ASSET_ISSUER` + frontend'in
+  `PAY_ASSET_CODE`/`PAY_ASSET_ISSUER` build-time define'ları birlikte
+  değiştirilir ve Bank/trustline akışları otomatik geri döner.
+- **"Get test funds" (yalnızca testnet) artık tek adım: friendbot'un verdiği
+  native XLM'in kendisi.** Eskiden friendbot'un native coin'i testnet DEX'inde
+  USDC'ye çevriliyordu (`PathPaymentStrictSend`); bu, testnet order-book
+  likiditesine bağımlıydı ve likidite yoksa (`starter.no_liquidity`) veya ince
+  likiditede fiyat kayıp `op_under_dest_min`/`op_underfunded` ile zincirde
+  reddedilerek fonların "hiç gelmemesi" ya da "çok uzun sürmesi"ne yol
+  açıyordu; overlay de artık dismiss edilemediğinden bir hata/timeout
+  spinner'da sonsuza kadar kalabiliyordu. Bu swap tamamen kaldırıldı
+  (`StarterSwapBuilder`/`quoteFromNative`/`SwapQuote` silindi).
+  `StarterFunds` (`frontend/lib/state/starter_funds.dart`) artık yalnızca:
+  hesap zaten var ve ücret bakiyesi yeterliyse friendbot hiç çağrılmaz, aksi
+  hâlde `POST /auth/fund` ve hesap Horizon'da görünene kadar (≤ ~4 deneme × 2
+  sn) bakiye yeniden okunur — hiçbir işlem imzalanmaz/submit edilmez, hiçbir
+  DEX sorgusu yapılmaz. Faucet/Horizon çağrılarına 15 sn'lik client-side
+  timeout eklendi (önceden yoktu). Kullanıcı native bakiyenin arttığını görür
+  ("Added 10000 XLM to your wallet", miktar sonrasında bakiye okunarak
+  hesaplanır).
   Tetikleyiciler: yalnızca Settings satırı (Home kartında buton **yok**) ve
   yeni cüzdanın Home'a ilk varışında **cüzdan başına bir kez** otomatik çalışma
   (bayrak `ghoStellarStarterFundsOffered_<publicKey>`; başarısızlık kendi
@@ -385,8 +381,6 @@ Tasarım kararları:
   sonsuzdu) ve `balancesProvider` Riverpod 3'ün otomatik yeniden denemesini
   kullanmaz (başarısız okuma dakikalarca "yükleniyor" kalıyordu). Giriş
   sırasındaki sunucu tarafı `fundIfNeeded` native coin koymaya devam eder.
-  Banka işlemlerinin geçmişi backend anchor ledger'ındadır; yerel aktivite
-  loguna yazılmaz.
 - **Simülasyon hataları artık kendi kodunu taşır:** `cheque.simulation_failed`
   (422). Önceden `cheque.bad_request`'e düşüp istemcide "Something went wrong"
   olarak görünüyordu. Ham simülatör mesajı yanıtın `message` alanında kalır.

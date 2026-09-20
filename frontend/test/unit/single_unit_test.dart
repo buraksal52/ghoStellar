@@ -6,48 +6,39 @@ import 'package:ghostellar_app/features/activity/widgets/activity_item.dart';
 
 import '../support/fakes.dart';
 
-/// The app has ONE unit (USDC). XLM exists on every account for fees and the
-/// reserve, but must never be shown to the user as an amount or a unit.
+/// The app has ONE unit — native XLM by default (`PayAsset.configured`, see
+/// `env.dart`). A non-native deployment instead shows an issued asset and
+/// treats XLM as an invisible fee/reserve balance; that split is what
+/// [AccountBalances.feeBalanceLow] exists for, and it is always false while
+/// native IS the one asset (there's nothing separate left to warn about).
 void main() {
-  group('AccountBalances.feeBalanceLow (the only place XLM matters to the UI)', () {
-    AccountBalances withNative(String native) => AccountBalances(native: native, other: const {'USDC': '1'});
-
-    test('below 2 → low', () {
-      expect(withNative('1.9999999').feeBalanceLow, isTrue);
-      expect(withNative('0.5000000').feeBalanceLow, isTrue);
-      expect(withNative('0').feeBalanceLow, isTrue);
-    });
-
-    test('2 and above → not low', () {
-      expect(withNative('2.0000000').feeBalanceLow, isFalse);
-      expect(withNative('2').feeBalanceLow, isFalse);
+  group('AccountBalances.feeBalanceLow (only meaningful for a non-native deployment)', () {
+    test('always false for the default (native) deployment, however low the balance is', () {
+      AccountBalances withNative(String native) => AccountBalances(native: native, other: const {});
+      expect(withNative('0').feeBalanceLow, isFalse);
+      expect(withNative('1.9999999').feeBalanceLow, isFalse);
       expect(withNative('9999.9999900').feeBalanceLow, isFalse);
     });
 
     test('an account that does not exist is "not funded", not "low"', () {
       expect(AccountBalances.notFunded.feeBalanceLow, isFalse);
     });
-
-    test('a malformed balance never raises the warning', () {
-      expect(withNative('not-a-number').feeBalanceLow, isFalse);
-    });
   });
 
-  group('activity amounts use the app asset, never XLM', () {
-    test('a sent cheque reads in USDC', () {
+  group('activity amounts use the app asset', () {
+    test('a sent cheque reads in the configured asset', () {
       final item = ActivityItem.fromCheque(testCheque('c1', 'GRECEIVER', sender: testSender), myAddress: testSender);
-      expect(item.amountDisplay, '−25.5 USDC');
-      expect(item.amountDisplay, isNot(contains('XLM')));
+      expect(item.amountDisplay, '−25.5 XLM');
     });
 
-    test('a received cheque reads in USDC', () {
+    test('a received cheque reads in the configured asset', () {
       final item = ActivityItem.fromCheque(testCheque('c2', testSender, sender: 'GOTHER'), myAddress: testSender);
-      expect(item.amountDisplay, '+25.5 USDC');
+      expect(item.amountDisplay, '+25.5 XLM');
     });
   });
 
-  group('user-facing copy carries no XLM unit', () {
-    test('errors that used to say XLM', () {
+  group('user-facing copy carries no stray unit', () {
+    test('errors that used to hardcode a unit', () {
       for (final code in ['cheque.account_not_funded', 'anchor.account_not_funded']) {
         expect(ErrorCopy.forCode(code), isNot(contains('XLM')), reason: code);
       }

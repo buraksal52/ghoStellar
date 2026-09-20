@@ -58,15 +58,14 @@ void main() {
     expect(funds.runs, 1);
   });
 
-  testWidgets('what arrived is announced in the one unit the app has: USDC', (tester) async {
-    await tester.pumpWidget(_app(FakeStarterFunds()..usdcAdded = '24.1000000'));
+  testWidgets('what arrived is announced in the one unit the app has: XLM', (tester) async {
+    await tester.pumpWidget(_app(FakeStarterFunds()..added = '24.1000000'));
 
     await _tapFund(tester);
 
     final overlay = _overlay(tester);
     expect(overlay.step, SigningStep.done);
-    expect(overlay.label, 'Added 24.1 USDC to your wallet');
-    expect(overlay.label, isNot(contains('XLM')));
+    expect(overlay.label, 'Added 24.1 XLM to your wallet');
   });
 
   testWidgets('the overlay shows the step the flow is on while it works', (tester) async {
@@ -85,13 +84,13 @@ void main() {
   });
 
   testWidgets('a step that fails is explained in plain words on the overlay', (tester) async {
-    await tester.pumpWidget(_app(FakeStarterFunds()..error = apiError('starter.no_liquidity')));
+    await tester.pumpWidget(_app(FakeStarterFunds()..error = apiError('auth.fund_failed')));
 
     await _tapFund(tester);
 
     final overlay = _overlay(tester);
     expect(overlay.step, SigningStep.error);
-    expect(overlay.errorMessage, ErrorCopy.forCode('starter.no_liquidity'));
+    expect(overlay.errorMessage, ErrorCopy.forCode('auth.fund_failed'));
     expect(tester.takeException(), isNull);
   });
 
@@ -117,7 +116,7 @@ void main() {
   });
 
   testWidgets('the row works again once the flow has finished (or failed)', (tester) async {
-    final funds = FakeStarterFunds()..error = apiError('starter.no_liquidity');
+    final funds = FakeStarterFunds()..error = apiError('auth.fund_failed');
     await tester.pumpWidget(_app(funds));
 
     await _tapFund(tester);

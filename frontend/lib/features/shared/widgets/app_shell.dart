@@ -23,7 +23,7 @@ const _titles = {
   '/receive': 'Receive',
   '/pool': 'Pool',
   '/anchor': 'Bank',
-  '/anchor/trustline': 'Set up USDC',
+  '/anchor/trustline': 'Set up',
   '/activity': 'Activity',
   '/settings': 'Settings',
 };
@@ -120,7 +120,7 @@ class _AppShellState extends ConsumerState<AppShell> with WidgetsBindingObserver
       if (!mounted) return;
       // Marked before running: a failed run must not repeat on every start.
       await flag.markOffered(me);
-      if (balances.payAssetIsNative || balances.holdsPayAsset) return;
+      if (balances.holdsPayAsset) return;
       await runStarterFunds(ref);
     } catch (_) {
       // Best-effort convenience; the Home button is the manual path.

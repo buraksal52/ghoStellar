@@ -1,6 +1,5 @@
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:ghostellar_app/core/config/pay_asset.dart';
 import 'package:ghostellar_app/core/errors/api_error.dart';
 import 'package:ghostellar_app/data/api/endpoints/anchor_api.dart';
 import 'package:ghostellar_app/data/api/endpoints/auth_api.dart';
@@ -195,20 +194,6 @@ class FakeHorizonReadService extends Fake implements HorizonReadService {
   /// The first this-many reads throw (Horizon unreachable / lagging).
   int failFirstReads = 0;
 
-  /// What Horizon quotes for selling native coin; null = no liquidity.
-  SwapQuote? quote = const SwapQuote(destinationAmount: '105.1817771');
-  final quoted = <String>[];
-  BigInt? sequence = BigInt.from(1000);
-
-  @override
-  Future<SwapQuote?> quoteFromNative(String sendAmount, PayAsset dest) async {
-    quoted.add(sendAmount);
-    return quote;
-  }
-
-  @override
-  Future<BigInt?> fetchSequence(String accountId) async => sequence;
-
   static AccountBalances fundedBalances({String native = '10000.0000000', Map<String, String> other = const {}}) =>
       AccountBalances(native: native, other: other);
 
@@ -289,7 +274,7 @@ class TrustlineAwareSync extends FakeSyncNotifier {
 class FakeStarterFunds extends Fake implements StarterFunds {
   int runs = 0;
   Object? error;
-  String? usdcAdded = '24.1000000';
+  String? added = '24.1000000';
   Duration? delay;
   final labels = <String>[];
 
@@ -302,7 +287,7 @@ class FakeStarterFunds extends Fake implements StarterFunds {
     final wait = delay;
     if (wait != null) await Future<void>.delayed(wait);
     if (error != null) throw error!;
-    return StarterFundsResult(usdcAdded: usdcAdded);
+    return StarterFundsResult(added: added);
   }
 }
 

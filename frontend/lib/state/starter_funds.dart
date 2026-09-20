@@ -1,117 +1,63 @@
-import 'package:flutter_riverpod/flutter_riverpod.dart';
-import 'package:uuid/uuid.dart';
+import 'dart:async';
 
-import '../core/config/pay_asset.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
+
 import '../core/errors/api_error.dart';
 import '../core/utils/amount_formatter.dart';
-import '../data/api/models/tx_models.dart';
 import '../data/stellar/horizon_read_service.dart';
-import '../data/stellar/starter_swap_builder.dart';
 import '../data/storage/starter_funds_flag.dart';
 import 'core_providers.dart';
 import 'home_providers.dart';
-import 'trustline_setup.dart';
 import 'wallet_providers.dart';
-
-/// How much of the faucet's balance (10,000 of the network's native coin) is
-/// traded for USDC. Testnet liquidity is thin — a few hundred at most — so
-/// this stays modest; it is worth about as many USDC.
-const starterSwapSend = '100';
 
 final starterFundsProvider = Provider((ref) => StarterFunds(ref));
 final starterFundsFlagProvider = Provider((ref) => StarterFundsFlag());
 
 class StarterFundsResult {
-  const StarterFundsResult({this.usdcAdded});
+  const StarterFundsResult({this.added});
 
-  /// What the wallet actually gained, if it could be read back.
-  final String? usdcAdded;
+  /// What the wallet actually gained of the app's asset, if it could be read
+  /// back; null when it was already funded or nothing showed up.
+  final String? added;
 }
 
-/// "Get test funds", end to end, on testnet: everything a brand-new wallet
-/// needs before it can hold, send or pool USDC.
+/// "Get test funds", on testnet: the faucet (friendbot) funds the account with
+/// native XLM — the app's one unit — unless it already has enough. Nothing is
+/// signed or submitted by the app: the balance simply appears.
 ///
-///  1. the faucet funds the account (friendbot — native coin, which pays network
-///     fees and is never shown as an amount; the app has one unit, USDC),
-///     unless it already has enough;
-///  2. ONE transaction, signed once: open the USDC trustline if it isn't open
-///     and trade part of that faucet balance for USDC on the Stellar DEX. The
-///     user only ever sees USDC arrive.
+/// (A previous version traded part of that balance for USDC on the DEX. That
+/// depended on testnet order-book liquidity and could sit for a long time or
+/// fail outright; the app now holds native XLM so there is nothing to trade.)
 ///
-/// The mock anchor (TRY↔USDC) is deliberately not involved: a fiat deposit
-/// takes an anchor login, a deposit, a simulated wire and a payout, where the
-/// trade is a single ledger close. The Bank tab still does TRY.
-///
-/// Each step is skipped or harmless when already done, so a retry after a
-/// partial failure just carries on.
+/// Safe to repeat: friendbot refusing an account it already funded is fine as
+/// long as the account exists.
 class StarterFunds {
   StarterFunds(
     this._ref, {
     this.accountRetryDelay = const Duration(seconds: 2),
     this.accountAttempts = 4,
+    this.requestTimeout = const Duration(seconds: 15),
   });
 
   final Ref _ref;
   final Duration accountRetryDelay;
   final int accountAttempts;
 
+  /// Upper bound for one faucet or Horizon call, so a stalled network ends in
+  /// an error card instead of a spinner that never stops.
+  final Duration requestTimeout;
+
   /// Throws [ApiException] describing the step that failed. [progress]
   /// receives a short user-facing label as each step starts.
   Future<StarterFundsResult> run({void Function(String label)? progress}) async {
-    void say(String label) => progress?.call(label);
-    final keyPair = _ref.read(walletProvider).keyPair;
-    if (keyPair == null) {
+    if (_ref.read(walletProvider).keyPair == null) {
       throw ApiException(code: 'auth.invalid_token', message: 'wallet is locked');
     }
-    final asset = PayAsset.configured;
 
-    say('Preparing your wallet…');
-    final before = await _ensureAccount();
-    // A deployment whose one unit IS the native coin has nothing to trade for.
-    if (asset.isNative) return const StarterFundsResult();
-
-    say('Getting ${asset.label}…');
-    final horizon = _ref.read(horizonReadServiceProvider);
-    final quote = await horizon.quoteFromNative(starterSwapSend, asset);
-    if (quote == null) {
-      throw ApiException(code: 'starter.no_liquidity', message: 'no route for $starterSwapSend');
-    }
-    final sequence = await horizon.fetchSequence(keyPair.accountId);
-    if (sequence == null) {
-      throw ApiException(code: 'auth.fund_failed', message: 'account not visible on chain');
-    }
-
-    final openTrustline = !before.hasPayAssetTrustline;
-    final xdr = const StarterSwapBuilder().build(
-      accountId: keyPair.accountId,
-      sequence: sequence,
-      asset: asset,
-      sendAmount: starterSwapSend,
-      quotedAmount: quote.destinationAmount,
-      path: quote.path,
-      openTrustline: openTrustline,
-    );
-    final signed = _ref.read(stellarSigningServiceProvider).signTransactionXdr(xdr, keyPair);
-    // Throws if the network rejected it (e.g. the price moved past the limit).
-    await _ref.read(txApiProvider).submit(
-          idempotencyKey: const Uuid().v4(),
-          purpose: 'starter_swap',
-          kind: TxKind.classic,
-          xdr: signed,
-        );
-
-    if (openTrustline) {
-      try {
-        // The backend keeps its own record of the trustline (pool, bank).
-        await _ref.read(trustlineSetupProvider).confirm();
-      } on ApiException {
-        // The USDC is in the wallet already; a failed bookkeeping call must not
-        // read as a failed top-up. The Home hint offers the USDC setup again.
-      }
-    }
-
-    final after = await _readBalances();
-    return StarterFundsResult(usdcAdded: after == null ? quote.destinationAmount : _gained(before, after));
+    progress?.call('Preparing your wallet…');
+    final before = await _readBalances() ?? AccountBalances.notFunded;
+    final after = await _ensureAccount(before);
+    return StarterFundsResult(added: _gained(before, after));
   }
 
   /// What [after] holds of the app's asset beyond [before], or null if nothing.
@@ -123,20 +69,35 @@ class StarterFunds {
     return '${padded.substring(0, padded.length - 7)}.${padded.substring(padded.length - 7)}';
   }
 
+  /// Same 2 XLM floor as [AccountBalances.feeBalanceLow] (1 base reserve +
+  /// one trustline's worth + a few fees), but checked directly against
+  /// native regardless of the configured asset — [feeBalanceLow] itself is
+  /// false whenever native IS the app's one asset, since it exists to flag a
+  /// *separate, invisible* fee balance running low, which isn't the case here.
+  static final BigInt _minNativeRaw = BigInt.from(20000000); // 2 XLM, 7 decimals
+
+  bool _hasEnoughForFees(AccountBalances b) {
+    if (!b.exists) return false;
+    final raw = AmountFormatter.toRaw(b.native, 7);
+    final value = raw == null ? null : BigInt.tryParse(raw);
+    return value != null && value >= _minNativeRaw;
+  }
+
   /// The account as it is once it can pay fees. An account that already has
-  /// enough needs no faucet call at all. Friendbot refuses an account it
-  /// already funded, so "the call said no" is fine as long as the account
-  /// exists; what must hold is that it does — and Horizon can take a moment to
-  /// serve a brand-new one.
-  Future<AccountBalances> _ensureAccount() async {
-    final current = await _readBalances();
-    if (current != null && current.exists && !current.feeBalanceLow) return current;
+  /// enough ([current]) needs no faucet call at all. Friendbot refuses an
+  /// account it already funded, so "the call said no" is fine as long as the
+  /// account exists; what must hold is that it does — and Horizon can take a
+  /// moment to serve a brand-new one.
+  Future<AccountBalances> _ensureAccount(AccountBalances current) async {
+    if (_hasEnoughForFees(current)) return current;
 
     ApiException? fundError;
     try {
-      await _ref.read(authApiProvider).fundTestnetXlm();
+      await _ref.read(authApiProvider).fundTestnetXlm().timeout(requestTimeout);
     } on ApiException catch (e) {
       fundError = e;
+    } on TimeoutException {
+      fundError = ApiException(code: 'auth.fund_failed', message: 'faucet did not answer');
     }
     for (var attempt = 0; attempt < accountAttempts; attempt++) {
       final balances = await _readBalances();
@@ -151,7 +112,7 @@ class StarterFunds {
   Future<AccountBalances?> _readBalances() async {
     _ref.invalidate(balancesProvider);
     try {
-      return await _ref.read(balancesProvider.future);
+      return await _ref.read(balancesProvider.future).timeout(requestTimeout);
     } catch (_) {
       return null;
     }

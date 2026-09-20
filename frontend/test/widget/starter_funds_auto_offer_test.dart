@@ -73,8 +73,9 @@ void main() {
 
   testWidgets('a brand-new testnet wallet gets its starter funds automatically, once', (tester) async {
     final funds = FakeStarterFunds();
+    final horizon = FakeHorizonReadService([FakeHorizonReadService.fundedBalances(native: '0.0000000')]);
 
-    await _open(tester, _app(wallet, funds));
+    await _open(tester, _app(wallet, funds, horizon: horizon));
 
     expect(funds.runs, 1);
     expect(await StarterFundsFlag().wasOffered(wallet.accountId), isTrue);
@@ -94,26 +95,27 @@ void main() {
   });
 
   testWidgets('a failed run is explained and is NOT retried by itself on the next start', (tester) async {
-    final funds = FakeStarterFunds()..error = apiError('starter.no_liquidity');
+    final funds = FakeStarterFunds()..error = apiError('auth.fund_failed');
+    final horizon = FakeHorizonReadService([FakeHorizonReadService.fundedBalances(native: '0.0000000')]);
 
-    await _open(tester, _app(wallet, funds));
+    await _open(tester, _app(wallet, funds, horizon: horizon));
 
     expect(funds.runs, 1);
-    expect(find.text(ErrorCopy.forCode('starter.no_liquidity')), findsOneWidget);
+    expect(find.text(ErrorCopy.forCode('auth.fund_failed')), findsOneWidget);
 
     // Next start: same wallet, flag already written before the failed run.
     await tester.pumpWidget(const SizedBox());
     final again = FakeStarterFunds();
-    await _open(tester, _app(wallet, again));
+    await _open(tester, _app(wallet, again, horizon: horizon));
     expect(again.runs, 0);
 
     await tester.pumpWidget(const SizedBox());
   });
 
-  testWidgets('a wallet that already holds USDC is left alone', (tester) async {
+  testWidgets('a wallet that already holds funds is left alone', (tester) async {
     final funds = FakeStarterFunds();
     final horizon = FakeHorizonReadService([
-      FakeHorizonReadService.fundedBalances(other: {'USDC': '12.0000000'}),
+      FakeHorizonReadService.fundedBalances(native: '12.0000000'),
     ]);
 
     await _open(tester, _app(wallet, funds, horizon: horizon));

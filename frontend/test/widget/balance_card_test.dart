@@ -45,32 +45,30 @@ ProviderContainer _container(WidgetTester tester) =>
     ProviderScope.containerOf(tester.element(find.byType(BalanceCard)));
 
 void main() {
-  testWidgets('the balance is one number in one unit: USDC — XLM is never shown', (tester) async {
+  // The default deployment's one unit is native XLM: there is no trustline
+  // and no separate fee balance to hide — the balance shown IS the fee
+  // balance. See single_unit_test.dart for the asset-config contract itself.
+  testWidgets('the balance is one number in one unit: XLM', (tester) async {
     final horizon = FakeHorizonReadService([
-      FakeHorizonReadService.fundedBalances(native: '9999.9000000', other: {'USDC': '42.5000000'}),
+      FakeHorizonReadService.fundedBalances(native: '9999.9000000'),
     ]);
     await tester.pumpWidget(_app(horizon));
     await _settle(tester);
 
-    expect(find.textContaining('42.5 USDC', findRichText: true), findsOneWidget);
-    expect(find.textContaining('XLM', findRichText: true), findsNothing);
-    expect(find.textContaining('9999'), findsNothing);
+    expect(find.textContaining('9999.9 XLM', findRichText: true), findsOneWidget);
     expect(find.text('Network fee balance'), findsNothing);
     expect(find.text('Get test funds'), findsNothing);
   });
 
-  group('testnet wallet with no USDC', () {
+  group('testnet wallet with no funds', () {
     // Getting test funds lives in Settings (and runs once by itself for a new
     // wallet) — the Home card only ever shows the balance and hints.
-    testWidgets('never offers a button of its own, and never shows the faucet XLM', (tester) async {
-      await tester.pumpWidget(_app(FakeHorizonReadService(), trustlineReady: false));
+    testWidgets('never offers a button of its own', (tester) async {
+      await tester.pumpWidget(_app(FakeHorizonReadService([AccountBalances.notFunded])));
       await _settle(tester);
 
-      expect(find.textContaining('0 USDC', findRichText: true), findsOneWidget);
       expect(find.text('Get test funds'), findsNothing);
       expect(find.byType(OutlinedButton), findsNothing);
-      expect(find.textContaining('10000', findRichText: true), findsNothing);
-      expect(find.textContaining('XLM', findRichText: true), findsNothing);
     });
 
     testWidgets('an unfunded wallet is pointed at Settings', (tester) async {
@@ -81,26 +79,26 @@ void main() {
       expect(find.text('Get test funds'), findsNothing);
     });
 
-    testWidgets('a wallet without a trustline is pointed at the USDC setup', (tester) async {
+    testWidgets('a native-asset wallet never shows the trustline hint', (tester) async {
       await tester.pumpWidget(_app(FakeHorizonReadService(), trustlineReady: false));
       await _settle(tester);
 
-      expect(find.text('Set up USDC to receive funds →'), findsOneWidget);
+      expect(find.textContaining('Set up'), findsNothing);
     });
 
-    testWidgets('once USDC arrives the balance follows', (tester) async {
+    testWidgets('once funds arrive the balance follows', (tester) async {
       final horizon = FakeHorizonReadService([
-        FakeHorizonReadService.fundedBalances(),
-        FakeHorizonReadService.fundedBalances(other: {'USDC': '7.0000000'}),
+        FakeHorizonReadService.fundedBalances(native: '0.0000000'),
+        FakeHorizonReadService.fundedBalances(native: '7.0000000'),
       ]);
       await tester.pumpWidget(_app(horizon));
       await _settle(tester);
-      expect(find.textContaining('0 USDC', findRichText: true), findsOneWidget);
+      expect(find.textContaining('0 XLM', findRichText: true), findsOneWidget);
 
       _container(tester).invalidate(balancesProvider);
       await _settle(tester);
 
-      expect(find.textContaining('7 USDC', findRichText: true), findsOneWidget);
+      expect(find.textContaining('7 XLM', findRichText: true), findsOneWidget);
       expect(horizon.fetchCalls, 2);
     });
   });
@@ -111,38 +109,6 @@ void main() {
       await _settle(tester);
 
       expect(find.textContaining("isn't funded yet"), findsOneWidget);
-      expect(find.textContaining('XLM', findRichText: true), findsNothing);
-    });
-
-    testWidgets('a wallet without a trustline is pointed at the USDC setup', (tester) async {
-      await tester.pumpWidget(_app(FakeHorizonReadService(), trustlineReady: false, passphrase: _public));
-      await _settle(tester);
-
-      expect(find.text('Set up USDC to receive funds →'), findsOneWidget);
-    });
-  });
-
-  group('network fee balance (never shown as an amount)', () {
-    testWidgets('a low one raises a unit-less hint', (tester) async {
-      final horizon = FakeHorizonReadService([
-        FakeHorizonReadService.fundedBalances(native: '1.5000000', other: {'USDC': '5.0000000'}),
-      ]);
-      await tester.pumpWidget(_app(horizon));
-      await _settle(tester);
-
-      expect(find.text('Your network fee balance is low — get test funds from Settings →'), findsOneWidget);
-      expect(find.textContaining('XLM', findRichText: true), findsNothing);
-      expect(find.textContaining('1.5', findRichText: true), findsNothing);
-    });
-
-    testWidgets('a healthy one shows nothing at all', (tester) async {
-      final horizon = FakeHorizonReadService([
-        FakeHorizonReadService.fundedBalances(native: '2.0000000', other: {'USDC': '5.0000000'}),
-      ]);
-      await tester.pumpWidget(_app(horizon));
-      await _settle(tester);
-
-      expect(find.textContaining('network fee'), findsNothing);
     });
   });
 }
